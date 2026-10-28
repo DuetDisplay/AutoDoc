@@ -121,10 +121,10 @@ export function NotesEngineUpgradeBanner({
 
   return (
     <div
-      className="mx-6 mt-2 mb-0 rounded-xl border border-border bg-bg-card px-4 py-3 shadow-sm animate-[slideDown_300ms_ease]"
+      className="app-banner mx-6 mt-2 mb-0 rounded-xl border border-border bg-bg-card px-4 py-3 shadow-sm animate-[slideDown_300ms_ease]"
       role="status"
     >
-      <div className="flex flex-wrap items-start gap-3 min-w-0">
+      <div className="app-banner-row">
         <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sage/20 bg-sage-light">
           <div className="flex h-4 items-end gap-0.5">
             <span className="h-2 w-1 rounded-full bg-sage" />
@@ -132,7 +132,7 @@ export function NotesEngineUpgradeBanner({
             <span className="h-3 w-1 rounded-full bg-sage" />
           </div>
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="app-banner-copy">
           <h2 className="text-[12.5px] font-semibold text-ink">{title}</h2>
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{body}</p>
           {variant === 'downloading' ? (
@@ -150,14 +150,16 @@ export function NotesEngineUpgradeBanner({
             </div>
           ) : null}
         </div>
-        <button
-          onClick={() => {
-            void dismiss()
-          }}
-          className="i18n-btn text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark"
-        >
-          {variant === 'ready' ? t('ui.gotIt') : t('common.dismiss')}
-        </button>
+        <div className="app-banner-actions">
+          <button
+            onClick={() => {
+              void dismiss()
+            }}
+            className="i18n-btn text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark"
+          >
+            {variant === 'ready' ? t('ui.gotIt') : t('common.dismiss')}
+          </button>
+        </div>
       </div>
     </div>
   )

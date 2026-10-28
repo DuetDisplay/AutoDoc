@@ -296,8 +296,8 @@ export function showNotificationWindow(options: NotificationOptions): void {
   body { padding: 6px 12px 20px; }
 
   .toast {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
     align-items: center;
     gap: 14px;
     padding: 14px 14px 14px 16px;
@@ -333,7 +333,6 @@ export function showNotificationWindow(options: NotificationOptions): void {
     height: 10px;
     border-radius: 50%;
     background: #7A9E7E;
-    flex-shrink: 0;
     animation: pulse 2s ease-in-out infinite;
   }
   @keyframes pulse {
@@ -341,7 +340,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     50% { opacity: 0.5; transform: scale(0.85); }
   }
 
-  .text { flex: 1 1 12rem; min-width: 0; }
+  .text { min-width: 0; }
 
   .title {
     font-size: 13px;
@@ -351,6 +350,13 @@ export function showNotificationWindow(options: NotificationOptions): void {
     line-height: 1.3;
     overflow-wrap: anywhere;
     white-space: normal;
+  }
+
+  .title.user-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* Wraps to at most three lines, which the fixed window height already fits. */
@@ -370,11 +376,15 @@ export function showNotificationWindow(options: NotificationOptions): void {
     color: #62615a;
     white-space: normal;
     overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .actions {
     display: flex;
-    flex-wrap: wrap;
+    max-width: 160px;
     align-items: center;
     gap: 8px;
     min-width: 0;
@@ -393,13 +403,16 @@ export function showNotificationWindow(options: NotificationOptions): void {
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: normal;
-    max-width: 11rem;
+    min-width: 0;
+    max-width: 128px;
+    overflow-wrap: anywhere;
     line-height: 1.25;
   }
   .btn-record:hover { background: #3d3b37; }
   .btn-record:active { transform: scale(0.97); }
 
   .btn-x {
+    flex-shrink: 0;
     width: 24px;
     height: 24px;
     border-radius: 50%;
@@ -436,7 +449,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   <div class="toast${nativeTheme.shouldUseDarkColors ? ' dark' : ''}">
     <div class="dot"></div>
     <div class="text">
-      <div class="title" title="${title}">${title}</div>
+      <div class="title${options.kind === 'meeting-detection' ? ' user-title' : ''}" title="${title}">${title}</div>
       ${subtitle}
     </div>
     <div class="actions">

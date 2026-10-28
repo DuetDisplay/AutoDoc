@@ -23,7 +23,7 @@ export function RecordingBanner({
   const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-2.5 bg-bg-accent border-b border-border min-w-0">
+    <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-2.5 bg-bg-accent border-b border-border min-w-0">
       <div className="w-2 h-2 rounded-full bg-status-recording animate-pulse" />
       <span className="text-[12px] font-medium text-ink">
         {videoDisabled ? t('ui.recordingAudioOnly') : t('ui.recording')}

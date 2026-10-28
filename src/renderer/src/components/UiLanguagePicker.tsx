@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import {
   UI_LANGUAGE_CODES,
@@ -14,53 +16,32 @@ interface UiLanguagePickerProps {
 export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerProps) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
-  const [placement, setPlacement] = useState({ above: false, maxHeight: 256 })
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const placement = useAnchoredPopover(open, triggerRef, 224, 256)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || placement.visibility === 'hidden') return
     optionRefs.current[active]?.focus({ preventScroll: true })
     optionRefs.current[active]?.scrollIntoView?.({ block: 'nearest' })
-  }, [active, open])
+  }, [active, open, placement.visibility])
 
   useEffect(() => {
     if (!open) return
-    const fit = () => {
-      const trigger = triggerRef.current
-      if (!trigger) return
-      let top = 0
-      let bottom = window.innerHeight
-      for (let parent = trigger.parentElement; parent; parent = parent.parentElement) {
-        if (/(auto|scroll|hidden)/.test(getComputedStyle(parent).overflowY)) {
-          const rect = parent.getBoundingClientRect()
-          top = Math.max(top, rect.top)
-          bottom = Math.min(bottom, rect.bottom)
-        }
-      }
-      const rect = trigger.getBoundingClientRect()
-      const below = bottom - rect.bottom - 12
-      const above = rect.top - top - 12
-      const openAbove = below < 256 && above > below
-      setPlacement({
-        above: openAbove,
-        maxHeight: Math.max(32, Math.min(256, openAbove ? above : below))
-      })
-    }
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      if (
+        !rootRef.current?.contains(event.target as Node) &&
+        !listRef.current?.contains(event.target as Node)
+      )
+        setOpen(false)
     }
-    fit()
     document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('resize', fit)
     // A scrolling settings panel changes the space available to the list.
-    window.addEventListener('scroll', fit, true)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('resize', fit)
-      window.removeEventListener('scroll', fit, true)
     }
   }, [open])
 
@@ -100,7 +81,11 @@ export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerPro
       ref={rootRef}
       className="i18n-setting-control relative min-w-0 max-w-full"
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+        if (
+          !event.currentTarget.contains(event.relatedTarget as Node | null) &&
+          !listRef.current?.contains(event.relatedTarget as Node | null)
+        )
+          setOpen(false)
       }}
     >
       <button
@@ -126,33 +111,36 @@ export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerPro
           {UI_LANGUAGE_NATIVE_LABELS[value]}
         </span>
       </button>
-      {open && (
-        <div
-          id={listboxId}
-          role="listbox"
-          aria-label={label}
-          style={{ maxHeight: placement.maxHeight }}
-          className={`absolute right-0 z-50 w-56 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg ${placement.above ? 'bottom-full mb-1.5' : 'top-full mt-1.5'}`}
-        >
-          {UI_LANGUAGE_CODES.map((code, index) => (
-            <button
-              key={code}
-              ref={(node) => {
-                optionRefs.current[index] = node
-              }}
-              type="button"
-              role="option"
-              aria-selected={code === value}
-              tabIndex={index === active ? 0 : -1}
-              onClick={() => select(code)}
-              onKeyDown={(event) => onOptionKeyDown(event, index)}
-              className={`flex w-full rounded-lg px-3 py-2 text-left text-[12px] leading-snug [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sage ${code === value ? 'bg-bg-accent font-semibold text-ink' : 'text-ink-muted hover:bg-bg-accent'}`}
-            >
-              {UI_LANGUAGE_NATIVE_LABELS[code]}
-            </button>
-          ))}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-label={label}
+            style={placement}
+            className="z-50 overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg"
+          >
+            {UI_LANGUAGE_CODES.map((code, index) => (
+              <button
+                key={code}
+                ref={(node) => {
+                  optionRefs.current[index] = node
+                }}
+                type="button"
+                role="option"
+                aria-selected={code === value}
+                tabIndex={index === active ? 0 : -1}
+                onClick={() => select(code)}
+                onKeyDown={(event) => onOptionKeyDown(event, index)}
+                className={`flex w-full rounded-lg px-3 py-2 text-left text-[12px] leading-snug [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sage ${code === value ? 'bg-bg-accent font-semibold text-ink' : 'text-ink-muted hover:bg-bg-accent'}`}
+              >
+                {UI_LANGUAGE_NATIVE_LABELS[code]}
+              </button>
+            ))}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

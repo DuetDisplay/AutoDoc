@@ -31,6 +31,37 @@ describe('GitHub star card', () => {
     await ready()
     expect(invoke).toHaveBeenCalledWith('github-star:confirm', 'reservation')
   })
+  it.each([130, 1200])(
+    'waits for scrolling to reveal a %ipx request before consuming its impression',
+    async (height) => {
+      let visible = false
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+        top: visible ? 0 : 900,
+        bottom: visible ? height : 900 + height,
+        left: 0,
+        right: 400,
+        width: 400,
+        height,
+        x: 0,
+        y: visible ? 0 : 900,
+        toJSON: () => ({})
+      }))
+      render(<GithubStarPrompt />)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Star on GitHub' })).toBeDisabled()
+      )
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      expect(invoke).not.toHaveBeenCalledWith('github-star:confirm', 'reservation')
+      visible = true
+      fireEvent.scroll(window)
+      await ready()
+      expect(
+        invoke.mock.calls.filter(([channel]) => channel === 'github-star:confirm')
+      ).toHaveLength(1)
+    }
+  )
   it('does not pop up when processing or another critical UI finishes while notes stay open', async () => {
     const { rerender } = render(<GithubStarPrompt suppressed />)
     rerender(<GithubStarPrompt />)

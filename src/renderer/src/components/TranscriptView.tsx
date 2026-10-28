@@ -204,7 +204,9 @@ export function TranscriptView({
                   {speakerLabel}
                 </span>
               )}
-              <p className="text-[12.5px] text-ink leading-relaxed">{group.texts.join(' ')}</p>
+              <p className="text-[12.5px] text-ink leading-relaxed [overflow-wrap:anywhere]">
+                {group.texts.join(' ')}
+              </p>
             </div>
           </div>
         )

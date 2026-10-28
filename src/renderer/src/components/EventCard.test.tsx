@@ -66,4 +66,21 @@ describe('EventCard', () => {
     expect(screen.getByText('This meeting')).toBeInTheDocument()
     expect(screen.getByText('All in series')).toBeInTheDocument()
   })
+
+  it('supports keyboard navigation and Escape without changing auto-record', async () => {
+    const user = userEvent.setup()
+    const onSet = vi.fn()
+    render(
+      <EventCard event={{ ...mockEvent, recurringEventId: 'series-1' }} onSetAutoRecord={onSet} />
+    )
+    const trigger = screen.getByRole('button', { name: 'Enable auto-record' })
+    await user.click(trigger)
+    expect(screen.getByRole('menuitem', { name: /This meeting/ })).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: /All in series/ })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(onSet).not.toHaveBeenCalled()
+  })
 })

@@ -76,7 +76,7 @@ CalendarManager.prototype.startSync = function(callback) {
       await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Enable auto-record' })).toHaveCount(3)
       await page.getByRole('button', { name: 'Enable auto-record' }).first().click()
-      await page.getByRole('button', { name: /All in series/ }).click()
+      await page.getByRole('menuitem', { name: /All in series/ }).click()
       await expect(page.getByText('Auto-record: Series', { exact: true })).toHaveCount(3)
       await expect(page.getByText('Auto-record: Off', { exact: true })).toHaveCount(0)
       const savedModes = await page.evaluate(async () =>
@@ -104,7 +104,7 @@ CalendarManager.prototype.startSync = function(callback) {
       await page.getByRole('button', { name: 'Disable auto-record' }).nth(1).click()
       await expect(page.getByText('Auto-record: Off', { exact: true })).toHaveCount(3)
       await page.getByRole('button', { name: 'Enable auto-record' }).first().click()
-      await page.getByRole('button', { name: /This meeting/ }).click()
+      await page.getByRole('menuitem', { name: /This meeting/ }).click()
       await expect(page.getByText('Auto-record: On', { exact: true })).toHaveCount(1)
       await expect(page.getByText('Auto-record: Off', { exact: true })).toHaveCount(2)
       await session.electronApp.evaluate(async () => {
@@ -114,7 +114,7 @@ CalendarManager.prototype.startSync = function(callback) {
       await expect(page.getByText('Auto-record: Off', { exact: true })).toHaveCount(2)
       await page.getByRole('button', { name: 'Disable auto-record' }).click()
       await page.getByRole('button', { name: 'Enable auto-record' }).first().click()
-      await page.getByRole('button', { name: /All in series/ }).click()
+      await page.getByRole('menuitem', { name: /All in series/ }).click()
       await expect(page.getByText('Auto-record: Series', { exact: true })).toHaveCount(3)
       await page.reload()
       await expect(page.getByText('Auto-record: Series', { exact: true })).toHaveCount(3)

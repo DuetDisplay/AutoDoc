@@ -184,7 +184,7 @@ describe('Upcoming', () => {
     )
     const user = userEvent.setup()
     await user.click((await screen.findAllByRole('button', { name: 'Enable auto-record' }))[0])
-    await user.click(screen.getByRole('button', { name: /All in series/ }))
+    await user.click(screen.getByRole('menuitem', { name: /All in series/ }))
     expect(screen.getAllByText('Auto-record: Off')).toHaveLength(2)
     await act(async () => {
       api.emit(
@@ -230,7 +230,9 @@ describe('Upcoming', () => {
         screen.getByRole('button', { name: translate(language, 'upcoming.connectMicrosoft') })
       ).toBeInTheDocument()
       expect(screen.getByText(translate(language, 'upcoming.connectPrompt'))).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: en['upcoming.connectGoogle'] })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: en['upcoming.connectGoogle'] })
+      ).not.toBeInTheDocument()
     }
   )
 })

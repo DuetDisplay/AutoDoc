@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
 import { translatePlural } from '../../../shared/i18n'
 import { useState, useRef, useEffect } from 'react'
 import type { AutoRecordMode, CalendarEvent } from '../../../shared/types'
@@ -30,18 +32,53 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
   const platform = getPlatform(event.meetingUrl)
   const [showMenu, setShowMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const placement = useAnchoredPopover(showMenu, triggerRef, 208, 320)
   const dateLocale = dateLocaleForUiLanguage(language)
 
   useEffect(() => {
     if (!showMenu) return
     const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(e.target as Node) &&
+        !panelRef.current?.contains(e.target as Node)
+      ) {
         setShowMenu(false)
       }
     }
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setShowMenu(false)
+        triggerRef.current?.focus({ preventScroll: true })
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        const buttons = [...(panelRef.current?.querySelectorAll('button') ?? [])]
+        if (!buttons.length) return
+        event.preventDefault()
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        const next =
+          event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? buttons.length - 1
+              : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+        buttons[next].focus()
+      }
+    }
     document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
   }, [showMenu])
+
+  useEffect(() => {
+    if (showMenu && placement.visibility !== 'hidden')
+      panelRef.current?.querySelector('button')?.focus()
+  }, [showMenu, placement.visibility])
 
   const isActive = event.autoRecord !== 'off'
   const isRecurring = event.recurringEventId !== null
@@ -53,9 +90,12 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
 
   return (
     <div className="px-4 py-3.5 bg-bg-card border border-border rounded-xl flex flex-wrap justify-between items-start gap-3 min-w-0">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 max-w-full flex-[1_1_14rem]">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-0 text-[13.5px] font-semibold text-ink tracking-[-0.01em] text-pretty [overflow-wrap:anywhere]">
+          <div
+            title={event.title}
+            className="min-w-0 max-w-full line-clamp-2 text-[13.5px] font-semibold text-ink tracking-[-0.01em] text-pretty [overflow-wrap:anywhere]"
+          >
             {event.title}
           </div>
           {isRecurring && (
@@ -81,6 +121,9 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
       </div>
       <div className="relative min-w-0" ref={menuRef}>
         <button
+          ref={triggerRef}
+          aria-haspopup={isRecurring ? 'menu' : undefined}
+          aria-expanded={isRecurring ? showMenu : undefined}
           onClick={() =>
             isActive
               ? handleSelect('off')
@@ -104,32 +147,42 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
               : t('upcoming.autoRecordOn')
             : t('upcoming.autoRecordOff')}
         </button>
-        {showMenu && (
-          <div className="absolute right-0 top-full mt-1.5 z-50 w-[min(13rem,calc(100vw-2rem))] bg-bg-card border border-border rounded-xl shadow-lg py-1.5 overflow-hidden">
-            <button
-              onClick={() => handleSelect('once')}
-              className="w-full text-left px-3.5 py-2 hover:bg-bg-accent transition-colors"
+        {showMenu &&
+          createPortal(
+            <div
+              ref={panelRef}
+              style={placement}
+              role="menu"
+              aria-label={t('upcoming.enableAutoRecord')}
+              className="z-50 bg-bg-card border border-border rounded-xl shadow-lg py-1.5 overflow-y-auto"
             >
-              <p className="text-[12px] font-medium text-ink text-pretty [overflow-wrap:anywhere]">
-                {t('upcoming.thisMeeting')}
-              </p>
-              <p className="text-[10.5px] text-ink-faint text-pretty [overflow-wrap:anywhere]">
-                {t('upcoming.thisMeetingHint')}
-              </p>
-            </button>
-            <button
-              onClick={() => handleSelect('series')}
-              className="w-full text-left px-3.5 py-2 hover:bg-bg-accent transition-colors"
-            >
-              <p className="text-[12px] font-medium text-ink text-pretty [overflow-wrap:anywhere]">
-                {t('upcoming.allInSeries')}
-              </p>
-              <p className="text-[10.5px] text-ink-faint text-pretty [overflow-wrap:anywhere]">
-                {t('upcoming.allInSeriesHint')}
-              </p>
-            </button>
-          </div>
-        )}
+              <button
+                role="menuitem"
+                onClick={() => handleSelect('once')}
+                className="w-full text-left px-3.5 py-2 hover:bg-bg-accent transition-colors"
+              >
+                <p className="text-[12px] font-medium text-ink text-pretty [overflow-wrap:anywhere]">
+                  {t('upcoming.thisMeeting')}
+                </p>
+                <p className="text-[10.5px] text-ink-faint text-pretty [overflow-wrap:anywhere]">
+                  {t('upcoming.thisMeetingHint')}
+                </p>
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => handleSelect('series')}
+                className="w-full text-left px-3.5 py-2 hover:bg-bg-accent transition-colors"
+              >
+                <p className="text-[12px] font-medium text-ink text-pretty [overflow-wrap:anywhere]">
+                  {t('upcoming.allInSeries')}
+                </p>
+                <p className="text-[10.5px] text-ink-faint text-pretty [overflow-wrap:anywhere]">
+                  {t('upcoming.allInSeriesHint')}
+                </p>
+              </button>
+            </div>,
+            document.body
+          )}
       </div>
     </div>
   )

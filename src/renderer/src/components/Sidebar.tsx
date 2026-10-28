@@ -214,9 +214,9 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-[min(12.5rem,38vw)] min-w-[8.25rem] bg-bg-sidebar border-r border-border flex flex-col shrink-0">
+    <aside className="w-[clamp(9rem,25vw,12.5rem)] min-w-[9rem] bg-bg-sidebar border-r border-border flex flex-col shrink-0 min-h-0 overflow-hidden">
       <div className="h-[52px] shrink-0" />
-      <div className="flex flex-col flex-1 px-5 pb-5">
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-5 pb-5">
         <div className="flex items-center gap-2">
           <WaveformIcon className="w-6 h-6 text-sage" />
           <span className="font-serif text-[20px] text-ink tracking-[-0.02em]">AutoDoc</span>
@@ -300,7 +300,9 @@ export function Sidebar() {
             onClick={() => trackEvent('navigation_clicked', { page: 'settings' })}
             className={({ isActive }) =>
               `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${
-                isActive ? 'bg-sage text-on-brand' : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
+                isActive
+                  ? 'bg-sage text-on-brand'
+                  : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
               }`
             }
           >

@@ -1,3 +1,5 @@
+import { UI_LANGUAGE_CODES } from '../src/shared/ui-language'
+import { translate } from '../src/shared/i18n'
 import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -154,6 +156,74 @@ test('eligible feedback wins over the GitHub card and suppresses it for that ses
     await expect(page.getByText('Enjoying AutoDoc?', { exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: 'Maybe later', exact: true }).click()
     expect(await page.evaluate(() => window.electronAPI.invoke('github-star:reserve'))).toBeNull()
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('high-zoom star requests keep every translated action reachable by scrolling', async () => {
+  test.setTimeout(180_000)
+  const fixture = await launchGithubStarApp()
+  const { page, electronApp } = fixture
+  try {
+    const native = await electronApp.browserWindow(page)
+    await native.evaluate((w) => w.setContentSize(800, 600))
+    await page.setViewportSize({ width: 800, height: 600 })
+    await page.evaluate(() => {
+      location.hash = '#/recordings'
+    })
+    await expect(page.getByRole('button', { name: 'Star on GitHub', exact: true })).toBeEnabled()
+    await native.evaluate((w) => w.webContents.setZoomFactor(2))
+    for (const theme of ['light', 'dark'] as const)
+      for (const language of UI_LANGUAGE_CODES) {
+        await page.evaluate(
+          async ({ theme, language }) => {
+            await window.electronAPI.invoke('prefs:set-ui-language', language)
+            await window.electronAPI.invoke('prefs:set-appearance', theme)
+          },
+          { theme, language }
+        )
+        const card = page.getByRole('region', {
+          name: translate(language, 'githubStar.heading'),
+          exact: true
+        })
+        await expect(card).toBeVisible()
+        for (const key of ['githubStar.star', 'githubStar.noThanks'] as const) {
+          const button = card.getByRole('button', { name: translate(language, key), exact: true })
+          await button.evaluate((el) => {
+            const pane = el.closest('main')!,
+              target = el.getBoundingClientRect(),
+              bounds = pane.getBoundingClientRect()
+            pane.scrollTop += target.top - bounds.top - bounds.height / 2
+          })
+          await expect(button).toBeInViewport({ ratio: 1 })
+          await button.click({ trial: true })
+        }
+        expect(
+          await card.evaluate((el) => {
+            for (let p = el.parentElement; p; p = p.parentElement) {
+              if (getComputedStyle(p).overflowY === 'hidden' && p.scrollHeight > p.clientHeight + 1)
+                return false
+            }
+            return true
+          })
+        ).toBe(true)
+        await page.screenshot({
+          path: test.info().outputPath(`star-zoom-${language}-${theme}.png`)
+        })
+      }
+    const dismiss = page.getByRole('button', {
+      name: translate(UI_LANGUAGE_CODES[UI_LANGUAGE_CODES.length - 1], 'githubStar.noThanks'),
+      exact: true
+    })
+    await dismiss.click()
+    await expect(
+      page.getByRole('region', {
+        name: translate(UI_LANGUAGE_CODES[UI_LANGUAGE_CODES.length - 1], 'githubStar.heading'),
+        exact: true
+      })
+    ).toHaveCount(0)
+    await expect(page.getByRole('link', { name: /Product planning/ })).toBeVisible()
   } finally {
     await fixture.cleanup()
   }

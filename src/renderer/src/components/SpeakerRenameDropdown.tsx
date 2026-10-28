@@ -1,5 +1,7 @@
+import { createPortal } from 'react-dom'
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
 import { useT } from '../services/i18n'
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 interface SpeakerRenameDropdownProps {
   suggestions?: string[]
@@ -18,52 +20,12 @@ export function SpeakerRenameDropdown({
   const ref = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const opener = useRef(document.activeElement as HTMLElement | null)
-  const [placement, setPlacement] = useState({ left: 0, above: false, maxHeight: 256 })
-
-  useLayoutEffect(() => {
-    const fit = () => {
-      const element = ref.current
-      const anchor = element?.parentElement
-      if (!element || !anchor) return
-      let top = 12,
-        bottom = window.innerHeight - 12,
-        left = 12,
-        right = window.innerWidth - 12
-      for (let parent: HTMLElement | null = anchor; parent; parent = parent.parentElement) {
-        const style = getComputedStyle(parent),
-          rect = parent.getBoundingClientRect()
-        if (/(auto|scroll|hidden)/.test(style.overflowY)) {
-          top = Math.max(top, rect.top)
-          bottom = Math.min(bottom, rect.bottom)
-        }
-        if (/(auto|scroll|hidden)/.test(style.overflowX)) {
-          left = Math.max(left, rect.left)
-          right = Math.min(right, rect.right)
-        }
-      }
-      const rect = anchor.getBoundingClientRect(),
-        below = bottom - rect.bottom - 4,
-        above = rect.top - top - 4
-      const openAbove = below < element.scrollHeight && above > below
-      const targetLeft = Math.max(left, Math.min(rect.left, right - element.offsetWidth))
-      setPlacement({
-        left: targetLeft - rect.left,
-        above: openAbove,
-        maxHeight: Math.max(48, Math.min(320, openAbove ? above : below))
-      })
-    }
-    fit()
-    window.addEventListener('resize', fit)
-    window.addEventListener('scroll', fit, true)
-    return () => {
-      window.removeEventListener('resize', fit)
-      window.removeEventListener('scroll', fit, true)
-    }
-  }, [t, suggestions])
+  const anchorRef = useRef<HTMLSpanElement>(null)
+  const placement = useAnchoredPopover(true, anchorRef, 224, 320, 'start')
 
   useEffect(() => {
-    inputRef.current?.focus({ preventScroll: true })
-  }, [])
+    if (placement.visibility !== 'hidden') inputRef.current?.focus({ preventScroll: true })
+  }, [placement.visibility])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -85,51 +47,58 @@ export function SpeakerRenameDropdown({
   }
 
   return (
-    <div
-      ref={ref}
-      style={{ left: placement.left, maxHeight: placement.maxHeight }}
-      className={`absolute ${placement.above ? 'bottom-full mb-1' : 'top-full mt-1'} z-50 w-56 overflow-y-auto bg-bg-card border border-border rounded-lg shadow-lg max-w-[calc(100vw-2rem)]`}
-    >
-      {suggestions && suggestions.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 text-[10px] text-ink-faint uppercase tracking-wider">
-            {t('ui.fromCalendarInvite')}
-          </div>
-          {suggestions.map((email) => (
-            <button
-              key={email}
-              onClick={() => {
-                onRename(email)
-                onClose()
+    <>
+      <span ref={anchorRef} aria-hidden="true" className="absolute inset-0 pointer-events-none" />
+      {createPortal(
+        <div
+          ref={ref}
+          style={placement}
+          className="z-50 overflow-y-auto bg-bg-card border border-border rounded-lg shadow-lg"
+        >
+          {suggestions && suggestions.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] text-ink-faint uppercase tracking-wider">
+                {t('ui.fromCalendarInvite')}
+              </div>
+              {suggestions.map((email) => (
+                <button
+                  key={email}
+                  onClick={() => {
+                    onRename(email)
+                    onClose()
+                  }}
+                  className="block w-full text-left break-all px-3 py-2 text-[12px] text-ink hover:bg-bg-accent/60 transition-colors"
+                >
+                  {email}
+                </button>
+              ))}
+              <div className="border-t border-border my-1" />
+            </>
+          )}
+          <label className="block px-3 py-2">
+            <span className="mb-1 block text-[11px] leading-snug text-ink-muted">
+              {t('ui.typeACustomName')}
+            </span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return
+                if (e.key === 'Enter') handleSubmit()
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  onClose()
+                  opener.current?.focus({ preventScroll: true })
+                }
               }}
-              className="block w-full text-left break-all px-3 py-2 text-[12px] text-ink hover:bg-bg-accent/60 transition-colors"
-            >
-              {email}
-            </button>
-          ))}
-          <div className="border-t border-border my-1" />
-        </>
+              className="w-full border border-border rounded px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink-muted focus-visible:ring-2 focus-visible:ring-sage bg-transparent"
+            />
+          </label>
+        </div>,
+        document.body
       )}
-      <label className="block px-3 py-2">
-        <span className="mb-1 block text-[11px] leading-snug text-ink-muted">
-          {t('ui.typeACustomName')}
-        </span>
-        <input
-          ref={inputRef}
-          type="text"
-          value={customName}
-          onChange={(e) => setCustomName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSubmit()
-            if (e.key === 'Escape') {
-              e.preventDefault()
-              onClose()
-              opener.current?.focus({ preventScroll: true })
-            }
-          }}
-          className="w-full border border-border rounded px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink-muted focus-visible:ring-2 focus-visible:ring-sage bg-transparent"
-        />
-      </label>
-    </div>
+    </>
   )
 }

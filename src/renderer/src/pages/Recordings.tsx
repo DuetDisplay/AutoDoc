@@ -447,7 +447,7 @@ export function Recordings({
           <p className="text-ink-muted text-[13px] text-pretty">{t('recordings.empty')}</p>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 min-h-48 overflow-y-auto p-6">
           <div className="flex flex-col gap-2">
             {recordings.map((rec) => (
               <div
@@ -458,9 +458,12 @@ export function Recordings({
                   <Link
                     to={`/recordings/${rec.meetingId}`}
                     aria-label={rec.title}
-                    className="min-w-0 flex-1 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-sage"
+                    className="min-w-0 max-w-full flex-[1_1_14rem] after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-sage"
                   >
-                    <div className="text-[13.5px] font-semibold text-ink tracking-[-0.01em] text-pretty [overflow-wrap:anywhere]">
+                    <div
+                      title={rec.title}
+                      className="text-[13.5px] font-semibold text-ink tracking-[-0.01em] text-pretty [overflow-wrap:anywhere] line-clamp-2"
+                    >
                       {rec.title}
                     </div>
                     <div className="text-[11.5px] text-ink-faint mt-0.5 flex flex-wrap items-center gap-2">

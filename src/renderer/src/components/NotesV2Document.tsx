@@ -216,6 +216,7 @@ function InlineEdit({
           else setDraft(value)
         }}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
             inputRef.current?.blur()
@@ -287,6 +288,7 @@ function OwnerEdit({
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return
           if (event.key === 'Enter') {
             event.preventDefault()
             inputRef.current?.blur()

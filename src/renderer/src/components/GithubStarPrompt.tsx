@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useT } from '../services/i18n'
 
 const buttonClass =
-  'rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage disabled:opacity-50'
+  'i18n-btn rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage disabled:opacity-50'
 
 export function GithubStarPrompt({
   suppressed = false,
@@ -104,46 +104,73 @@ export function GithubStarPrompt({
 
   useEffect(() => {
     if (!reservation || confirmed) return
+    let frame1 = 0
     let frame2 = 0
-    const frame1 = requestAnimationFrame(() => {
-      frame2 = requestAnimationFrame(() => {
-        const rect = element.current?.getBoundingClientRect()
-        if (
-          !rect ||
-          rect.top < 0 ||
-          rect.bottom > innerHeight ||
-          suppressedRef.current ||
-          !document.hasFocus() ||
-          document.visibilityState !== 'visible'
-        ) {
-          void window.electronAPI.invoke('github-star:cancel', reservation).catch(() => {})
-          reservationRef.current = null
-          if (active.current) setReservation(null)
-          return
-        }
-        void window.electronAPI
-          .invoke('github-star:confirm', reservation)
-          .then((ok) => {
-            if (!active.current) return
-            if (ok) {
-              confirmedRef.current = true
-              setConfirmed(true)
-            } else {
-              reservationRef.current = null
-              setReservation(null)
-            }
-          })
-          .catch(() => {
-            if (active.current) {
-              reservationRef.current = null
-              setReservation(null)
-            }
-          })
+    let confirming = false
+    const schedule = () => {
+      cancelAnimationFrame(frame1)
+      cancelAnimationFrame(frame2)
+      frame1 = requestAnimationFrame(() => {
+        frame2 = requestAnimationFrame(() => {
+          if (confirming) return
+          const rect = element.current?.getBoundingClientRect()
+          if (
+            !rect ||
+            suppressedRef.current ||
+            !document.hasFocus() ||
+            document.visibilityState !== 'visible'
+          ) {
+            void window.electronAPI.invoke('github-star:cancel', reservation).catch(() => {})
+            reservationRef.current = null
+            if (active.current) setReservation(null)
+            return
+          }
+          // A zoomed page may need scrolling before the complete request is visible.
+          // Keep the impression unconsumed while it is outside the visible area.
+          const pane = element.current?.closest('main')?.getBoundingClientRect()
+          const visibleTop = Math.max(0, pane?.top ?? 0)
+          const visibleBottom = Math.min(innerHeight, pane?.bottom ?? innerHeight)
+          const visibleHeight = Math.max(
+            0,
+            Math.min(rect.bottom, visibleBottom) - Math.max(rect.top, visibleTop)
+          )
+          // A large-text request can exceed the pane: require the whole available
+          // pane to show it, then leave its remaining copy reachable by scrolling.
+          if (visibleHeight + 1 < Math.min(rect.height, visibleBottom - visibleTop)) return
+          confirming = true
+          void window.electronAPI
+            .invoke('github-star:confirm', reservation)
+            .then((ok) => {
+              if (!active.current) return
+              if (ok) {
+                confirmedRef.current = true
+                setConfirmed(true)
+              } else {
+                reservationRef.current = null
+                setReservation(null)
+              }
+            })
+            .catch(() => {
+              if (active.current) {
+                reservationRef.current = null
+                setReservation(null)
+              }
+            })
+        })
       })
-    })
+    }
+    schedule()
+    window.addEventListener('scroll', schedule, true)
+    window.addEventListener('resize', schedule)
+    window.addEventListener('blur', schedule)
+    document.addEventListener('visibilitychange', schedule)
     return () => {
       cancelAnimationFrame(frame1)
       cancelAnimationFrame(frame2)
+      window.removeEventListener('scroll', schedule, true)
+      window.removeEventListener('resize', schedule)
+      window.removeEventListener('blur', schedule)
+      document.removeEventListener('visibilitychange', schedule)
     }
   }, [reservation, confirmed])
 
@@ -186,7 +213,7 @@ export function GithubStarPrompt({
       <section
         aria-labelledby={headingId}
         aria-describedby={thanks ? undefined : bodyId}
-        className="relative rounded-xl border border-border bg-bg-card px-4 py-3.5"
+        className="github-star-card relative rounded-xl border border-border bg-bg-card px-4 py-3.5"
       >
         <button
           type="button"
@@ -206,7 +233,9 @@ export function GithubStarPrompt({
             <path d="m5 5 10 10M15 5 5 15" />
           </svg>
         </button>
-        <div className={`flex ${thanks ? 'items-center' : 'items-start'} gap-3 pr-7`}>
+        <div
+          className={`github-star-layout flex ${thanks ? 'github-star-thanks items-center' : 'items-start'} gap-3 pr-7`}
+        >
           <span
             className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sage-light text-sage-dark"
             aria-hidden="true"
@@ -222,7 +251,7 @@ export function GithubStarPrompt({
               <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z" />
             </svg>
           </span>
-          <div className="min-w-0 flex-1">
+          <div className="github-star-copy min-w-0 flex-1">
             <h2
               id={headingId}
               className="text-[13px] font-semibold tracking-[-0.01em] text-ink"

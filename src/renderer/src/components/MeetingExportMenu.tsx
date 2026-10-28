@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
 import type { MessageKey } from '../../../shared/i18n'
 import { useT } from '../services/i18n'
 import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from 'react'
@@ -124,6 +126,8 @@ export function MeetingExportMenu({
   const rootRef = useRef<HTMLDivElement>(null)
   const copyTriggerRef = useRef<HTMLButtonElement>(null)
   const exportTriggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const placement = useAnchoredPopover(open, exportTriggerRef, 256, 384)
   const firstFormatRef = useRef<HTMLButtonElement>(null)
   const busyRef = useRef(false)
   const successTimerRef = useRef<number | null>(null)
@@ -159,14 +163,18 @@ export function MeetingExportMenu({
   }, [restoreFocus])
 
   useEffect(() => {
-    if (open) firstFormatRef.current?.focus()
-  }, [open])
+    if (open && placement.visibility !== 'hidden') firstFormatRef.current?.focus()
+  }, [open, placement.visibility])
 
   useEffect(() => {
     if (!open) return
 
     const handleOutsideClick = (event: MouseEvent): void => {
-      if (rootRef.current?.contains(event.target as Node)) return
+      if (
+        rootRef.current?.contains(event.target as Node) ||
+        panelRef.current?.contains(event.target as Node)
+      )
+        return
       setOpen(false)
     }
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -323,43 +331,48 @@ export function MeetingExportMenu({
         </span>
       ) : null}
 
-      {open ? (
-        <div
-          id={dialogId}
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby={headingId}
-          aria-describedby={descriptionId}
-          className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-border bg-bg-card p-3 shadow-lg"
-        >
-          <h2 id={headingId} className="text-[12px] font-semibold text-ink">
-            {t('ui.exportNotes')}
-          </h2>
-          <p id={descriptionId} className="mt-0.5 text-[10.5px] leading-4 text-ink-faint">
-            {t('ui.chooseAFileFormat')}
-          </p>
+      {open
+        ? createPortal(
+            <div
+              ref={panelRef}
+              style={placement}
+              id={dialogId}
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby={headingId}
+              aria-describedby={descriptionId}
+              className="z-50 overflow-y-auto rounded-xl border border-border bg-bg-card p-3 shadow-lg"
+            >
+              <h2 id={headingId} className="text-[12px] font-semibold text-ink">
+                {t('ui.exportNotes')}
+              </h2>
+              <p id={descriptionId} className="mt-0.5 text-[10.5px] leading-4 text-ink-faint">
+                {t('ui.chooseAFileFormat')}
+              </p>
 
-          <div className="mt-2 flex flex-col gap-1 border-t border-border-subtle pt-2">
-            {EXPORT_FORMATS.map((option, index) => (
-              <button
-                key={option.format}
-                ref={index === 0 ? firstFormatRef : undefined}
-                type="button"
-                onClick={() => void handleExport(option.format)}
-                className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[12px] font-medium text-ink">{option.label}</span>
-                  <span className="block text-[10.5px] text-ink-faint">
-                    {t(option.description)}
-                  </span>
-                </span>
-                <span className="font-mono text-[10px] text-ink-faint">{option.extension}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
+              <div className="mt-2 flex flex-col gap-1 border-t border-border-subtle pt-2">
+                {EXPORT_FORMATS.map((option, index) => (
+                  <button
+                    key={option.format}
+                    ref={index === 0 ? firstFormatRef : undefined}
+                    type="button"
+                    onClick={() => void handleExport(option.format)}
+                    className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12px] font-medium text-ink">{option.label}</span>
+                      <span className="block text-[10.5px] text-ink-faint">
+                        {t(option.description)}
+                      </span>
+                    </span>
+                    <span className="font-mono text-[10px] text-ink-faint">{option.extension}</span>
+                  </button>
+                ))}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
       {feedback?.kind === 'success' ? (
         <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">

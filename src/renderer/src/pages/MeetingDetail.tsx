@@ -198,11 +198,13 @@ function EditableText({
   value,
   onSave,
   className,
+  truncate = false,
   as: Tag = 'span'
 }: {
   value: string
   onSave: (newValue: string) => void
   className?: string
+  truncate?: boolean
   as?: 'span' | 'div'
 }) {
   const [editing, setEditing] = useState(false)
@@ -234,6 +236,7 @@ function EditableText({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       inputRef.current?.blur()
@@ -264,8 +267,17 @@ function EditableText({
 
   return (
     <Tag
+      role="button"
+      tabIndex={0}
+      title={value}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setEditing(true)
+        }
+      }}
       onClick={() => setEditing(true)}
-      className={`${className} cursor-text hover:bg-bg-accent/60 rounded px-0.5 -mx-0.5 transition-colors`}
+      className={`${className} ${truncate ? 'line-clamp-2' : ''} cursor-text hover:bg-bg-accent/60 rounded px-0.5 -mx-0.5 transition-colors focus-visible:outline-2 focus-visible:outline-sage`}
     >
       {value}
     </Tag>
@@ -1427,7 +1439,7 @@ export function MeetingDetail() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-6 py-4 border-b border-border flex flex-wrap items-start justify-between gap-4 min-w-0">
-        <div className="flex-1 min-w-0">
+        <div className="flex-[1_1_14rem] min-w-0 max-w-full">
           <div className="flex items-baseline gap-1.5 text-[12px]">
             <button
               onClick={() => navigate('/recordings')}
@@ -1437,7 +1449,7 @@ export function MeetingDetail() {
             </button>
             <span className="text-ink-faint shrink-0">/</span>
             <EditableText
-              value={detail?.title ?? 'Meeting'}
+              value={detail?.title ?? t('common.loading')}
               onSave={(newTitle) => {
                 if (!id) return
                 const meetingId = id
@@ -1453,6 +1465,7 @@ export function MeetingDetail() {
                   'meeting title'
                 )
               }}
+              truncate
               className="text-ink font-semibold flex-1 min-w-0"
             />
           </div>
@@ -1478,7 +1491,7 @@ export function MeetingDetail() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
           <TranscriptionBadge
             status={transcriptionStatus}
             hasMemoryFailure={transcriptionMemoryFailure != null}

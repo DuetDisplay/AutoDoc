@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
 import { meetingLanguageName } from '../services/meeting-language-name'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import {
@@ -33,24 +35,6 @@ function isNotesModelLocked(
   return !availability.availableLanguages.includes(language)
 }
 
-/**
- * The area the list can use: the window, narrowed by any scrolling ancestor
- * (such as the Settings page), whose overflow would clip the list.
- */
-function visibleBounds(element: HTMLElement): { top: number; bottom: number } {
-  let top = 0
-  let bottom = window.innerHeight
-  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
-    const overflowY = getComputedStyle(parent).overflowY
-    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'hidden') {
-      const rect = parent.getBoundingClientRect()
-      top = Math.max(top, rect.top)
-      bottom = Math.min(bottom, rect.bottom)
-    }
-  }
-  return { top, bottom }
-}
-
 export function MeetingLanguagePicker({
   value,
   onChange,
@@ -77,14 +61,10 @@ export function MeetingLanguagePicker({
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [isOpen, setIsOpen] = useState(false)
-  // Fit the list in the window: open downward when there is room, otherwise
-  // toward the larger side, and cap the height to that side's space.
-  const [placement, setPlacement] = useState<{ above: boolean; maxHeight: number }>({
-    above: false,
-    maxHeight: 256
-  })
+  const placement = useAnchoredPopover(isOpen, triggerRef, 256, 256)
   const selected = getMeetingLanguageDefinition(value)
   const selectedIndex = Math.max(
     0,
@@ -93,15 +73,18 @@ export function MeetingLanguagePicker({
   const [activeIndex, setActiveIndex] = useState(selectedIndex)
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen || placement.visibility === 'hidden') return
     optionRefs.current[activeIndex]?.focus()
-  }, [activeIndex, isOpen])
+  }, [activeIndex, isOpen, placement.visibility])
 
   useEffect(() => {
     if (!isOpen) return
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      if (
+        !rootRef.current?.contains(event.target as Node) &&
+        !listRef.current?.contains(event.target as Node)
+      ) {
         setIsOpen(false)
       }
     }
@@ -111,18 +94,6 @@ export function MeetingLanguagePicker({
   }, [isOpen])
 
   const open = (index = selectedIndex) => {
-    const rect = triggerRef.current?.getBoundingClientRect()
-    if (rect && triggerRef.current) {
-      const margin = 12
-      const bounds = visibleBounds(triggerRef.current)
-      const below = bounds.bottom - rect.bottom - margin
-      const above = rect.top - bounds.top - margin
-      const openAbove = below < 256 && above > below
-      setPlacement({
-        above: openAbove,
-        maxHeight: Math.max(96, Math.min(256, openAbove ? above : below))
-      })
-    }
     setActiveIndex(index)
     setIsOpen(true)
   }
@@ -202,7 +173,10 @@ export function MeetingLanguagePicker({
       ref={rootRef}
       className="relative min-w-0 max-w-full"
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        if (
+          !event.currentTarget.contains(event.relatedTarget as Node | null) &&
+          !listRef.current?.contains(event.relatedTarget as Node | null)
+        ) {
           setIsOpen(false)
         }
       }}
@@ -245,119 +219,120 @@ export function MeetingLanguagePicker({
         </svg>
       </button>
 
-      {isOpen && (
-        <div
-          id={listboxId}
-          role="listbox"
-          aria-label={t('meeting.languageOptionsAria')}
-          style={{ maxHeight: placement.maxHeight }}
-          className={`absolute right-0 z-50 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg ${
-            placement.above ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
-          }`}
-        >
-          {options.map((definition, index) => {
-            const isSelected = definition.code === selected.code
-            const isLocked = index >= firstLockedIndex && firstLockedIndex !== -1
-            const engineState = availability.languageStates?.[definition.code]
-            const needsDownload = (engineState?.firstUseDownloadBytes ?? 0) > 0
-            const selectableNote = isLocked
-              ? null
-              : offline && needsDownload
-                ? t('picker.offlineDownload')
-                : meetingLanguageSelectableNote(engineState)
-            const lockedReason =
-              isLocked && engineState?.availability === 'locked'
-                ? t('ui.thisLanguageIsnTAvailableOnThisPC2')
-                : null
-            return (
-              <Fragment key={definition.code}>
-                {index === firstNotesLockedIndex && firstNotesLockedIndex !== -1 && (
-                  <div
-                    role="presentation"
-                    className="mx-1 mb-1 mt-1.5 border-t border-border-subtle px-2 pb-1 pt-2 text-[10px] font-medium text-ink-faint"
+      {isOpen &&
+        createPortal(
+          <div
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-label={t('meeting.languageOptionsAria')}
+            style={placement}
+            className="z-50 overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg"
+          >
+            {options.map((definition, index) => {
+              const isSelected = definition.code === selected.code
+              const isLocked = index >= firstLockedIndex && firstLockedIndex !== -1
+              const engineState = availability.languageStates?.[definition.code]
+              const needsDownload = (engineState?.firstUseDownloadBytes ?? 0) > 0
+              const selectableNote = isLocked
+                ? null
+                : offline && needsDownload
+                  ? t('picker.offlineDownload')
+                  : meetingLanguageSelectableNote(engineState)
+              const lockedReason =
+                isLocked && engineState?.availability === 'locked'
+                  ? t('ui.thisLanguageIsnTAvailableOnThisPC2')
+                  : null
+              return (
+                <Fragment key={definition.code}>
+                  {index === firstNotesLockedIndex && firstNotesLockedIndex !== -1 && (
+                    <div
+                      role="presentation"
+                      className="mx-1 mb-1 mt-1.5 border-t border-border-subtle px-2 pb-1 pt-2 text-[10px] font-medium text-ink-faint"
+                    >
+                      {navigator.userAgent.includes('Windows')
+                        ? t('picker.needsPowerfulPc')
+                        : t('picker.needsMemory')}
+                    </div>
+                  )}
+                  <button
+                    ref={(node) => {
+                      optionRefs.current[index] = node
+                    }}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-disabled={isLocked || undefined}
+                    tabIndex={activeIndex === index ? 0 : -1}
+                    onClick={() => select(definition.code)}
+                    onMouseMove={() => setActiveIndex(index)}
+                    onKeyDown={(event) => handleOptionKeyDown(event, index, definition.code)}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage ${
+                      isLocked
+                        ? 'cursor-not-allowed text-ink-faint'
+                        : isSelected
+                          ? 'bg-bg-accent font-semibold text-ink hover:bg-bg-accent'
+                          : 'text-ink-muted hover:bg-bg-accent'
+                    }`}
                   >
-                    {navigator.userAgent.includes('Windows')
-                      ? t('picker.needsPowerfulPc')
-                      : t('picker.needsMemory')}
-                  </div>
-                )}
-                <button
-                  ref={(node) => {
-                    optionRefs.current[index] = node
-                  }}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  aria-disabled={isLocked || undefined}
-                  tabIndex={activeIndex === index ? 0 : -1}
-                  onClick={() => select(definition.code)}
-                  onMouseMove={() => setActiveIndex(index)}
-                  onKeyDown={(event) => handleOptionKeyDown(event, index, definition.code)}
-                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage ${
-                    isLocked
-                      ? 'cursor-not-allowed text-ink-faint'
-                      : isSelected
-                        ? 'bg-bg-accent font-semibold text-ink hover:bg-bg-accent'
-                        : 'text-ink-muted hover:bg-bg-accent'
-                  }`}
-                >
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="text-pretty [overflow-wrap:anywhere]">
-                        {meetingLanguageName(definition.code)}
-                      </span>
-                      {definition.code === 'en' && (
-                        <span className="text-[10px] font-medium text-ink-faint">
-                          {t('picker.defaultOptimized')}
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="text-pretty [overflow-wrap:anywhere]">
+                          {meetingLanguageName(definition.code)}
                         </span>
-                      )}
-                      {selectableNote && (
-                        <span className="text-[10px] font-medium text-ink-faint">
-                          {selectableNote}
+                        {definition.code === 'en' && (
+                          <span className="text-[10px] font-medium text-ink-faint">
+                            {t('picker.defaultOptimized')}
+                          </span>
+                        )}
+                        {selectableNote && (
+                          <span className="text-[10px] font-medium text-ink-faint">
+                            {selectableNote}
+                          </span>
+                        )}
+                      </span>
+                      {lockedReason && (
+                        <span className="text-[10px] font-medium leading-snug text-ink-faint">
+                          {lockedReason}
                         </span>
                       )}
                     </span>
-                    {lockedReason && (
-                      <span className="text-[10px] font-medium leading-snug text-ink-faint">
-                        {lockedReason}
+                    {isSelected && (
+                      <span aria-hidden="true" className="text-sage-dark">
+                        ✓
                       </span>
                     )}
-                  </span>
-                  {isSelected && (
-                    <span aria-hidden="true" className="text-sage-dark">
-                      ✓
-                    </span>
-                  )}
-                  {isLocked && (
-                    <svg
-                      aria-hidden="true"
-                      focusable="false"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      className="size-3 text-ink-faint"
-                    >
-                      <rect
-                        x="3.5"
-                        y="7"
-                        width="9"
-                        height="6.5"
-                        rx="1.5"
-                        stroke="currentColor"
-                        strokeWidth="1.3"
-                      />
-                      <path
-                        d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7"
-                        stroke="currentColor"
-                        strokeWidth="1.3"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </Fragment>
-            )
-          })}
-        </div>
-      )}
+                    {isLocked && (
+                      <svg
+                        aria-hidden="true"
+                        focusable="false"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        className="size-3 text-ink-faint"
+                      >
+                        <rect
+                          x="3.5"
+                          y="7"
+                          width="9"
+                          height="6.5"
+                          rx="1.5"
+                          stroke="currentColor"
+                          strokeWidth="1.3"
+                        />
+                        <path
+                          d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7"
+                          stroke="currentColor"
+                          strokeWidth="1.3"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </Fragment>
+              )
+            })}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

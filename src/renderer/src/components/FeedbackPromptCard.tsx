@@ -60,7 +60,7 @@ function SupportStatus({
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <p>{t('nav.mailDidNotOpen')}</p>
-      <span className="break-all font-medium text-ink-muted select-text">
+      <span className="min-w-0 max-w-full break-all font-medium text-ink-muted select-text">
         {supportResult.address}
       </span>
       <button

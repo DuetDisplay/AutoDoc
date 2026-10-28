@@ -108,13 +108,16 @@ export function Search() {
               d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
             />
           </svg>
-          <input
-            type="text"
+          <textarea
+            rows={1}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) event.preventDefault()
+            }}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             aria-label={t('search.placeholderMeetings')}
             placeholder={t('search.placeholderMeetings')}
-            className="w-full min-w-0 pl-10 pr-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors"
+            className="block w-full min-w-0 min-h-[44px] max-h-40 resize-none [field-sizing:content] pl-10 pr-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors"
             autoFocus
           />
         </div>

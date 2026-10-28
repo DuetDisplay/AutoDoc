@@ -42,7 +42,7 @@ export function AskAI(): ReactElement {
   const [loading, setLoading] = useState(false)
   const [ollamaReady, setOllamaReady] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeStreamCleanupRef = useRef<(() => void) | null>(null)
   const activeRequestIdRef = useRef<string | null>(null)
   const activeAssistantMessageIdRef = useRef<string | null>(null)
@@ -251,6 +251,7 @@ export function AskAI(): ReactElement {
   }
 
   const handleKeyDown = (e: KeyboardEvent): void => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -396,17 +397,17 @@ export function AskAI(): ReactElement {
       </div>
 
       <div className="px-6 py-4 border-t border-border">
-        <div className="flex gap-2 max-w-2xl mx-auto">
-          <input
+        <div className="flex flex-wrap items-end justify-end gap-2 max-w-2xl mx-auto">
+          <textarea
             ref={inputRef}
-            type="text"
+            rows={1}
             value={draftInput}
             onChange={(e) => setDraftInput(e.target.value)}
             onKeyDown={handleKeyDown}
             aria-label={t('askAi.placeholder')}
             placeholder={t('askAi.placeholder')}
             disabled={loading}
-            className="flex-1 min-w-0 px-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
+            className="flex-[1_1_14rem] min-w-0 max-w-full min-h-[44px] max-h-40 resize-none [field-sizing:content] px-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
             autoFocus
           />
           {loading ? (

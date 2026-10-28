@@ -178,46 +178,50 @@ function UpdateReadyPrompt({
 
   if (showUpToDateBanner) {
     return (
-      <div className="mx-6 mt-2 mb-0 bg-sage-light border border-sage/25 rounded-lg px-4 py-3 flex flex-wrap items-start gap-3 shadow-sm animate-[slideDown_300ms_ease] min-w-0">
-        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-bg-card text-sage shadow-[inset_0_0_0_1px_rgba(122,158,126,0.34)] [animation:checkCirclePop_420ms_ease-out]">
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 20 20"
-            className="size-3.5 [animation:checkStroke_520ms_ease-out_120ms_both]"
-            fill="none"
-          >
-            <path
-              d="M5 10.3 8.3 13.5 15.2 6.5"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-semibold leading-5 text-sage-dark">
-            {t('ui.youReUpToDate')}
-          </p>
-          <p className="text-[11px] leading-5 text-ink-muted">
-            {t('ui.autoDocIsRunningTheLatestAvailableVersion')}
-          </p>
+      <div className="app-banner mx-6 mt-2 mb-0 bg-sage-light border border-sage/25 rounded-lg px-4 py-3 shadow-sm animate-[slideDown_300ms_ease] min-w-0">
+        <div className="app-banner-row">
+          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-bg-card text-sage shadow-[inset_0_0_0_1px_rgba(122,158,126,0.34)] [animation:checkCirclePop_420ms_ease-out]">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="size-3.5 [animation:checkStroke_520ms_ease-out_120ms_both]"
+              fill="none"
+            >
+              <path
+                d="M5 10.3 8.3 13.5 15.2 6.5"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <div className="app-banner-copy">
+            <p className="text-[12px] font-semibold leading-5 text-sage-dark">
+              {t('ui.youReUpToDate')}
+            </p>
+            <p className="text-[11px] leading-5 text-ink-muted">
+              {t('ui.autoDocIsRunningTheLatestAvailableVersion')}
+            </p>
+          </div>
+          <div className="app-banner-actions">
+            <button
+              type="button"
+              aria-label={t('ui.dismissUpToDateMessage')}
+              onClick={() => setShowUpToDateBanner(false)}
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark transition-colors hover:bg-bg-card hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none">
+                <path
+                  d="M4 4 12 12M12 4 4 12"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          aria-label={t('ui.dismissUpToDateMessage')}
-          onClick={() => setShowUpToDateBanner(false)}
-          className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark transition-colors hover:bg-bg-card hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
-        >
-          <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none">
-            <path
-              d="M4 4 12 12M12 4 4 12"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
       </div>
     )
   }
@@ -257,35 +261,39 @@ function UpdateReadyPrompt({
   }
 
   return (
-    <div className="mx-6 mt-2 mb-0 bg-bg-card border border-sage/30 rounded-lg px-4 py-3 flex flex-wrap items-center gap-3 shadow-sm animate-[slideDown_300ms_ease] min-w-0">
-      <span className="h-2 w-2 rounded-full bg-sage" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <p className="text-[12px] font-semibold text-ink">
-          {isInstalling ? t('settings.restarting') : t('ui.updateReady')}
-        </p>
-        <p className="text-[11px] text-ink-muted">
-          {isInstalling
-            ? t('ui.autoDocWillReopenAfterTheUpdateInstalls')
-            : (installBlockedReason ?? t('settings.restartToUpdate', { version }))}
-        </p>
+    <div className="app-banner mx-6 mt-2 mb-0 bg-bg-card border border-sage/30 rounded-lg px-4 py-3 shadow-sm animate-[slideDown_300ms_ease] min-w-0">
+      <div className="app-banner-row">
+        <span className="mt-1.5 h-2 w-2 rounded-full bg-sage" aria-hidden="true" />
+        <div className="app-banner-copy">
+          <p className="text-[12px] font-semibold text-ink">
+            {isInstalling ? t('settings.restarting') : t('ui.updateReady')}
+          </p>
+          <p className="text-[11px] text-ink-muted">
+            {isInstalling
+              ? t('ui.autoDocWillReopenAfterTheUpdateInstalls')
+              : (installBlockedReason ?? t('settings.restartToUpdate', { version }))}
+          </p>
+        </div>
+        <div className="app-banner-actions">
+          {!isInstalling && (
+            <button
+              type="button"
+              onClick={() => setDismissedVersion(version)}
+              className="text-[12px] font-medium text-ink-muted hover:text-ink transition-colors"
+            >
+              {t('ui.later')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleRestart}
+            disabled={isInstalling || Boolean(installBlockedReason)}
+            className="i18n-btn text-[12px] font-semibold text-on-brand bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
+          >
+            {isInstalling ? t('settings.restarting') : t('ui.restart')}
+          </button>
+        </div>
       </div>
-      {!isInstalling && (
-        <button
-          type="button"
-          onClick={() => setDismissedVersion(version)}
-          className="text-[12px] font-medium text-ink-muted hover:text-ink transition-colors"
-        >
-          {t('ui.later')}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={handleRestart}
-        disabled={isInstalling || Boolean(installBlockedReason)}
-        className="i18n-btn text-[12px] font-semibold text-on-brand bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
-      >
-        {isInstalling ? t('settings.restarting') : t('ui.restart')}
-      </button>
     </div>
   )
 }
@@ -1018,7 +1026,7 @@ export default function App() {
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <Sidebar />
-        <main className="flex-1 min-w-0 overflow-hidden flex flex-col pt-[52px]">
+        <main className="app-main flex-1 min-w-0 min-h-0 overflow-x-hidden overflow-y-auto flex flex-col mt-[52px]">
           <RecordingBanner
             isRecording={isRecording}
             videoDisabled={videoDisabled}
@@ -1036,7 +1044,7 @@ export default function App() {
           <LowSpecMacProcessingBanner onVisibilityChange={setLowSpecBannerVisible} />
           <NotesEngineUpgradeBanner onVisibilityChange={setNotesEngineBannerVisible} />
           <UpdateReadyPrompt onVisibilityChange={setUpdatePromptVisible} />
-          <div className="flex-1 overflow-hidden">
+          <div className="app-route flex-1">
             <Routes>
               <Route
                 path={ROUTES.upcoming}

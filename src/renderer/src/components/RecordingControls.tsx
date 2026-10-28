@@ -1,3 +1,5 @@
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
+import { createPortal } from 'react-dom'
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
@@ -125,6 +127,7 @@ export function RecordingControls({
     openPicker,
     closePicker
   } = useRecordingPickerStore()
+  const placement = useAnchoredPopover(showPicker, triggerRef, 320, 384)
   useEffect(() => {
     if (!showPicker) return
     const onKeyDown = (event: KeyboardEvent) => {
@@ -148,13 +151,16 @@ export function RecordingControls({
         }
       }
     }
-    pickerRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       closePicker()
     }
   }, [showPicker, closePicker])
+  useEffect(() => {
+    if (showPicker && placement.visibility !== 'hidden')
+      pickerRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+  }, [showPicker, placement.visibility])
   const orderedSources = useMemo(() => {
     if (!detectedId) return sources
 
@@ -284,52 +290,55 @@ export function RecordingControls({
         {loading ? t('common.loading') : t('recording.record')}
       </button>
 
-      {showPicker && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
-          <div
-            ref={pickerRef}
-            role="dialog"
-            aria-labelledby={pickerTitleId}
-            className="absolute right-0 top-full mt-2 z-50 w-80 max-w-[calc(100vw-2rem)] bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto"
-          >
-            <p
-              id={pickerTitleId}
-              className="text-[11px] font-medium text-ink-muted mb-1 text-pretty [overflow-wrap:anywhere]"
+      {showPicker &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
+            <div
+              ref={pickerRef}
+              role="dialog"
+              aria-labelledby={pickerTitleId}
+              style={placement}
+              className="fixed z-50 bg-bg-card border border-border rounded-xl shadow-lg p-3 overflow-y-auto"
             >
-              {t(titleKey)}
-            </p>
-            {subtitleKey && (
-              <p className="text-[10px] text-ink-faint mb-2 text-pretty [overflow-wrap:anywhere]">
-                {t(subtitleKey)}
+              <p
+                id={pickerTitleId}
+                className="text-[11px] font-medium text-ink-muted mb-1 text-pretty [overflow-wrap:anywhere]"
+              >
+                {t(titleKey)}
               </p>
-            )}
-            <div className="flex flex-col gap-1.5">
-              {orderedSources.map((source) => (
-                <button
-                  key={source.id}
-                  onClick={() => handleSourceSelect(source)}
-                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage transition-colors text-left ${
-                    source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
-                  }`}
-                >
-                  <SourcePreview source={source} />
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <span className="i18n-ellipsis text-[12px] text-ink" title={source.name}>
-                      {source.name}
-                    </span>
-                    {source.id === detectedId && suggestionLabelKey && (
-                      <span className="text-[10px] text-status-connected font-medium text-pretty [overflow-wrap:anywhere]">
-                        {t(suggestionLabelKey)}
+              {subtitleKey && (
+                <p className="text-[10px] text-ink-faint mb-2 text-pretty [overflow-wrap:anywhere]">
+                  {t(subtitleKey)}
+                </p>
+              )}
+              <div className="flex flex-col gap-1.5">
+                {orderedSources.map((source) => (
+                  <button
+                    key={source.id}
+                    onClick={() => handleSourceSelect(source)}
+                    className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage transition-colors text-left ${
+                      source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
+                    }`}
+                  >
+                    <SourcePreview source={source} />
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <span className="i18n-ellipsis text-[12px] text-ink" title={source.name}>
+                        {source.name}
                       </span>
-                    )}
-                  </div>
-                </button>
-              ))}
+                      {source.id === detectedId && suggestionLabelKey && (
+                        <span className="text-[10px] text-status-connected font-medium text-pretty [overflow-wrap:anywhere]">
+                          {t(suggestionLabelKey)}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>,
+          document.body
+        )}
     </div>
   )
 }

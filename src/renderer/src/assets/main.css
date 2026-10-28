@@ -172,6 +172,84 @@ button,
   line-height: 1.25;
 }
 
+/* Banner controls move below the copy before the text column becomes cramped. */
+.app-banner {
+  container-type: inline-size;
+  flex-shrink: 0;
+}
+
+.app-banner-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.app-banner-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@container (max-width: 28rem) {
+  .app-banner-row > .app-banner-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+}
+
+.github-star-card {
+  container-type: inline-size;
+}
+
+@container (max-width: 24rem) {
+  .github-star-layout:not(.github-star-thanks) {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+    gap: 0.25rem 0.75rem;
+    padding-right: 0;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy {
+    display: contents;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > h2 {
+    align-self: center;
+    padding-right: 1.75rem;
+    line-height: 1.25;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > :is(p, div) {
+    grid-column: 1 / -1;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > div {
+    margin-top: 0.25rem;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > p {
+    line-height: 1.4;
+  }
+}
+
+/* Preserve a usable page below stacked banners; the main pane can scroll. */
+.app-route {
+  flex-shrink: 0;
+  min-height: 16rem;
+}
+
+@media (max-width: 640px) {
+  .app-route {
+    min-height: 24rem;
+  }
+}
+
 .i18n-chrome-row {
   display: flex;
   flex-wrap: wrap;
