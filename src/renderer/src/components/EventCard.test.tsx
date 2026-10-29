@@ -84,3 +84,17 @@ describe('EventCard', () => {
     expect(onSet).not.toHaveBeenCalled()
   })
 })
+
+it('returns focus to the auto-record trigger after keyboard selection', async () => {
+  const user = userEvent.setup()
+  const onSet = vi.fn()
+  render(
+    <EventCard event={{ ...mockEvent, recurringEventId: 'series-1' }} onSetAutoRecord={onSet} />
+  )
+  const trigger = screen.getByRole('button', { name: 'Enable auto-record' })
+  await user.click(trigger)
+  await user.keyboard('{End}{Enter}')
+  expect(onSet).toHaveBeenCalledWith('evt-1', 'series-1', 'series')
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+})

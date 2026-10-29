@@ -195,10 +195,10 @@ export function TranscriptView({
                 {formatTimestamp(group.startMs)}
               </span>
             )}
-            <div className="flex flex-col">
+            <div className="flex min-w-0 flex-1 flex-col">
               {speakerLabel && (
                 <span
-                  className="text-[11px] font-bold mb-0.5"
+                  className="text-[11px] font-bold mb-0.5 [overflow-wrap:anywhere]"
                   style={color ? { color: color.border } : undefined}
                 >
                   {speakerLabel}

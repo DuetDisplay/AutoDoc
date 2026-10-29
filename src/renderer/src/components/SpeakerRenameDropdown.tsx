@@ -37,12 +37,16 @@ export function SpeakerRenameDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [onClose])
 
+  const closeAndRestoreFocus = () => {
+    onClose()
+    opener.current?.focus({ preventScroll: true })
+  }
+
   const handleSubmit = () => {
     const trimmed = customName.trim()
     if (trimmed) {
       onRename(trimmed)
-      onClose()
-      opener.current?.focus({ preventScroll: true })
+      closeAndRestoreFocus()
     }
   }
 
@@ -53,6 +57,12 @@ export function SpeakerRenameDropdown({
         <div
           ref={ref}
           style={placement}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              closeAndRestoreFocus()
+            }
+          }}
           className="z-50 overflow-y-auto bg-bg-card border border-border rounded-lg shadow-lg"
         >
           {suggestions && suggestions.length > 0 && (
@@ -65,7 +75,7 @@ export function SpeakerRenameDropdown({
                   key={email}
                   onClick={() => {
                     onRename(email)
-                    onClose()
+                    closeAndRestoreFocus()
                   }}
                   className="block w-full text-left break-all px-3 py-2 text-[12px] text-ink hover:bg-bg-accent/60 transition-colors"
                 >
@@ -87,13 +97,8 @@ export function SpeakerRenameDropdown({
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return
                 if (e.key === 'Enter') handleSubmit()
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  onClose()
-                  opener.current?.focus({ preventScroll: true })
-                }
               }}
-              className="w-full border border-border rounded px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink-muted focus-visible:ring-2 focus-visible:ring-sage bg-transparent"
+              className="w-full border-2 border-control-border rounded px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink-muted focus-visible:ring-2 focus-visible:ring-sage bg-transparent"
             />
           </label>
         </div>,

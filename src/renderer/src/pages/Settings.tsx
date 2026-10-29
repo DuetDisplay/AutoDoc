@@ -993,9 +993,7 @@ export function Settings() {
                 </span>
               )}
               {updateStatus.state === 'checking' && (
-                <span className="text-[11px] text-ink-faint animate-pulse">
-                  {t('settings.checking')}
-                </span>
+                <span className="text-[11px] text-ink-faint">{t('settings.checking')}</span>
               )}
               {updateStatus.state === 'available' && (
                 <span className="text-[11px] text-sage font-medium">
@@ -1039,7 +1037,7 @@ export function Settings() {
                 </span>
               )}
               {updateStatus.state === 'installing' && (
-                <span className="text-[11px] text-sage font-medium animate-pulse">
+                <span className="text-[11px] text-sage font-medium">
                   {t('settings.restarting')}
                 </span>
               )}

@@ -516,7 +516,7 @@ export function Recordings({
                           />
                         )}
                         {rec.videoStatus === 'processing' && (
-                          <span className="text-[11px] text-ink-faint animate-pulse">
+                          <span className="text-[11px] text-ink-faint">
                             {t('recordings.processingVideo')}
                           </span>
                         )}

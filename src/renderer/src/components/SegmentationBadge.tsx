@@ -16,11 +16,11 @@ const STATUS_CONFIG: Record<SegmentationStatus, { label: MessageKey; className: 
   },
   'downloading-model': {
     label: 'ui.settingUpOllamaAndNotesModel',
-    className: 'text-ink-muted bg-bg-accent animate-pulse'
+    className: 'text-ink-muted bg-bg-accent'
   },
   segmenting: {
     label: 'meeting.generatingNotes',
-    className: 'text-ink-muted bg-bg-accent'
+    className: 'text-ink-secondary bg-bg-accent'
   },
   'no-notes': {
     label: 'ui.noNotesGenerated',
@@ -86,7 +86,7 @@ export function SegmentationBadge({
 
   return (
     <span
-      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${status === 'segmenting' && !showProgress ? 'animate-pulse' : ''} ${isInsufficientMemory ? 'cursor-default' : canRetry ? 'cursor-pointer hover:bg-bg-card' : ''}`}
+      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${isInsufficientMemory ? 'cursor-default' : canRetry ? 'cursor-pointer hover:bg-bg-card' : ''}`}
       onClick={canRetry ? onRetry : undefined}
     >
       {showProgress && (

@@ -86,6 +86,7 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
   const handleSelect = (mode: AutoRecordMode) => {
     onSetAutoRecord(event.id, event.recurringEventId, mode)
     setShowMenu(false)
+    triggerRef.current?.focus({ preventScroll: true })
   }
 
   return (

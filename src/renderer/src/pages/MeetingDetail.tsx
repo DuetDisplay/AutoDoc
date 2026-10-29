@@ -210,6 +210,8 @@ function EditableText({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const textRef = useRef<HTMLElement>(null)
+  const restoreFocusRef = useRef(false)
 
   useEffect(() => {
     setDraft(value)
@@ -222,6 +224,9 @@ function EditableText({
       // Auto-resize
       inputRef.current.style.height = 'auto'
       inputRef.current.style.height = inputRef.current.scrollHeight + 'px'
+    } else if (!editing && restoreFocusRef.current) {
+      restoreFocusRef.current = false
+      textRef.current?.focus({ preventScroll: true })
     }
   }, [editing])
 
@@ -239,9 +244,12 @@ function EditableText({
     if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      restoreFocusRef.current = true
       inputRef.current?.blur()
     }
     if (e.key === 'Escape') {
+      e.preventDefault()
+      restoreFocusRef.current = true
       setDraft(value)
       setEditing(false)
     }
@@ -267,6 +275,9 @@ function EditableText({
 
   return (
     <Tag
+      ref={(element) => {
+        textRef.current = element
+      }}
       role="button"
       tabIndex={0}
       title={value}
@@ -1134,7 +1145,8 @@ export function MeetingDetail() {
         ? 'unknown'
         : (segmentationErrorCode ??
             (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined))
-    )
+    ),
+    language
   )
 
   const notesWriteQueuesRef = useRef<Map<string, NotesWriteQueue>>(new Map())
@@ -1600,15 +1612,15 @@ export function MeetingDetail() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <h3 className="text-[13px] font-semibold text-ink">
-                      {layoutDegraded ? notesUserCopy('layout').title : failCopy.title}
+                      {layoutDegraded ? notesUserCopy('layout', language).title : failCopy.title}
                     </h3>
                     <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
-                      {layoutDegraded ? notesUserCopy('layout').body : failCopy.body}
+                      {layoutDegraded ? notesUserCopy('layout', language).body : failCopy.body}
                     </p>
-                    <div className="flex items-center gap-2 mt-3">
+                    <div className="flex flex-wrap items-center gap-2 mt-3">
                       <button
                         onClick={handleReprocessNotes}
-                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+                        className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
                       >
                         {segmentationErrorCode === 'scan_or_persist'
                           ? t('meeting.regenerateNotes')
@@ -1616,7 +1628,7 @@ export function MeetingDetail() {
                       </button>
                       <button
                         onClick={() => setActiveTab('transcript')}
-                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
+                        className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
                       >
                         {t('meeting.viewTranscript')}
                       </button>
@@ -1794,9 +1806,7 @@ export function MeetingDetail() {
           <div className="flex flex-col gap-4">
             {(detail?.videoStatus === 'processing' || videoRetryPending) && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted animate-pulse">
-                  {t('ui.finishingUpYourVideo')}
-                </p>
+                <p className="text-[13px] text-ink-muted">{t('ui.finishingUpYourVideo')}</p>
                 <p className="text-[11.5px] text-ink-faint mt-1">
                   {t('ui.yourTranscriptAndNotesAreReadyToUse')}
                 </p>
@@ -1887,8 +1897,8 @@ export function MeetingDetail() {
                 {t('ui.reRunTranscriptionOrNoteGenerationFromTheOriginalAudio')}
               </p>
               <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">
                       {t('meeting.transcript')}
                     </div>
@@ -1904,7 +1914,7 @@ export function MeetingDetail() {
                       transcriptionStatus === 'downloading' ||
                       transcriptionStatus === 'diarizing'
                     }
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="i18n-btn shrink-0 px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
                       ? t('meeting.processing')
@@ -1914,8 +1924,8 @@ export function MeetingDetail() {
                   </button>
                 </div>
                 <div className="border-t border-border" />
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">{t('meeting.notes')}</div>
                     <div className="text-[11px] text-ink-faint">
                       {t('meeting.reprocessNotesHint')}
@@ -1929,7 +1939,7 @@ export function MeetingDetail() {
                       segmentationStatus === 'queued' ||
                       segmentationStatus === 'downloading-model'
                     }
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="i18n-btn shrink-0 px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {segmentationStatus === 'segmenting'
                       ? t('meeting.processing')
@@ -1948,8 +1958,8 @@ export function MeetingDetail() {
                 {t('meeting.dangerZone')}
               </h3>
               <p className="text-[11.5px] text-ink-muted mb-4">{t('meeting.cannotUndo')}</p>
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-[1_1_12rem]">
                   <div className="text-[12.5px] font-semibold text-ink">
                     {t('meeting.deleteRecording')}
                   </div>
@@ -1960,12 +1970,12 @@ export function MeetingDetail() {
                 {!showDeleteConfirm ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark hover:bg-clay/20 transition-colors"
+                    className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark hover:bg-clay-light transition-colors"
                   >
                     {t('common.delete')}
                   </button>
                 ) : (
-                  <div className="flex items-center gap-2">
+                  <div className="flex max-w-full flex-wrap items-center gap-2">
                     <button
                       onClick={() => setShowDeleteConfirm(false)}
                       className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg text-ink-faint hover:text-ink transition-colors"

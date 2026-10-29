@@ -266,43 +266,47 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   if (step === null) return null
 
   return (
-    <div className="h-screen bg-bg-primary relative overflow-y-auto">
+    <div className="h-screen bg-bg-primary relative flex flex-col overflow-hidden">
       {/* macOS drag region */}
       <div
         className="fixed top-0 left-24 right-24 h-5"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
 
-      {/* Step dots (hidden on All Set screen) */}
-      {stepIndex !== null && stepIndex < totalDots && (
-        <div className="fixed top-7 left-1/2 -translate-x-1/2">
-          <StepDots total={totalDots} current={stepIndex} />
-        </div>
-      )}
+      <header className="relative h-20 shrink-0 bg-bg-primary">
+        {/* Keep navigation outside the scrolling instructions. */}
+        {stepIndex !== null && stepIndex < totalDots && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2">
+            <StepDots total={totalDots} current={stepIndex} />
+          </div>
+        )}
 
-      {stepIndex !== null && stepIndex > 0 && (
-        <button
-          type="button"
-          onClick={back}
-          className="fixed top-12 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          {t('ui.back')}
-        </button>
-      )}
+        {stepIndex !== null && stepIndex > 0 && (
+          <button
+            type="button"
+            onClick={back}
+            className="absolute top-8 left-6 max-w-[calc(100%-3rem)] px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors focus-visible:outline-2 focus-visible:outline-sage"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            {t('ui.back')}
+          </button>
+        )}
+      </header>
 
-      <div className="min-h-full flex flex-col">
-        {/* Content */}
-        <div className="flex flex-1 flex-col items-center justify-start pt-20 pb-4 [@media(min-height:520px)]:justify-center">
-          <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
-            {renderStep()}
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-full flex flex-col">
+          {/* Content */}
+          <div className="flex flex-1 flex-col items-center justify-start pt-2 pb-4 [@media(min-height:520px)]:justify-center">
+            <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
+              {renderStep()}
+            </div>
+          </div>
+
+          <div className="shrink-0 px-6 pb-4">
+            <OnboardingSupportLink />
           </div>
         </div>
-
-        <div className="shrink-0 px-6 pb-4">
-          <OnboardingSupportLink />
-        </div>
-      </div>
+      </main>
     </div>
   )
 }

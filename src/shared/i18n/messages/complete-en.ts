@@ -1,5 +1,26 @@
 // Complete UI messages, including transient and accessibility states.
 export const completeEn = {
+  'notesFailure.emptyTitle': 'No notes were generated',
+  'notesFailure.emptyBody':
+    'There wasn’t enough conversation to turn into notes. Your transcript is still available.',
+  'notesFailure.title': 'Notes couldn’t finish',
+  'notesFailure.memoryBody':
+    'Your computer doesn’t have enough free RAM to generate notes. Close other apps, then retry.',
+  'notesFailure.engineBody':
+    'The notes engine wasn’t ready yet. Stay connected if a download is in progress, then try again.',
+  'notesFailure.genericBody':
+    'AutoDoc hit a problem writing notes this time. Your transcript is still available.',
+  'notesFailure.layoutTitle': 'Your notes are ready in a basic format',
+  'notesFailure.layoutBody':
+    'AutoDoc hit an error while preparing the topic layout, so your generated notes are shown in categories below. Your transcript is still available.',
+  'update.startingBeforeRestart': 'AutoDoc is starting. Try again shortly.',
+  'update.processingBeforeRestart': 'AutoDoc is processing your meeting. Restart when it finishes.',
+  'update.downloadBeforeRestart': 'Wait for the model download to finish before restarting.',
+  'update.savingBeforeRestart': 'AutoDoc is saving your recording.',
+  'quit.savingTitle': 'AutoDoc is still saving your recording',
+  'quit.savingBody':
+    'AutoDoc stayed open to protect your recording. Wait for it to finish, then quit again.',
+
   'menu.file': 'File',
   'menu.edit': 'Edit',
   'menu.view': 'View',
@@ -493,5 +514,17 @@ export const completeEn = {
   'githubStar.thanks': 'Thanks for the support!',
   'githubStar.sourceCode': 'Source code on GitHub',
   'githubStar.starAutoDoc': 'Star AutoDoc',
-  'githubStar.openFailed': 'Couldn’t open GitHub. Try again.'
+  'githubStar.openFailed': 'Couldn’t open GitHub. Try again.',
+  'recording.systemAudioCaptureFailed':
+    'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.',
+  'recording.microphoneRevoked':
+    'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.',
+  'recording.microphoneBlocked':
+    'Microphone access is blocked. Enable microphone access in Windows Settings, then try recording again.',
+  'recording.microphoneMissing':
+    'No microphone was detected, or Windows privacy settings are hiding it. AutoDoc can still record system audio.',
+  'recording.microphoneBusy':
+    'Your microphone is unavailable or in use by another app. AutoDoc can still record system audio.',
+  'recording.microphoneStartFailed':
+    'AutoDoc could not start the microphone. Recordings can continue with system audio only.'
 } as const

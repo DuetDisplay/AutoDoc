@@ -215,6 +215,57 @@ describe('recording-capture', () => {
     vi.clearAllMocks()
   })
 
+  it('keeps a translation key on a screen-access failure toast', async () => {
+    const { startCapture } = await import('../recording-capture')
+    const { useToastStore } = await import('../../stores/toast')
+    useToastStore.setState({ activeToast: null })
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const stream = createMockStreamForConstraints(constraints)
+      if (constraints.audio === false) stream.getVideoTracks().forEach((track) => track.stop())
+      return Promise.resolve(stream)
+    })
+    await expect(startCapture('window:1', 'meeting-1')).rejects.toThrow()
+    expect(useToastStore.getState().activeToast).toMatchObject({
+      messageKey: 'recording.screenPermission',
+      action: { labelKey: 'upcoming.openSettings' }
+    })
+  })
+
+  it('keeps a translation key when system audio is unavailable', async () => {
+    const { startCapture, stopCapture } = await import('../recording-capture')
+    const { useToastStore } = await import('../../stores/toast')
+    useToastStore.setState({ activeToast: null })
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) =>
+      Promise.resolve(
+        constraints.audio && constraints.video
+          ? new MockMediaStream([new MockTrack('video')])
+          : createMockStreamForConstraints(constraints)
+      )
+    )
+    await startCapture('window:1', 'meeting-1')
+    expect(useToastStore.getState().activeToast).toMatchObject({
+      messageKey: 'recording.systemAudioCaptureFailed'
+    })
+    await stopCapture()
+  })
+
+  it('keeps a translation key when the microphone cannot start', async () => {
+    const { startCapture, stopCapture } = await import('../recording-capture')
+    const { useToastStore } = await import('../../stores/toast')
+    useToastStore.setState({ activeToast: null })
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) =>
+      constraints.audio && !constraints.video
+        ? Promise.reject(new DOMException('Denied', 'NotAllowedError'))
+        : Promise.resolve(createMockStreamForConstraints(constraints))
+    )
+    await startCapture('window:1', 'meeting-1')
+    expect(useToastStore.getState().activeToast).toMatchObject({
+      messageKey: 'recording.microphoneRevoked',
+      action: { labelKey: 'upcoming.openSettings' }
+    })
+    await stopCapture()
+  })
+
   it('does not show a recovery failure toast when stopping during capture recovery', async () => {
     const { startCapture, stopCapture } = await import('../recording-capture')
     const { useToastStore } = await import('../../stores/toast')

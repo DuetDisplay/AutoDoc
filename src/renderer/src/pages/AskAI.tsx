@@ -326,7 +326,7 @@ export function AskAI(): ReactElement {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
+                  className={`min-w-0 max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed [overflow-wrap:anywhere] ${
                     msg.role === 'user'
                       ? 'bg-sage text-on-brand rounded-br-md'
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
@@ -361,14 +361,14 @@ export function AskAI(): ReactElement {
                         )}
                       </div>
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
-                        <div className="grid gap-2">
+                        <div className="grid min-w-0 grid-cols-1 gap-2">
                           {msg.clarificationOptions.map((option) => (
                             <button
                               key={option.meetingId}
                               type="button"
                               disabled={loading}
                               onClick={() => handleClarificationSelect(msg, option)}
-                              className="text-left rounded-lg border border-border bg-bg px-3 py-2 hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-60"
+                              className="min-w-0 max-w-full text-left rounded-lg border border-border bg-bg px-3 py-2 [overflow-wrap:anywhere] hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-60"
                             >
                               <span className="block text-[13px] font-medium text-ink">
                                 {option.title}
@@ -377,7 +377,10 @@ export function AskAI(): ReactElement {
                                 {option.subtitle}
                               </span>
                               {option.notePreview && (
-                                <span className="mt-1 block text-[11px] text-ink-muted line-clamp-2">
+                                <span
+                                  title={option.notePreview}
+                                  className="mt-1 block text-[11px] text-ink-muted line-clamp-2"
+                                >
                                   {option.notePreview}
                                 </span>
                               )}

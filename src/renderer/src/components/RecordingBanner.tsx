@@ -36,7 +36,7 @@ export function RecordingBanner({
       <span className="text-[12px] font-mono text-ink-secondary ml-auto">{timeStr}</span>
       <button
         onClick={onStop}
-        className="text-[11px] font-medium text-status-recording hover:opacity-80 transition-opacity"
+        className="text-[11px] font-medium text-status-recording hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-status-recording"
       >
         {t('recording.stop')}
       </button>

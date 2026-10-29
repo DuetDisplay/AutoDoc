@@ -16,15 +16,15 @@ const STATUS_CONFIG: Record<TranscriptionStatus, { label: MessageKey; className:
   },
   downloading: {
     label: 'ui.downloadingModel',
-    className: 'text-ink-muted bg-bg-accent animate-pulse'
+    className: 'text-ink-muted bg-bg-accent'
   },
   transcribing: {
     label: 'ui.transcribing',
-    className: 'text-ink-muted bg-bg-accent'
+    className: 'text-ink-secondary bg-bg-accent'
   },
   diarizing: {
     label: 'ui.identifyingSpeakers',
-    className: 'text-ink-muted bg-bg-accent animate-pulse'
+    className: 'text-ink-muted bg-bg-accent'
   },
   complete: {
     label: 'ui.transcribed',
