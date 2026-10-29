@@ -314,6 +314,26 @@ test('audio-only reminder banner fits in every UI language', async () => {
       await page.waitForTimeout(2500)
     }
     await expect(banner).toBeVisible({ timeout: 20_000 })
+    // The reminder also appears in AutoDoc's own notification window; Open AutoDoc closes it.
+    await expect.poll(() => app.electronApp.windows().length).toBe(2)
+    const notice = app.electronApp.windows().find((window) => window !== page)!
+    await expect(notice.locator('.title')).toHaveText(translate('en', 'ui.recordingAudioOnly'))
+    await expect(notice.locator('.subtitle')).toHaveText(
+      translate('en', 'recording.audioOnlyReminderBody', { minutes: 5 })
+    )
+    await expect(notice.locator('#primary-action')).toHaveText(translate('en', 'ui.openAutoDoc'))
+    if (process.env.RELEASE_ALERTS_SHOT_DIR) {
+      await notice.screenshot({
+        path: path.join(process.env.RELEASE_ALERTS_SHOT_DIR, 'audio-only-notification-en.png')
+      })
+    }
+    await notice.locator('#primary-action').click()
+    await expect.poll(() => app.electronApp.windows().length).toBe(1)
+    await expect(
+      app.electronApp.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some((window) => window.isVisible())
+      )
+    ).resolves.toBe(true)
     // The reminder stays up while the UI language, theme and window size change.
     await eachPass(app.electronApp, page, async (language, minimum, label) => {
       const localized = page
