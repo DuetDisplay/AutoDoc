@@ -440,6 +440,6 @@
   "recording.audioOnlyReminderStop": "録音を停止",
   "recording.audioOnlyReminderKeep": "録音を続ける",
   "ui.usingCPUForThisRecordingSoItWillTakeLonger": "この録音ではCPUを使用しているため、時間がかかります。",
-  "ui.whyIsThisTakingLonger": "なぜ時間がかかっているのですか?",
+  "ui.whyIsThisTakingLonger": "なぜ時間がかかっているのですか？",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDocは通常、お使いのコンピュータのグラフィックチップを使って素早く文字起こしを行います。今回は、空きメモリが少なかったか、グラフィックチップが応答しなくなったため、この録音ではメインプロセッサに切り替えました。文字起こしの内容は変わりませんが、時間がかかります。次回は、他のアプリを閉じると改善することがあります。次の録音では、再び高速な方法を試します。"
 }
