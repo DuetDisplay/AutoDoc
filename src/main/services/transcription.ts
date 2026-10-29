@@ -185,8 +185,10 @@ export class TranscriptionService {
   private windowsWorkerShutdown: Promise<Error | null> | null = null
   /** Recording currently transcribed on CPU by per-recording recovery (surfaced as cpuFallback). */
   private windowsCpuFallbackMeetingId: string | null = null
-  /** Transcription passes past the memory gate and still running (e.g. the sibling source). */
-  private inFlightTranscriptionPasses = 0
+  /** Sources transcribing now, including between chunk passes (see runAsBusySource). */
+  private sourcesInProgress = 0
+  /** Passes currently inside the Windows memory gate; they are not about to free memory. */
+  private sourcesWaitingAtGate = 0
   private windowsMultilingualReady: WindowsMultilingualEngineReadyResult | null = null
 
   constructor(
@@ -1030,14 +1032,16 @@ export class TranscriptionService {
         processingProfile
       }
     })
-    const whisperOutput = await this.transcribeWithFallback(
-      tempAudioWav,
-      meetingId,
-      audioDuration,
-      tempPrefix,
-      tempFiles,
-      progressRange,
-      concurrentSources
+    const whisperOutput = await this.runAsBusySource(() =>
+      this.transcribeWithFallback(
+        tempAudioWav,
+        meetingId,
+        audioDuration,
+        tempPrefix,
+        tempFiles,
+        progressRange,
+        concurrentSources
+      )
     )
     console.log(
       `[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
@@ -1065,6 +1069,20 @@ export class TranscriptionService {
     }))
 
     return stitch ? this.stitchAdjacentTranscriptFragments(transcripts) : transcripts
+  }
+
+  /**
+   * Marks a source busy from the start to the end of its speech run (all chunk
+   * passes, success or failure), so the memory gate can tell a sibling that is
+   * between chunks from one that is done.
+   */
+  private async runAsBusySource<T>(run: () => Promise<T>): Promise<T> {
+    this.sourcesInProgress += 1
+    try {
+      return await run()
+    } finally {
+      this.sourcesInProgress -= 1
+    }
   }
 
   private async diarizeTranscriptsForSource(
@@ -2022,24 +2040,22 @@ export class TranscriptionService {
     const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
     tempFiles.push(jsonPath)
     if (process.platform === 'win32') {
-      await this.waitForWindowsTranscriptionMemory(meetingId)
+      this.sourcesWaitingAtGate += 1
+      try {
+        await this.waitForWindowsTranscriptionMemory(meetingId)
+      } finally {
+        this.sourcesWaitingAtGate -= 1
+      }
     }
-    // Counted only while the pass runs (not while waiting at the gate), so the
-    // gate can tell whether a sibling source is about to release memory.
-    this.inFlightTranscriptionPasses += 1
-    try {
-      await this.runWhisperPass(
-        audioWavPath,
-        meetingId,
-        audioDurationSec,
-        progressRange,
-        extraArgs,
-        concurrentSources,
-        window
-      )
-    } finally {
-      this.inFlightTranscriptionPasses -= 1
-    }
+    await this.runWhisperPass(
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      progressRange,
+      extraArgs,
+      concurrentSources,
+      window
+    )
     const whisperJson = await readFile(jsonPath, 'utf-8')
     return JSON.parse(whisperJson) as WhisperOutput
   }
@@ -3204,14 +3220,15 @@ export class TranscriptionService {
       return
     }
 
-    // Only another AutoDoc job (notes, another transcription) or a sibling
-    // source's pass in this job can free memory for us soon. Otherwise the GPU
-    // pass falls straight to the CPU recovery.
+    // Only another AutoDoc job (notes, another transcription) or a busy sibling
+    // source in this job can free memory for us soon. Otherwise the GPU pass
+    // falls straight to the CPU recovery. The caller is in both counters, so
+    // it cancels out; siblings waiting at the gate are not about to free anything.
     const skipExtendedWait =
       isGpuProfile &&
       this.localProcessingCoordinator != null &&
       !this.localProcessingCoordinator.hasOtherActiveWindowsWork() &&
-      this.inFlightTranscriptionPasses === 0
+      this.sourcesInProgress - this.sourcesWaitingAtGate <= 0
 
     if (skipExtendedWait) {
       logAutodocEvent({

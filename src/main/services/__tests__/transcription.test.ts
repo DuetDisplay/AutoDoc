@@ -2369,13 +2369,50 @@ describe('TranscriptionService', () => {
       expect(payloads.find((p) => p.status === 'complete')?.cpuFallback).toBe(true)
     })
 
-    it('does not skip the extended wait while the sibling source GPU pass is still running', async () => {
-      free = 4
+    function expectNoBusySources() {
+      expect((service as any).sourcesInProgress).toBe(0)
+      expect((service as any).sourcesWaitingAtGate).toBe(0)
+    }
+
+    async function setupDualSource() {
       await setup()
       fsMock.access.mockImplementation(async (file) => {
         if (String(file).endsWith('mic.webm') || String(file).endsWith('system.webm')) return
         throw new Error('ENOENT')
       })
+    }
+
+    // Runs `chunks` gated passes per source, like the chunked path does per window.
+    function mockChunkedSources(
+      chunks: number,
+      beforeChunk?: (speaker: string, chunk: number) => Promise<void> | undefined
+    ) {
+      vi.mocked((service as any).transcribeAudioSource).mockImplementation(
+        async (...args: any[]) => {
+          const speaker = args[2] as string
+          // Source A (me) passes the gate with plenty of memory; B then finds it depleted.
+          if (speaker === 'them') free = 1.5
+          await (service as any).runAsBusySource(async () => {
+            for (let chunk = 0; chunk < chunks; chunk += 1) {
+              // Await only when needed: A's first gate read must precede B's depletion.
+              const pending = beforeChunk?.(speaker, chunk)
+              if (pending) await pending
+              await (service as any).runWhisperPassAndRead(
+                `/tmp/${speaker}-${chunk}.wav`,
+                args[0],
+                60,
+                []
+              )
+            }
+          })
+          return []
+        }
+      )
+    }
+
+    it('does not skip the extended wait while the sibling source GPU pass is still running', async () => {
+      free = 4
+      await setupDualSource()
       let finishSiblingPass!: (value: unknown) => void
       workerClientMock.transcribe
         .mockImplementationOnce(
@@ -2391,14 +2428,7 @@ describe('TranscriptionService', () => {
         finishSiblingPass({ transcription: [] })
         return 3
       }
-      vi.mocked((service as any).transcribeAudioSource).mockImplementation(
-        async (...args: any[]) => {
-          // Source A passes the gate with plenty of memory; B then finds it depleted.
-          if (args[2] === 'them') free = 1.5
-          await (service as any).runWhisperPassAndRead('/tmp/' + args[2] + '.wav', args[0], 60, [])
-          return []
-        }
-      )
+      mockChunkedSources(1)
 
       await (service as any).processJob('floor-sibling')
 
@@ -2412,17 +2442,86 @@ describe('TranscriptionService', () => {
       expect(loggedEvents(RECOVERY)).toEqual([])
       expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
       expect(payloads.some((p) => p.cpuFallback === true)).toBe(false)
-      expect((service as any).inFlightTranscriptionPasses).toBe(0)
+      expectNoBusySources()
     })
 
-    it('releases the in-flight pass count when a pass fails', async () => {
+    it('does not skip the extended wait while the sibling source is between chunks', async () => {
+      free = 4
+      await setupDualSource()
+      let startSiblingNextChunk!: () => void
+      const siblingNextChunk = new Promise<void>((resolve) => {
+        startSiblingNextChunk = resolve
+      })
+      // A's first chunk is done and its second has not reached the gate when B's 60 s ends.
+      freeAt = (elapsedMs) => {
+        if (elapsedMs < 90_000) return 1.5
+        startSiblingNextChunk()
+        return 3
+      }
+      mockChunkedSources(2, (speaker, chunk) =>
+        speaker === 'me' && chunk === 1 ? siblingNextChunk : undefined
+      )
+
+      await (service as any).processJob('floor-between-chunks')
+
+      expect(
+        loggedEvents('Starting extended memory wait after timeout with low free memory')
+      ).toHaveLength(1)
+      expect(loggedEvents('Skipping extended memory wait: no other AutoDoc job is active')).toEqual(
+        []
+      )
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+      expect(payloads.some((p) => p.cpuFallback === true)).toBe(false)
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(4)
+      expectNoBusySources()
+    })
+
+    it('skips the extended wait when the sibling source is itself waiting at the gate', async () => {
+      free = 4
+      await setupDualSource()
+      // A's second chunk waits at the gate with B, so only something outside AutoDoc could help.
+      mockChunkedSources(2)
+
+      await (service as any).processJob('floor-both-waiting')
+
+      expect(
+        loggedEvents('Starting extended memory wait after timeout with low free memory')
+      ).toEqual([])
+      expect(
+        loggedEvents('Skipping extended memory wait: no other AutoDoc job is active').length
+      ).toBeGreaterThan(0)
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+      expect(loggedEvents(RECOVERY).map((event) => event.context?.reason)).toEqual([
+        'gpu-memory-floor'
+      ])
+      expect(payloads.find((p) => p.status === 'complete')?.cpuFallback).toBe(true)
+      expectNoBusySources()
+    })
+
+    it('releases the source counters after success, failure and a gate abort', async () => {
       free = 16
       await setup()
+      await (service as any).runAsBusySource(async () => {
+        await (service as any).runWhisperPassAndRead('/tmp/ok.wav', 'floor-leak', 60, [])
+      })
+      expectNoBusySources()
+
       workerClientMock.transcribe.mockRejectedValueOnce(new Error('unrelated ORT error'))
       await expect(
-        (service as any).runWhisperPassAndRead('/tmp/fail.wav', 'floor-leak', 60, [])
+        (service as any).runAsBusySource(() =>
+          (service as any).runWhisperPassAndRead('/tmp/fail.wav', 'floor-leak', 60, [])
+        )
       ).rejects.toThrow()
-      expect((service as any).inFlightTranscriptionPasses).toBe(0)
+      expectNoBusySources()
+
+      // The gate itself throws (below the floor, no other work): abort path.
+      free = 1.5
+      await expect(
+        (service as any).runAsBusySource(() =>
+          (service as any).runWhisperPassAndRead('/tmp/abort.wav', 'floor-leak', 60, [])
+        )
+      ).rejects.toThrow(/Insufficient free memory/)
+      expectNoBusySources()
     })
 
     it('tries GPU again for the next recording after a memory-floor fallback', async () => {
