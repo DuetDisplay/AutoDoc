@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Värskenduse installimiseks pole piisavalt ruumi",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Teie arvutis on kettaruum peaaegu otsas. Vabastage veidi ruumi ja proovige uuesti.",
   "ui.tryAgain": "Proovi uuesti",
+  "ui.notEnoughSpaceToSetUpTranscription": "Transkribeerimise seadistamiseks pole piisavalt ruumi",
   "ui.whyIsThisTakingLonger": "Miks see kauem aega võtab?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc kasutab kiireks transkribeerimiseks tavaliselt teie arvuti graafikakiipi. Seekord see ei õnnestunud: arvutil oli vähe vaba mälu või graafikakiip lakkas vastamast. Seetõttu lülitus AutoDoc selle salvestuse jaoks peaprotsessorile. Transkriptsioon on sama täielik, see lihtsalt võtab kauem aega. Järgmine kord võib aidata muude rakenduste sulgemine. Järgmine salvestus proovib jälle kiiremat moodust."
 }

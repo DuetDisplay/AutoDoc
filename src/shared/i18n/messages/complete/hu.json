@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Nincs elég hely a frissítés telepítéséhez",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "A számítógépén majdnem elfogyott a lemezterület. Szabadítson fel helyet, majd próbálja újra.",
   "ui.tryAgain": "Újrapróbálás",
+  "ui.notEnoughSpaceToSetUpTranscription": "Nincs elég hely az átírás beállításához",
   "ui.whyIsThisTakingLonger": "Miért tart tovább?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "Az AutoDoc általában a számítógép grafikus chipjét használja a gyors átíráshoz. Ezúttal nem sikerült: a számítógépen kevés volt a szabad memória, vagy a grafikus chip nem válaszolt. Ezért az AutoDoc ennél a felvételnél a fő processzorra váltott. Az átirat ugyanolyan teljes lesz, csak tovább tart. Legközelebb segíthet, ha bezár más alkalmazásokat. A következő felvétel újra megpróbálja a gyorsabb módot."
 }

@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Inte tillräckligt med utrymme för att installera uppdateringen",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Datorn har nästan slut på diskutrymme. Frigör lite utrymme och försök igen.",
   "ui.tryAgain": "Försök igen",
+  "ui.notEnoughSpaceToSetUpTranscription": "Inte tillräckligt med utrymme för att ställa in transkription",
   "ui.whyIsThisTakingLonger": "Varför tar det längre tid?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc använder vanligtvis datorns grafikchip för att transkribera snabbt. Den här gången gick det inte: datorn hade för lite ledigt minne, eller så slutade grafikchippet svara. AutoDoc bytte därför till huvudprocessorn för den här inspelningen. Din transkription blir lika fullständig, det tar bara längre tid. Att stänga andra appar kan hjälpa nästa gång. Din nästa inspelning provar det snabbare sättet igen."
 }

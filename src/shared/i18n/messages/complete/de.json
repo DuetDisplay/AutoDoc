@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Nicht genug Speicherplatz für die Installation des Updates",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Auf Ihrem Computer ist fast kein Speicherplatz mehr frei. Geben Sie Speicherplatz frei und versuchen Sie es dann erneut.",
   "ui.tryAgain": "Erneut versuchen",
+  "ui.notEnoughSpaceToSetUpTranscription": "Nicht genug Speicherplatz zum Einrichten der Transkription",
   "ui.whyIsThisTakingLonger": "Warum dauert das länger?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc nutzt normalerweise den Grafikchip Ihres Computers, um schnell zu transkribieren. Diesmal ging das nicht: Ihr Computer hatte zu wenig freien Speicher, oder der Grafikchip hat nicht mehr reagiert. Deshalb hat AutoDoc für diese Aufnahme auf den Hauptprozessor umgeschaltet. Ihr Transkript wird genauso vollständig, es dauert nur länger. Beim nächsten Mal kann es helfen, andere Apps zu schließen. Die nächste Aufnahme versucht es wieder auf dem schnelleren Weg."
 }

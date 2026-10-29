@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Päivityksen asentamiseen ei ole tarpeeksi tilaa",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Tietokoneen levytila on lähes lopussa. Vapauta tilaa ja yritä uudelleen.",
   "ui.tryAgain": "Yritä uudelleen",
+  "ui.notEnoughSpaceToSetUpTranscription": "Litteroinnin määrittämiseen ei ole tarpeeksi tilaa",
   "ui.whyIsThisTakingLonger": "Miksi tämä kestää kauemmin?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc käyttää yleensä tietokoneen grafiikkapiiriä litterointiin nopeasti. Tällä kertaa se ei onnistunut: tietokoneessa oli vähän vapaata muistia tai grafiikkapiiri lakkasi vastaamasta. Siksi AutoDoc siirtyi tämän tallenteen kohdalla pääsuorittimeen. Litteraatti on yhtä täydellinen, se vain kestää kauemmin. Muiden sovellusten sulkeminen voi auttaa ensi kerralla. Seuraava tallenne kokeilee taas nopeampaa tapaa."
 }

@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Nema dovoljno prostora za instalaciju ažuriranja",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Vašem računalu ponestaje prostora na disku. Oslobodite prostor i pokušajte ponovno.",
   "ui.tryAgain": "Pokušaj ponovno",
+  "ui.notEnoughSpaceToSetUpTranscription": "Nema dovoljno prostora za postavljanje transkripcije",
   "ui.whyIsThisTakingLonger": "Zašto ovo traje dulje?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc obično koristi grafički čip vašeg računala za brzu transkripciju. Ovaj put nije mogao: računalu je ponestalo slobodne memorije ili je grafički čip prestao odgovarati. Zato je AutoDoc za ovu snimku prešao na glavni procesor. Transkripcija će biti jednako potpuna, samo traje dulje. Zatvaranje drugih aplikacija može pomoći sljedeći put. Sljedeća snimka ponovno će pokušati brži način."
 }

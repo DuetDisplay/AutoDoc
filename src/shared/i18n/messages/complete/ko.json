@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "업데이트를 설치할 공간이 부족합니다",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "컴퓨터의 디스크 공간이 거의 없습니다. 공간을 확보한 후 다시 시도하세요.",
   "ui.tryAgain": "다시 시도",
+  "ui.notEnoughSpaceToSetUpTranscription": "전사를 설정할 공간이 부족합니다",
   "ui.whyIsThisTakingLonger": "왜 시간이 더 걸리나요?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc은 보통 컴퓨터의 그래픽 칩을 사용해 빠르게 받아쓰기를 합니다. 이번에는 사용 가능한 메모리가 부족하거나 그래픽 칩이 응답하지 않아 이 녹음에는 메인 프로세서로 전환했습니다. 받아쓰기 내용은 동일하게 완전하며, 시간만 더 걸립니다. 다음에는 다른 앱을 닫으면 도움이 될 수 있습니다. 다음 녹음에서는 다시 더 빠른 방법을 시도합니다."
 }

@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "空间不足，无法安装更新",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "您的电脑磁盘空间几乎已满。请释放一些空间，然后重试。",
   "ui.tryAgain": "重试",
+  "ui.notEnoughSpaceToSetUpTranscription": "空间不足，无法设置转录",
   "ui.whyIsThisTakingLonger": "为什么花的时间更长？",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc 通常使用电脑的图形芯片来快速转写。这次没能做到：电脑可用内存不足，或图形芯片停止响应。因此 AutoDoc 为这段录音改用了主处理器。转写内容同样完整，只是耗时更长。下次关闭其他应用可能会有帮助。下一次录音会再次尝试更快的方式。"
 }

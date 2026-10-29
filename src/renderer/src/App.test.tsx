@@ -599,6 +599,14 @@ describe('App', () => {
     act(() => api.emit('updater:status', createUpdateStatus({ state: 'checking' })))
     act(() => api.emit('updater:status', diskFull))
     expect(await screen.findByText('Not enough space to install the update')).toBeInTheDocument()
+
+    // Settings shows its own card, so the app-wide banner steps aside there.
+    act(() => {
+      window.location.hash = '#/settings'
+    })
+    await waitFor(() =>
+      expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+    )
   })
 
   it('shows a restart prompt when an update is ready', async () => {

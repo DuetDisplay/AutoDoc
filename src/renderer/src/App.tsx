@@ -177,7 +177,11 @@ function UpdateReadyPrompt({
         dismissedVersion !== (updateStatus.version ?? 'unknown')))
   )
   const diskFullVisible =
-    updateStatus?.state === 'error' && updateStatus.errorKind === 'disk-full' && !diskFullDismissed
+    updateStatus?.state === 'error' &&
+    updateStatus.errorKind === 'disk-full' &&
+    !diskFullDismissed &&
+    // Settings shows its own card in the About area.
+    location.pathname !== ROUTES.settings
   const promptVisible = showUpToDateBanner || downloadedPromptVisible || diskFullVisible
 
   useEffect(() => {

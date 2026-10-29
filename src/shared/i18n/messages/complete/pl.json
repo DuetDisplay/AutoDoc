@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Za mało miejsca na zainstalowanie aktualizacji",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Na komputerze kończy się miejsce na dysku. Zwolnij trochę miejsca i spróbuj ponownie.",
   "ui.tryAgain": "Spróbuj ponownie",
+  "ui.notEnoughSpaceToSetUpTranscription": "Za mało miejsca na skonfigurowanie transkrypcji",
   "ui.whyIsThisTakingLonger": "Dlaczego to trwa dłużej?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc zwykle używa układu graficznego komputera, aby szybko transkrybować. Tym razem to się nie udało: komputerowi brakowało wolnej pamięci albo układ graficzny przestał odpowiadać. Dlatego AutoDoc przełączył się dla tego nagrania na główny procesor. Transkrypcja będzie tak samo kompletna, tylko potrwa dłużej. Następnym razem może pomóc zamknięcie innych aplikacji. Kolejne nagranie znów spróbuje szybszej metody."
 }

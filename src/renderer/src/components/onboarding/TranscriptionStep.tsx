@@ -8,6 +8,7 @@ import {
 } from '../../../../shared/meeting-language'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
+import { DiskFullAlert } from '../DiskFullAlert'
 import { isNetworkErrorMessage } from '../../services/network-errors'
 
 const AUTO_RETRY_DELAY_MS = 1500
@@ -115,9 +116,17 @@ export function TranscriptionStep({
           })
         }
         setLanguageLocked(false)
-        setDiskFullSeen(status.errorKind === 'disk-full')
-        scheduleAutoRetry()
-        if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
+        const diskFull = status.errorKind === 'disk-full'
+        setDiskFullSeen(diskFull)
+        if (diskFull) {
+          // Retrying cannot succeed until space is freed, so show the alert right away.
+          clearRetryTimer()
+          setIsAutoRetrying(false)
+          setError(status.error ?? 'Unknown error')
+        } else {
+          scheduleAutoRetry()
+        }
+        if (!diskFull && autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
           setIsAutoRetrying(false)
           setError(status.error ?? 'Unknown error')
         }
@@ -220,9 +229,22 @@ export function TranscriptionStep({
     }
   }, [phase, meetingLanguage])
 
+  const handleRetry = async (): Promise<void> => {
+    clearRetryTimer()
+    autoRetryAttempts.current = 0
+    hasSeenMeaningfulSetupProgress.current = false
+    setError(null)
+    setLanguageLocked(false)
+    setIsAutoRetrying(false)
+    setDiskFullSeen(false)
+    setPhase('checking')
+    setPercent(0)
+    setSetupStatus({ phase: 'checking', percent: 0 })
+    await window.electronAPI.invoke('whisper:retry-setup')
+  }
+
   // A failed download because the machine is offline gets its own message.
   const lockedReason = languageLocked ? t('ui.thisLanguageIsnTAvailableOnThisPC2') : null
-  const diskFullFailure = setupStatus.errorKind === 'disk-full'
   const networkFailure = isNetworkErrorMessage(error ?? setupStatus.error)
   const languageLabel = meetingLanguageName(meetingLanguage ?? 'en')
 
@@ -284,7 +306,7 @@ export function TranscriptionStep({
           style={{ width: `${percent}%` }}
         />
       </div>
-      <div className="text-[12px] text-ink-faint mb-5">
+      <div className={`text-[12px] text-ink-faint mb-5 ${diskFullSeen ? 'hidden' : ''}`}>
         {lockedReason ??
           (networkFailure ? t('ui.noInternetConnection') : null) ??
           getWhisperSetupLabel(setupStatus, t) ??
@@ -335,42 +357,37 @@ export function TranscriptionStep({
         </div>
       )}
 
-      {error && (
+      {diskFullSeen && !lockedReason && (
+        <DiskFullAlert
+          variant="card"
+          title={t('ui.notEnoughSpaceToSetUpTranscription')}
+          body={t('ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain')}
+          actionLabel={t('ui.tryAgain')}
+          onAction={() => void handleRetry()}
+          className="max-w-[360px] mx-auto"
+        />
+      )}
+
+      {error && !diskFullSeen && (
         <div className="flex flex-col items-center gap-3">
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
             <h3 className="text-[14px] font-semibold text-ink mb-2">
-              {diskFullFailure
-                ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
-                : networkFailure
-                  ? t('ui.youReOffline')
-                  : t('ui.transcriptionSetupIsTakingLongerThanExpected')}
+              {networkFailure
+                ? t('ui.youReOffline')
+                : t('ui.transcriptionSetupIsTakingLongerThanExpected')}
             </h3>
-            {!diskFullFailure && (
-              <p className="text-[13px] text-ink-muted leading-relaxed">
-                {networkFailure
-                  ? t('ui.connectToTheInternetToDownloadTheLanguageSpeechModelThenPressRetry', {
-                      language: languageLabel
-                    })
-                  : t(
-                      'ui.youCanContinueAndAutoDocWillKeepWorkingOnThisInTheBackgroundOrRetryRightNow'
-                    )}
-              </p>
-            )}
+            <p className="text-[13px] text-ink-muted leading-relaxed">
+              {networkFailure
+                ? t('ui.connectToTheInternetToDownloadTheLanguageSpeechModelThenPressRetry', {
+                    language: languageLabel
+                  })
+                : t(
+                    'ui.youCanContinueAndAutoDocWillKeepWorkingOnThisInTheBackgroundOrRetryRightNow'
+                  )}
+            </p>
           </div>
           <button
-            onClick={async () => {
-              clearRetryTimer()
-              autoRetryAttempts.current = 0
-              hasSeenMeaningfulSetupProgress.current = false
-              setError(null)
-              setLanguageLocked(false)
-              setIsAutoRetrying(false)
-              setDiskFullSeen(false)
-              setPhase('checking')
-              setPercent(0)
-              setSetupStatus({ phase: 'checking', percent: 0 })
-              await window.electronAPI.invoke('whisper:retry-setup')
-            }}
+            onClick={handleRetry}
             className="i18n-btn px-6 py-2.5 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
             {t('ui.retry')}

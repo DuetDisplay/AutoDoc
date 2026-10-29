@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Spazio insufficiente per installare l'aggiornamento",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Il computer ha quasi esaurito lo spazio su disco. Libera un po' di spazio, poi riprova.",
   "ui.tryAgain": "Riprova",
+  "ui.notEnoughSpaceToSetUpTranscription": "Spazio insufficiente per configurare la trascrizione",
   "ui.whyIsThisTakingLonger": "Perché ci vuole più tempo?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc di solito usa il chip grafico del computer per trascrivere velocemente. Questa volta non è stato possibile: il computer aveva poca memoria libera oppure il chip grafico ha smesso di rispondere. Per questo AutoDoc è passato al processore principale per questa registrazione. La trascrizione sarà completa come sempre, ma richiederà più tempo. Chiudere altre app può aiutare la prossima volta. La prossima registrazione riproverà con il metodo più veloce."
 }

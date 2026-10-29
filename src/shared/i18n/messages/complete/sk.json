@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Nedostatok miesta na inštaláciu aktualizácie",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "V počítači sa takmer minulo miesto na disku. Uvoľnite miesto a skúste to znova.",
   "ui.tryAgain": "Skúsiť znova",
+  "ui.notEnoughSpaceToSetUpTranscription": "Nedostatok miesta na nastavenie prepisu",
   "ui.whyIsThisTakingLonger": "Prečo to trvá dlhšie?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc zvyčajne na rýchly prepis používa grafický čip počítača. Tentoraz to nešlo: počítaču chýbala voľná pamäť alebo grafický čip prestal reagovať. AutoDoc preto pre túto nahrávku prešiel na hlavný procesor. Prepis bude rovnako úplný, len to potrvá dlhšie. Nabudúce môže pomôcť zatvorenie iných aplikácií. Ďalšia nahrávka znova vyskúša rýchlejší spôsob."
 }

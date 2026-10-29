@@ -37,7 +37,7 @@ export function CpuFallbackNotice() {
 
   return (
     <div
-      className="app-banner mx-6 mt-3 mb-0 rounded-xl border border-sage/20 bg-bg-card px-4 py-3 shadow-sm"
+      className="app-banner mx-6 mt-3 mb-3 rounded-xl border border-sage/20 bg-bg-card px-4 py-3 shadow-sm"
       role="status"
     >
       <div className="app-banner-row">

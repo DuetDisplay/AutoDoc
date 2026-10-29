@@ -538,6 +538,7 @@ export const completeEn = {
   'ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain':
     'Your computer is almost out of disk space. Free up some space, then try again.',
   'ui.tryAgain': 'Try again',
+  'ui.notEnoughSpaceToSetUpTranscription': 'Not enough space to set up transcription',
   'ui.whyIsThisTakingLonger': 'Why is this taking longer?',
   'ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT':
     "AutoDoc usually uses your computer's graphics chip to transcribe quickly. This time it couldn't: your computer was low on free memory, or the graphics chip stopped responding. So AutoDoc switched to the main processor for this recording. Your transcript will be just as complete; it just takes longer. Closing other apps can help next time. Your next recording will try the faster way again."

@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Nepakanka vietos atnaujinimui įdiegti",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Jūsų kompiuteryje beveik nebėra vietos diske. Atlaisvinkite vietos ir bandykite dar kartą.",
   "ui.tryAgain": "Bandyti dar kartą",
+  "ui.notEnoughSpaceToSetUpTranscription": "Nepakanka vietos transkripcijai nustatyti",
   "ui.whyIsThisTakingLonger": "Kodėl tai trunka ilgiau?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc paprastai greitai transkribuoja naudodama jūsų kompiuterio grafikos lustą. Šįkart nepavyko: kompiuteriui trūko laisvosios atminties arba grafikos lustas nustojo reaguoti. Todėl šiam įrašui AutoDoc perjungė į pagrindinį procesorių. Transkripcija bus tokia pat išsami, tik užtruks ilgiau. Kitą kartą gali padėti uždarius kitas programas. Kitas įrašas vėl bandys greitesnį būdą."
 }

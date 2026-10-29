@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { TranscriptionStep } from '../TranscriptionStep'
 
 describe('TranscriptionStep', () => {
@@ -323,18 +323,24 @@ describe('TranscriptionStep', () => {
           await vi.advanceTimersByTimeAsync(1500)
         })
       }
-      expect(
-        screen.getAllByText('Not enough disk space. Free up space and try again.').length
-      ).toBeGreaterThan(0)
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent('Not enough space to set up transcription')
+      expect(alert).toHaveTextContent('Your computer is almost out of disk space.')
       expect(screen.queryByText("You're offline")).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
       expect(screen.queryByText('Still finishing transcription setup')).not.toBeInTheDocument()
+      vi.mocked(window.electronAPI.invoke).mockClear()
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+        await Promise.resolve()
+      })
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
   }, 10000)
 
-  it('hides the background-retry card during auto-retry after a disk-full failure', async () => {
+  it('shows the disk-full alert at once, and other errors still show the retry card', async () => {
     vi.useFakeTimers()
     let progress: ((status: Record<string, unknown>) => Promise<void>) | null = null
     vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
@@ -355,6 +361,7 @@ describe('TranscriptionStep', () => {
         await progress?.({ phase: 'error', percent: 0, error: 'ENOSPC', errorKind: 'disk-full' })
       })
       expect(screen.queryByText('Still finishing transcription setup')).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toBeInTheDocument()
       await act(async () => {
         await progress?.({ phase: 'error', percent: 0, error: 'boom' })
       })

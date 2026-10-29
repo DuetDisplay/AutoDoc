@@ -445,6 +445,7 @@
   "ui.notEnoughSpaceToInstallTheUpdate": "Ikke nok plads til at installere opdateringen",
   "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Din computer har næsten ikke mere diskplads. Frigør noget plads, og prøv igen.",
   "ui.tryAgain": "Prøv igen",
+  "ui.notEnoughSpaceToSetUpTranscription": "Ikke nok plads til at opsætte transskription",
   "ui.whyIsThisTakingLonger": "Hvorfor tager det længere tid?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc bruger normalt computerens grafikchip til at transskribere hurtigt. Denne gang var det ikke muligt: computeren havde for lidt ledig hukommelse, eller grafikchippen holdt op med at svare. Derfor skiftede AutoDoc til hovedprocessoren for denne optagelse. Din transskription bliver lige så komplet, det tager bare længere tid. Det kan hjælpe at lukke andre apps næste gang. Din næste optagelse prøver den hurtigere måde igen."
 }
