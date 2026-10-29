@@ -58,3 +58,22 @@ it('returns focus to Rename after selecting a suggested speaker name', async () 
   expect(onRename).toHaveBeenCalledWith('speaker_1', 'Alex')
   expect(trigger).toHaveFocus()
 })
+
+it('closes after a custom-name Enter without activating Rename again', async () => {
+  const { default: userEvent } = await import('@testing-library/user-event')
+  const user = userEvent.setup(),
+    onRename = vi.fn()
+  render(
+    <SpeakerLegend
+      speakers={{ speaker_1: { label: 'Morgan', suggestions: ['Alex'] } }}
+      speakerIds={['speaker_1']}
+      onRename={onRename}
+    />
+  )
+  const trigger = screen.getByRole('button', { name: 'rename' })
+  await user.click(trigger)
+  await user.type(screen.getByRole('textbox'), '確認済み Morgan{Enter}')
+  expect(onRename).toHaveBeenCalledWith('speaker_1', '確認済み Morgan')
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+})

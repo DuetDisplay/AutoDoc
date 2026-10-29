@@ -1,6 +1,6 @@
 import { displaySpeakerLabel } from '../services/speaker-label'
 import { useT } from '../services/i18n'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { SPEAKER_COLORS } from '../../../shared/constants'
 import { SpeakerRenameDropdown } from './SpeakerRenameDropdown'
 import type { SpeakerMap } from '../../../shared/types'
@@ -22,6 +22,7 @@ export function SpeakerLegend({ speakers, speakerIds, onRename }: SpeakerLegendP
   const t = useT()
 
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const renameAnchor = useRef<HTMLButtonElement | null>(null)
 
   return (
     <div className="flex min-w-0 max-w-full gap-4 px-4 py-3 bg-bg-card border border-border rounded-xl mb-3 items-center flex-wrap">
@@ -37,7 +38,10 @@ export function SpeakerLegend({ speakers, speakerIds, onRename }: SpeakerLegendP
             </span>
             {id !== 'me' && (
               <button
-                onClick={() => setRenamingId(renamingId === id ? null : id)}
+                onClick={(event) => {
+                  renameAnchor.current = event.currentTarget
+                  setRenamingId(renamingId === id ? null : id)
+                }}
                 className="i18n-btn shrink-0 text-[10px] text-ink-faint border border-border rounded px-1.5 py-px hover:text-ink-muted transition-colors"
               >
                 {t('ui.rename')}
@@ -45,6 +49,7 @@ export function SpeakerLegend({ speakers, speakerIds, onRename }: SpeakerLegendP
             )}
             {renamingId === id && (
               <SpeakerRenameDropdown
+                anchorRef={renameAnchor}
                 suggestions={info?.suggestions}
                 onRename={(name) => onRename(id, name)}
                 onClose={() => setRenamingId(null)}

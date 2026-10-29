@@ -8,7 +8,13 @@ describe('speaker rename', () => {
     const user = userEvent.setup(),
       onRename = vi.fn(),
       onClose = vi.fn()
-    render(<SpeakerRenameDropdown onRename={onRename} onClose={onClose} />)
+    render(
+      <SpeakerRenameDropdown
+        anchorRef={{ current: document.body }}
+        onRename={onRename}
+        onClose={onClose}
+      />
+    )
     const input = screen.getByRole('textbox', { name: 'Type a custom name...' })
     expect(screen.getByText('Type a custom name...')).toBeVisible()
     expect(input).toHaveFocus()
@@ -25,7 +31,13 @@ describe('speaker rename', () => {
     document.body.append(opener)
     opener.focus()
     try {
-      render(<SpeakerRenameDropdown onRename={onRename} onClose={onClose} />)
+      render(
+        <SpeakerRenameDropdown
+          anchorRef={{ current: opener }}
+          onRename={onRename}
+          onClose={onClose}
+        />
+      )
       await user.keyboard('{Escape}')
       expect(onClose).toHaveBeenCalledOnce()
       expect(onRename).not.toHaveBeenCalled()
