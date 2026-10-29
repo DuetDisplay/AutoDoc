@@ -56,7 +56,11 @@ interface NotificationOptions {
 
 export type NotificationDismissReason = 'user' | 'timeout'
 export type NotificationHideReason = string
-export type NotificationKind = 'meeting-detection' | 'notes-ready' | 'recording-started'
+export type NotificationKind =
+  | 'meeting-detection'
+  | 'notes-ready'
+  | 'recording-started'
+  | 'audio-only-reminder'
 
 export function onNotificationActivationSuppressionChange(
   listener: NotificationActivationSuppressionListener

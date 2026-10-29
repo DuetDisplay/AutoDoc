@@ -179,7 +179,8 @@ import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir, isScopedTestRuntime } from './services/test-runtime'
 import {
   onNotificationActivationSuppressionChange,
-  shouldSuppressNotificationActivation
+  shouldSuppressNotificationActivation,
+  showNotificationWindow
 } from './notification-window'
 import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
@@ -764,16 +765,22 @@ app.whenReady().then(async () => {
       onUpdateDownloaded: notifyUpdateReadyIfHidden
     })
   }
-  // OS reminder that a recording kept running audio-only; clicking it shows the in-app banner.
+  // Reminder that a recording kept running audio-only; opening AutoDoc shows the in-app banner.
+  // Uses the app's own notification window like notes-ready and meeting detection, because
+  // native toasts don't appear reliably on Windows (e.g. unregistered dev builds).
   ipcMain.on('recording:audio-only-reminder', (event, title: unknown, body: unknown) => {
     if (event.sender !== getMainWindow()?.webContents) return
     if (typeof title !== 'string' || typeof body !== 'string') return
-    if (!Notification.isSupported()) return
-    const notification = new Notification({ title: title.slice(0, 200), body: body.slice(0, 500) })
-    notification.on('click', () => {
-      focusMainWindow()
+    showNotificationWindow({
+      title: title.slice(0, 200),
+      body: body.slice(0, 500),
+      primaryActionLabel: tMain('ui.openAutoDoc'),
+      kind: 'audio-only-reminder',
+      onPrimaryAction: () => {
+        focusMainWindow()
+      },
+      onDismiss: () => {}
     })
-    notification.show()
   })
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {
