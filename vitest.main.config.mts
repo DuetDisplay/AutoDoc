@@ -15,7 +15,7 @@ export default defineConfig({
         test: {
           name: 'main',
           include: ['src/main/**/*.{test,spec}.{ts,tsx}', 'src/shared/**/*.{test,spec}.{ts,tsx}'],
-          exclude: [retrievalTests]
+          exclude: [retrievalTests, '**/._*']
         }
       },
       {

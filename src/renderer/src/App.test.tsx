@@ -84,7 +84,7 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/your meetings talk/i)).toBeInTheDocument()
+    expect(await screen.findByText('Choose your language')).toBeInTheDocument()
   })
 
   it('skips onboarding and renders the app shell for returning users', async () => {

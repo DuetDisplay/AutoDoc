@@ -12,6 +12,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/renderer/src/test/setup.ts'],
     include: ['src/renderer/src/**/*.{test,spec}.{ts,tsx}', 'src/shared/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['**/._*'],
     passWithNoTests: true,
     coverage: {
       provider: 'v8',
