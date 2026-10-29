@@ -99,6 +99,12 @@ export function registerPrefsIpc(
   ipcMain.handle('prefs:dismiss-meeting-language-announcement', () =>
     prefsStore.dismissMeetingLanguageAnnouncement()
   )
+  ipcMain.handle('prefs:get-ui-appearance-announcement-pending', () =>
+    prefsStore.isUiAppearanceAnnouncementPending()
+  )
+  ipcMain.handle('prefs:dismiss-ui-appearance-announcement', () =>
+    prefsStore.dismissUiAppearanceAnnouncement()
+  )
   ipcMain.handle('app:get-locale', () => app.getLocale())
 
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {

@@ -6,10 +6,14 @@ import { ROUTES } from '../../../shared/constants'
 
 export function MeetingLanguageAnnouncement({
   suppressed,
-  onVisibilityChange
+  onVisibilityChange,
+  pending: queuedPending,
+  onDismiss
 }: {
   suppressed: boolean
   onVisibilityChange: (visible: boolean) => void
+  pending?: boolean
+  onDismiss?: () => void
 }) {
   const t = useT()
 
@@ -19,9 +23,10 @@ export function MeetingLanguageAnnouncement({
   const [pending, setPending] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
-  const visible = pending && !suppressed
+  const visible = (queuedPending ?? pending) && !suppressed
 
   useEffect(() => {
+    if (queuedPending !== undefined) return
     let active = true
     void window.electronAPI
       .invoke('prefs:get-meeting-language-announcement-pending')
@@ -32,7 +37,7 @@ export function MeetingLanguageAnnouncement({
     return () => {
       active = false
     }
-  }, [])
+  }, [queuedPending])
 
   useEffect(() => {
     const element = dialog.current
@@ -52,6 +57,7 @@ export function MeetingLanguageAnnouncement({
     try {
       await window.electronAPI.invoke('prefs:dismiss-meeting-language-announcement')
       setPending(false)
+      onDismiss?.()
       if (chooseLanguage) navigate(`${ROUTES.settings}?section=meeting-language`)
     } catch {
       setError(true)
@@ -63,6 +69,7 @@ export function MeetingLanguageAnnouncement({
   return (
     <dialog
       ref={dialog}
+      data-announcement="meeting-language"
       aria-labelledby="meeting-language-announcement-title"
       aria-describedby="meeting-language-announcement-body"
       onCancel={(event) => {

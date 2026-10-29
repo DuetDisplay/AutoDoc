@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "De spraakruntime ontbreekt in deze versie. Installeer AutoDoc opnieuw.",
   "picker.reasonSetupDownloadFailed": "De download van het spraakmodel is niet voltooid. Probeer het opnieuw.",
   "picker.reasonSetupVerificationFailed": "Het spraakmodel kon niet worden geverifieerd. Probeer het opnieuw.",
-  "picker.reasonSetupFailed": "De installatie is niet voltooid. Probeer het opnieuw."
+  "picker.reasonSetupFailed": "De installatie is niet voltooid. Probeer het opnieuw.",
+  "onboarding.chooseUiLanguage": "Kies je taal",
+  "onboarding.uiLanguageDescription": "AutoDoc gebruikt deze taal voor menu’s, knoppen en berichten. Je kunt dit later wijzigen in Instellingen.",
+  "appearance.darkMode": "Donkere modus",
+  "announcement.uiAppearanceTitle": "AutoDoc spreekt nu jouw taal",
+  "announcement.uiLanguageBody": "Kies de taal voor de menu’s, knoppen en berichten van AutoDoc.",
+  "announcement.darkModeBody": "Liever een donkerder uiterlijk? Schakel de donkere modus in.",
+  "announcement.done": "Gereed"
 }

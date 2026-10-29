@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Componenta de rulare pentru recunoașterea vorbirii lipsește din această versiune. Reinstalați AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Descărcarea modelului vocal nu s-a finalizat. Încercați din nou.",
   "picker.reasonSetupVerificationFailed": "Modelul vocal nu a putut fi verificat. Încercați din nou.",
-  "picker.reasonSetupFailed": "Configurarea nu s-a finalizat. Încercați din nou."
+  "picker.reasonSetupFailed": "Configurarea nu s-a finalizat. Încercați din nou.",
+  "onboarding.chooseUiLanguage": "Alegeți limba",
+  "onboarding.uiLanguageDescription": "AutoDoc va folosi această limbă pentru meniuri, butoane și mesaje. O puteți schimba mai târziu în Setări.",
+  "appearance.darkMode": "Mod întunecat",
+  "announcement.uiAppearanceTitle": "AutoDoc vorbește acum limba dvs.",
+  "announcement.uiLanguageBody": "Alegeți limba pentru meniurile, butoanele și mesajele AutoDoc.",
+  "announcement.darkModeBody": "Preferați un aspect mai întunecat? Activați modul întunecat.",
+  "announcement.done": "Gata"
 }

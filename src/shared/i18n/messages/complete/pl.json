@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "W tej wersji brakuje środowiska rozpoznawania mowy. Zainstaluj AutoDoc ponownie.",
   "picker.reasonSetupDownloadFailed": "Pobieranie modelu mowy nie zostało ukończone. Spróbuj ponownie.",
   "picker.reasonSetupVerificationFailed": "Nie udało się zweryfikować modelu mowy. Spróbuj ponownie.",
-  "picker.reasonSetupFailed": "Konfiguracja nie została ukończona. Spróbuj ponownie."
+  "picker.reasonSetupFailed": "Konfiguracja nie została ukończona. Spróbuj ponownie.",
+  "onboarding.chooseUiLanguage": "Wybierz swój język",
+  "onboarding.uiLanguageDescription": "AutoDoc będzie używać tego języka w menu, przyciskach i komunikatach. Możesz go później zmienić w Ustawieniach.",
+  "appearance.darkMode": "Tryb ciemny",
+  "announcement.uiAppearanceTitle": "AutoDoc mówi teraz w Twoim języku",
+  "announcement.uiLanguageBody": "Wybierz język menu, przycisków i komunikatów AutoDoc.",
+  "announcement.darkModeBody": "Wolisz ciemniejszy wygląd? Włącz tryb ciemny.",
+  "announcement.done": "Gotowe"
 }

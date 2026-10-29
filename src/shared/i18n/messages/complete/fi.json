@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Puheentunnistuksen suoritusympäristö puuttuu tästä versiosta. Asenna AutoDoc uudelleen.",
   "picker.reasonSetupDownloadFailed": "Puhemallin lataus ei valmistunut. Yritä uudelleen.",
   "picker.reasonSetupVerificationFailed": "Puhemallia ei voitu vahvistaa. Yritä uudelleen.",
-  "picker.reasonSetupFailed": "Asennus ei valmistunut. Yritä uudelleen."
+  "picker.reasonSetupFailed": "Asennus ei valmistunut. Yritä uudelleen.",
+  "onboarding.chooseUiLanguage": "Valitse kielesi",
+  "onboarding.uiLanguageDescription": "AutoDoc käyttää tätä kieltä valikoissa, painikkeissa ja viesteissä. Voit vaihtaa sen myöhemmin asetuksista.",
+  "appearance.darkMode": "Tumma tila",
+  "announcement.uiAppearanceTitle": "AutoDoc puhuu nyt kieltäsi",
+  "announcement.uiLanguageBody": "Valitse AutoDocin valikoiden, painikkeiden ja viestien kieli.",
+  "announcement.darkModeBody": "Pidätkö tummemmasta ulkoasusta? Ota tumma tila käyttöön.",
+  "announcement.done": "Valmis"
 }

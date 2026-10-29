@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Le moteur de reconnaissance vocale est absent de cette version. Réinstallez AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Le téléchargement du modèle vocal n'a pas abouti. Réessayez.",
   "picker.reasonSetupVerificationFailed": "Le modèle vocal n'a pas pu être vérifié. Réessayez.",
-  "picker.reasonSetupFailed": "La configuration n'a pas abouti. Réessayez."
+  "picker.reasonSetupFailed": "La configuration n'a pas abouti. Réessayez.",
+  "onboarding.chooseUiLanguage": "Choisissez votre langue",
+  "onboarding.uiLanguageDescription": "AutoDoc utilisera cette langue pour les menus, les boutons et les messages. Vous pourrez la modifier dans les paramètres.",
+  "appearance.darkMode": "Mode sombre",
+  "announcement.uiAppearanceTitle": "AutoDoc parle désormais votre langue",
+  "announcement.uiLanguageBody": "Choisissez la langue des menus, des boutons et des messages d’AutoDoc.",
+  "announcement.darkModeBody": "Vous préférez un affichage plus sombre ? Activez le mode sombre.",
+  "announcement.done": "Terminé"
 }

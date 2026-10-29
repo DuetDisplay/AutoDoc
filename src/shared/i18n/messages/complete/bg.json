@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Речевата среда липсва в тази версия. Преинсталирайте AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Изтеглянето на речевия модел не завърши. Опитайте отново.",
   "picker.reasonSetupVerificationFailed": "Речевият модел не можа да бъде проверен. Опитайте отново.",
-  "picker.reasonSetupFailed": "Настройката не завърши. Опитайте отново."
+  "picker.reasonSetupFailed": "Настройката не завърши. Опитайте отново.",
+  "onboarding.chooseUiLanguage": "Изберете езика си",
+  "onboarding.uiLanguageDescription": "AutoDoc ще използва този език за менюта, бутони и съобщения. Можете да го промените по-късно в Настройки.",
+  "appearance.darkMode": "Тъмен режим",
+  "announcement.uiAppearanceTitle": "AutoDoc вече говори вашия език",
+  "announcement.uiLanguageBody": "Изберете езика за менютата, бутоните и съобщенията на AutoDoc.",
+  "announcement.darkModeBody": "Предпочитате по-тъмен изглед? Включете тъмния режим.",
+  "announcement.done": "Готово"
 }

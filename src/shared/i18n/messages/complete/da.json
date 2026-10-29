@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Talemotoren mangler i denne version. Geninstaller AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Download af talemodellen blev ikke fuldført. Prøv igen.",
   "picker.reasonSetupVerificationFailed": "Talemodellen kunne ikke verificeres. Prøv igen.",
-  "picker.reasonSetupFailed": "Opsætningen blev ikke fuldført. Prøv igen."
+  "picker.reasonSetupFailed": "Opsætningen blev ikke fuldført. Prøv igen.",
+  "onboarding.chooseUiLanguage": "Vælg dit sprog",
+  "onboarding.uiLanguageDescription": "AutoDoc bruger dette sprog til menuer, knapper og beskeder. Du kan ændre det senere i Indstillinger.",
+  "appearance.darkMode": "Mørk tilstand",
+  "announcement.uiAppearanceTitle": "AutoDoc taler nu dit sprog",
+  "announcement.uiLanguageBody": "Vælg sproget til menuer, knapper og beskeder i AutoDoc.",
+  "announcement.darkModeBody": "Foretrækker du et mørkere udseende? Slå mørk tilstand til.",
+  "announcement.done": "Færdig"
 }

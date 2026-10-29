@@ -1,5 +1,6 @@
 import type { MessageKey } from '../../../../shared/i18n'
 import { useT } from '../../services/i18n'
+import { isUiLanguageCode } from '../../../../shared/ui-language'
 import { useEffect, useState } from 'react'
 import {
   defaultMeetingLanguageForLocale,
@@ -25,17 +26,20 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
   const load = async () => {
     setError(null)
     try {
-      const [available, saved, confirmed, locale] = await Promise.all([
+      const [available, saved, confirmed, locale, uiLanguage] = await Promise.all([
         loadMeetingLanguageAvailability(),
         window.electronAPI.invoke('prefs:get-meeting-language'),
         window.electronAPI.invoke('prefs:get-onboarding-language-confirmed'),
-        window.electronAPI.invoke('app:get-locale')
+        window.electronAPI.invoke('app:get-locale'),
+        window.electronAPI.invoke('prefs:get-ui-language')
       ])
       const previous = normalizeMeetingLanguage(saved)
       setLanguage(
         confirmed && isMeetingLanguageAvailable(previous, available)
           ? previous
-          : defaultMeetingLanguageForLocale(locale || navigator.language, available)
+          : isUiLanguageCode(uiLanguage) && isMeetingLanguageAvailable(uiLanguage, available)
+            ? uiLanguage
+            : defaultMeetingLanguageForLocale(locale || navigator.language, available)
       )
       setAvailability(available)
     } catch {

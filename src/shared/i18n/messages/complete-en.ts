@@ -563,5 +563,13 @@ export const completeEn = {
     'The speech runtime is missing from this build. Reinstall AutoDoc.',
   'picker.reasonSetupDownloadFailed': "The speech model download didn't finish. Try again.",
   'picker.reasonSetupVerificationFailed': "The speech model couldn't be verified. Try again.",
-  'picker.reasonSetupFailed': "Setup didn't finish. Try again."
+  'picker.reasonSetupFailed': "Setup didn't finish. Try again.",
+  'onboarding.chooseUiLanguage': 'Choose your language',
+  'onboarding.uiLanguageDescription':
+    'AutoDoc will use this language for menus, buttons and messages. You can change it later in Settings.',
+  'appearance.darkMode': 'Dark mode',
+  'announcement.uiAppearanceTitle': 'AutoDoc now speaks your language',
+  'announcement.uiLanguageBody': 'Choose the language for AutoDoc’s menus, buttons and messages.',
+  'announcement.darkModeBody': 'Prefer a darker look? Turn on Dark mode.',
+  'announcement.done': 'Done'
 } as const

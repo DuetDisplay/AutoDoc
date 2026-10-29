@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Šioje versijoje trūksta kalbos atpažinimo vykdymo aplinkos. Iš naujo įdiekite AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Kalbos modelio atsisiuntimas nebuvo baigtas. Bandykite dar kartą.",
   "picker.reasonSetupVerificationFailed": "Nepavyko patikrinti kalbos modelio. Bandykite dar kartą.",
-  "picker.reasonSetupFailed": "Sąranka nebuvo baigta. Bandykite dar kartą."
+  "picker.reasonSetupFailed": "Sąranka nebuvo baigta. Bandykite dar kartą.",
+  "onboarding.chooseUiLanguage": "Pasirinkite kalbą",
+  "onboarding.uiLanguageDescription": "AutoDoc naudos šią kalbą meniu, mygtukams ir pranešimams. Vėliau ją galėsite pakeisti nustatymuose.",
+  "appearance.darkMode": "Tamsusis režimas",
+  "announcement.uiAppearanceTitle": "AutoDoc dabar kalba jūsų kalba",
+  "announcement.uiLanguageBody": "Pasirinkite AutoDoc meniu, mygtukų ir pranešimų kalbą.",
+  "announcement.darkModeBody": "Patinka tamsesnė išvaizda? Įjunkite tamsųjį režimą.",
+  "announcement.done": "Atlikta"
 }

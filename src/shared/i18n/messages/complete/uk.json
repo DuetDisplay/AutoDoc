@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "У цій збірці відсутнє середовище розпізнавання мовлення. Перевстановіть AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Завантаження мовної моделі не завершилося. Повторіть спробу.",
   "picker.reasonSetupVerificationFailed": "Не вдалося перевірити мовну модель. Повторіть спробу.",
-  "picker.reasonSetupFailed": "Налаштування не завершилося. Повторіть спробу."
+  "picker.reasonSetupFailed": "Налаштування не завершилося. Повторіть спробу.",
+  "onboarding.chooseUiLanguage": "Виберіть мову",
+  "onboarding.uiLanguageDescription": "AutoDoc використовуватиме цю мову для меню, кнопок і повідомлень. Згодом її можна змінити в налаштуваннях.",
+  "appearance.darkMode": "Темний режим",
+  "announcement.uiAppearanceTitle": "AutoDoc тепер розмовляє вашою мовою",
+  "announcement.uiLanguageBody": "Виберіть мову меню, кнопок і повідомлень AutoDoc.",
+  "announcement.darkModeBody": "Віддаєте перевагу темному оформленню? Увімкніть темний режим.",
+  "announcement.done": "Готово"
 }

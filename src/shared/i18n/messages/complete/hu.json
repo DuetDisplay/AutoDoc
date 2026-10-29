@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "A beszédfelismerő futtatókörnyezet hiányzik ebből a verzióból. Telepítse újra az AutoDocot.",
   "picker.reasonSetupDownloadFailed": "A beszédmodell letöltése nem fejeződött be. Próbálja újra.",
   "picker.reasonSetupVerificationFailed": "A beszédmodellt nem sikerült ellenőrizni. Próbálja újra.",
-  "picker.reasonSetupFailed": "A beállítás nem fejeződött be. Próbálja újra."
+  "picker.reasonSetupFailed": "A beállítás nem fejeződött be. Próbálja újra.",
+  "onboarding.chooseUiLanguage": "Válasszon nyelvet",
+  "onboarding.uiLanguageDescription": "Az AutoDoc ezt a nyelvet használja a menükhöz, gombokhoz és üzenetekhez. Később módosíthatja a Beállításokban.",
+  "appearance.darkMode": "Sötét mód",
+  "announcement.uiAppearanceTitle": "Az AutoDoc már az Ön nyelvén is beszél",
+  "announcement.uiLanguageBody": "Válassza ki az AutoDoc menüinek, gombjainak és üzeneteinek nyelvét.",
+  "announcement.darkModeBody": "Sötétebb megjelenést szeretne? Kapcsolja be a sötét módot.",
+  "announcement.done": "Kész"
 }

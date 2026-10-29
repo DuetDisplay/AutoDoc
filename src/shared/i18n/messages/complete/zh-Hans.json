@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "此版本缺少语音运行环境。请重新安装 AutoDoc。",
   "picker.reasonSetupDownloadFailed": "语音模型下载未完成。请重试。",
   "picker.reasonSetupVerificationFailed": "无法验证语音模型。请重试。",
-  "picker.reasonSetupFailed": "设置未完成。请重试。"
+  "picker.reasonSetupFailed": "设置未完成。请重试。",
+  "onboarding.chooseUiLanguage": "选择你的语言",
+  "onboarding.uiLanguageDescription": "AutoDoc将使用此语言显示菜单、按钮和消息。你可以稍后在设置中更改。",
+  "appearance.darkMode": "深色模式",
+  "announcement.uiAppearanceTitle": "AutoDoc现在支持你的语言",
+  "announcement.uiLanguageBody": "选择AutoDoc菜单、按钮和消息的显示语言。",
+  "announcement.darkModeBody": "喜欢更暗的外观？开启深色模式吧。",
+  "announcement.done": "完成"
 }

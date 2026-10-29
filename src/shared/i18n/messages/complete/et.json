@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Kõnetuvastuse käituskeskkond puudub sellest versioonist. Installige AutoDoc uuesti.",
   "picker.reasonSetupDownloadFailed": "Kõnemudeli allalaadimine ei lõppenud. Proovige uuesti.",
   "picker.reasonSetupVerificationFailed": "Kõnemudelit ei õnnestunud kontrollida. Proovige uuesti.",
-  "picker.reasonSetupFailed": "Seadistus ei lõppenud. Proovige uuesti."
+  "picker.reasonSetupFailed": "Seadistus ei lõppenud. Proovige uuesti.",
+  "onboarding.chooseUiLanguage": "Vali oma keel",
+  "onboarding.uiLanguageDescription": "AutoDoc kasutab seda keelt menüüdes, nuppudel ja teadetes. Saad seda hiljem seadetes muuta.",
+  "appearance.darkMode": "Tume režiim",
+  "announcement.uiAppearanceTitle": "AutoDoc räägib nüüd sinu keelt",
+  "announcement.uiLanguageBody": "Vali AutoDoci menüüde, nuppude ja teadete keel.",
+  "announcement.darkModeBody": "Eelistad tumedamat ilmet? Lülita sisse tume režiim.",
+  "announcement.done": "Valmis"
 }

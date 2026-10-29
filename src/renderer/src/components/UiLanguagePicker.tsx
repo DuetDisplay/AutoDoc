@@ -15,6 +15,7 @@ interface UiLanguagePickerProps {
 
 export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerProps) {
   const [open, setOpen] = useState(false)
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null)
   const [active, setActive] = useState(0)
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -50,6 +51,8 @@ export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerPro
     triggerRef.current?.focus({ preventScroll: true })
   }
   const show = () => {
+    // Keep options inside a native modal so they remain interactive and in its focus trap.
+    setPortalTarget(rootRef.current?.closest('dialog') ?? document.body)
     setActive(Math.max(0, UI_LANGUAGE_CODES.indexOf(value)))
     setOpen(true)
   }
@@ -69,6 +72,7 @@ export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerPro
     else if (event.key === 'End') move(UI_LANGUAGE_CODES.length - 1)
     else if (event.key === 'Escape') {
       event.preventDefault()
+      event.stopPropagation()
       close()
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -139,7 +143,7 @@ export function UiLanguagePicker({ value, onChange, label }: UiLanguagePickerPro
               </button>
             ))}
           </div>,
-          document.body
+          portalTarget ?? document.body
         )}
     </div>
   )

@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Taligenkänningsmotorn saknas i den här versionen. Installera om AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Nedladdningen av talmodellen slutfördes inte. Försök igen.",
   "picker.reasonSetupVerificationFailed": "Talmodellen kunde inte verifieras. Försök igen.",
-  "picker.reasonSetupFailed": "Installationen slutfördes inte. Försök igen."
+  "picker.reasonSetupFailed": "Installationen slutfördes inte. Försök igen.",
+  "onboarding.chooseUiLanguage": "Välj ditt språk",
+  "onboarding.uiLanguageDescription": "AutoDoc använder det här språket för menyer, knappar och meddelanden. Du kan ändra det senare i Inställningar.",
+  "appearance.darkMode": "Mörkt läge",
+  "announcement.uiAppearanceTitle": "AutoDoc talar nu ditt språk",
+  "announcement.uiLanguageBody": "Välj språk för menyer, knappar och meddelanden i AutoDoc.",
+  "announcement.darkModeBody": "Föredrar du ett mörkare utseende? Slå på mörkt läge.",
+  "announcement.done": "Klart"
 }

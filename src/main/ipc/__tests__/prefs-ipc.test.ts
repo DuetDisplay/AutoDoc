@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('../../services/application-menu', () => ({ refreshApplicationMenu: vi.fn() }))
 
+const preferenceFixture = vi.hoisted(() => ({
+  saved: {} as Record<string, unknown>,
+  locale: 'en-US'
+}))
+
 vi.mock('electron', () => ({
-  app: { setLoginItemSettings: vi.fn() },
+  app: { setLoginItemSettings: vi.fn(), getLocale: () => preferenceFixture.locale },
   BrowserWindow: { getAllWindows: vi.fn(() => []), prototype: { setBackgroundColor: vi.fn() } },
   ipcMain: { handle: vi.fn() },
   nativeTheme: {
@@ -34,8 +39,12 @@ vi.mock('../../services/mac-processing-profile', async (importOriginal) => {
 vi.mock('electron-store', () => {
   return {
     default: vi.fn().mockImplementation((opts?: { defaults?: Record<string, unknown> }) => {
-      const data: Record<string, unknown> = { ...(opts?.defaults ?? {}) }
+      const data: Record<string, unknown> = {
+        ...(opts?.defaults ?? {}),
+        ...preferenceFixture.saved
+      }
       return {
+        has: vi.fn((key: string) => key in data),
         get: vi.fn((key: string, defaultValue?: unknown) => {
           return key in data ? data[key] : defaultValue
         }),
@@ -62,6 +71,8 @@ describe('PrefsStore', () => {
   let store: PrefsStore
 
   beforeEach(() => {
+    preferenceFixture.saved = {}
+    preferenceFixture.locale = 'en-US'
     store = new PrefsStore()
     getWindowsMeetingLanguageAvailability.mockReset()
     getWindowsMeetingLanguageAvailability.mockResolvedValue({
@@ -71,6 +82,51 @@ describe('PrefsStore', () => {
       firstUseDownloadBytes: 0,
       needsSelfTest: false
     })
+  })
+
+  it.each([
+    ['es-ES', 'es'],
+    ['de-DE', 'de'],
+    ['ja-JP', 'ja'],
+    ['th-TH', 'en'],
+    ['zh-TW', 'en'],
+    ['zh-Hant', 'en'],
+    ['zh-CN', 'zh-Hans']
+  ])('seeds fresh UI language for %s before rendering', (locale, language) => {
+    preferenceFixture.locale = locale
+    const fresh = new PrefsStore()
+    expect(fresh.getUiLanguage()).toBe(language)
+    expect(fresh.getOnboardingStep()).toBe(12)
+    expect(fresh.isUiAppearanceAnnouncementPending()).toBe(false)
+  })
+
+  it.each(['en', 'de'])('preserves explicitly saved %s even during onboarding', (language) => {
+    preferenceFixture.locale = 'ja-JP'
+    preferenceFixture.saved = { uiLanguage: language, onboardingStep: 7 }
+    const resumed = new PrefsStore()
+    expect(resumed.getUiLanguage()).toBe(language)
+    expect(resumed.getOnboardingStep()).toBe(7)
+  })
+
+  it('keeps upgrade language and initializes the new announcement exactly once', () => {
+    preferenceFixture.locale = 'es-ES'
+    preferenceFixture.saved = { onboardingComplete: true, uiLanguage: 'en' }
+    const upgraded = new PrefsStore()
+    expect(upgraded.getUiLanguage()).toBe('en')
+    expect(upgraded.isUiAppearanceAnnouncementPending()).toBe(true)
+    upgraded.dismissUiAppearanceAnnouncement()
+    expect(upgraded.isUiAppearanceAnnouncementPending()).toBe(false)
+    preferenceFixture.saved = {
+      onboardingComplete: true,
+      uiAppearanceAnnouncementInitialized: true,
+      uiAppearanceAnnouncementPending: false
+    }
+    expect(new PrefsStore().isUiAppearanceAnnouncementPending()).toBe(false)
+  })
+
+  it('never queues the upgrade popup for a newly completed onboarding', () => {
+    store.setOnboardingComplete()
+    expect(store.isUiAppearanceAnnouncementPending()).toBe(false)
   })
 
   it('shows the language announcement only for existing users and remembers dismissal', () => {

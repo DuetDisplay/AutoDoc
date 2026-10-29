@@ -11,7 +11,7 @@ import {
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
 import {
-  DEFAULT_UI_LANGUAGE,
+  defaultUiLanguageForLocale,
   normalizeUiLanguage,
   type UiLanguageCode
 } from '../../shared/ui-language'
@@ -20,6 +20,8 @@ const isE2E = process.env.AUTODOC_E2E === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 
 interface PrefsSchema {
+  uiAppearanceAnnouncementInitialized?: boolean
+  uiAppearanceAnnouncementPending?: boolean
   onboardingComplete: boolean
   onboardingLanguageConfirmed: boolean
   meetingLanguageAnnouncementDismissed: boolean
@@ -32,7 +34,7 @@ interface PrefsSchema {
   videoWatermarkVisible: boolean
   meetingLanguage: MeetingLanguageCode
   appearance: AppearanceMode
-  uiLanguage: UiLanguageCode
+  uiLanguage?: UiLanguageCode
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
   notesEngineUpgradeEligible: boolean
@@ -46,7 +48,7 @@ function createPrefsStore(): Store<PrefsSchema> {
       onboardingComplete: false,
       onboardingLanguageConfirmed: false,
       meetingLanguageAnnouncementDismissed: false,
-      onboardingStep: 0,
+      onboardingStep: 12,
       onboardingMicSettingsOpened: false,
       onboardingScreenSettingsOpened: false,
       launchAtLogin: true,
@@ -55,7 +57,6 @@ function createPrefsStore(): Store<PrefsSchema> {
       videoWatermarkVisible: true,
       meetingLanguage: DEFAULT_MEETING_LANGUAGE,
       appearance: DEFAULT_APPEARANCE,
-      uiLanguage: DEFAULT_UI_LANGUAGE,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
       notesEngineUpgradeEligible: false,
@@ -81,8 +82,21 @@ export function readInitialAppearance(): AppearanceMode {
   return normalizeAppearance(createPrefsStore().get('appearance'))
 }
 
+function initializeUiPreferences(store: Store<PrefsSchema>): void {
+  // Do not supply a store default for uiLanguage: has() must distinguish a saved English choice.
+  if (!store.has('uiLanguage') && !store.get('onboardingComplete')) {
+    store.set('uiLanguage', defaultUiLanguageForLocale(app.getLocale()))
+  }
+  if (!store.has('uiAppearanceAnnouncementInitialized')) {
+    store.set('uiAppearanceAnnouncementPending', store.get('onboardingComplete'))
+    store.set('uiAppearanceAnnouncementInitialized', true)
+  }
+}
+
 export function readInitialUiLanguage(): UiLanguageCode {
-  return normalizeUiLanguage(createPrefsStore().get('uiLanguage'))
+  const store = createPrefsStore()
+  initializeUiPreferences(store)
+  return normalizeUiLanguage(store.get('uiLanguage'))
 }
 
 export class PrefsStore {
@@ -91,6 +105,7 @@ export class PrefsStore {
 
   constructor() {
     this.store = createPrefsStore()
+    initializeUiPreferences(this.store)
 
     // Sync the current preference to the OS on startup
     this.applyLaunchAtLogin()
@@ -103,6 +118,7 @@ export class PrefsStore {
   setOnboardingComplete(): void {
     this.store.set('onboardingComplete', true)
     this.dismissMeetingLanguageAnnouncement()
+    this.dismissUiAppearanceAnnouncement()
     this.store.set('onboardingStep', 0)
     this.store.set('onboardingMicSettingsOpened', false)
     this.store.set('onboardingScreenSettingsOpened', false)
@@ -128,6 +144,14 @@ export class PrefsStore {
 
   dismissMeetingLanguageAnnouncement(): void {
     this.store.set('meetingLanguageAnnouncementDismissed', true)
+  }
+
+  isUiAppearanceAnnouncementPending(): boolean {
+    return this.isOnboardingComplete() && this.store.get('uiAppearanceAnnouncementPending') === true
+  }
+
+  dismissUiAppearanceAnnouncement(): void {
+    this.store.set('uiAppearanceAnnouncementPending', false)
   }
 
   getOnboardingStep(): number {

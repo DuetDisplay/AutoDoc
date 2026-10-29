@@ -9,6 +9,7 @@ import type {
 } from '../../../shared/types'
 import { trackEvent } from '../services/analytics'
 import { useT } from '../services/i18n'
+import { AppearanceSwitch } from './AppearanceSwitch'
 import { getOllamaSetupLabel, getWhisperSetupLabel } from '../services/setup-status-labels'
 
 const SUPPORT_SURFACE = 'sidebar' as const
@@ -294,6 +295,8 @@ export function Sidebar() {
               </span>
             </div>
           )}
+
+          <AppearanceSwitch />
 
           <NavLink
             to={ROUTES.settings}

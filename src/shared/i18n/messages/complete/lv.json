@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Šajā versijā trūkst runas atpazīšanas izpildes vides. Pārinstalējiet AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Runas modeļa lejupielāde netika pabeigta. Mēģiniet vēlreiz.",
   "picker.reasonSetupVerificationFailed": "Runas modeli neizdevās pārbaudīt. Mēģiniet vēlreiz.",
-  "picker.reasonSetupFailed": "Iestatīšana netika pabeigta. Mēģiniet vēlreiz."
+  "picker.reasonSetupFailed": "Iestatīšana netika pabeigta. Mēģiniet vēlreiz.",
+  "onboarding.chooseUiLanguage": "Izvēlieties savu valodu",
+  "onboarding.uiLanguageDescription": "AutoDoc izmantos šo valodu izvēlnēm, pogām un ziņojumiem. Vēlāk to varēsiet mainīt iestatījumos.",
+  "appearance.darkMode": "Tumšais režīms",
+  "announcement.uiAppearanceTitle": "AutoDoc tagad runā jūsu valodā",
+  "announcement.uiLanguageBody": "Izvēlieties AutoDoc izvēļņu, pogu un ziņojumu valodu.",
+  "announcement.darkModeBody": "Vēlaties tumšāku izskatu? Ieslēdziet tumšo režīmu.",
+  "announcement.done": "Gatavs"
 }

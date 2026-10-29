@@ -18,6 +18,8 @@ async function launchOnboarding(scenario?: E2EScenario): Promise<{
   const { electronApp } = session
   const page = await electronApp.firstWindow()
 
+  await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
 
   return { electronApp, page, cleanup: session.cleanup }
@@ -149,6 +151,8 @@ test('preserves the diagnostic log upload draft when navigating back and forward
   const page = await electronApp.firstWindow()
 
   try {
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await completeDependencySetup(page)
 
@@ -176,6 +180,8 @@ test('persists analytics opt-in with diagnostic log upload disabled across relau
   let page = await electronApp.firstWindow()
 
   try {
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await completeDependencySetup(page)
 
@@ -222,6 +228,8 @@ test('persists analytics opt-in with diagnostic log upload enabled after onboard
   const page = await electronApp.firstWindow()
 
   try {
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await completeDependencySetup(page)
 

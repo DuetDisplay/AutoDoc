@@ -12,6 +12,8 @@ import { closeE2EAppKeepingUserData, removeE2EUserDataDir } from './electron-app
 export const STAR_MEETING_ID = '11111111-1111-4111-8111-111111111111'
 export async function launchGithubStarApp(
   options: {
+    uiAppearanceAnnouncement?: boolean
+    meetingLanguageAnnouncement?: boolean
     theme?: 'light' | 'dark'
     qualified?: boolean
     duration?: number
@@ -29,7 +31,9 @@ export async function launchGithubStarApp(
     duration = options.duration ?? 600
   save('autodoc-prefs.json', {
     onboardingComplete: true,
-    onboardingLanguageConfirmed: true,
+    uiAppearanceAnnouncementInitialized: true,
+    uiAppearanceAnnouncementPending: options.uiAppearanceAnnouncement ?? false,
+    onboardingLanguageConfirmed: !options.meetingLanguageAnnouncement,
     uiLanguage: 'en',
     appearance: options.theme ?? 'light',
     analyticsConsent: false,

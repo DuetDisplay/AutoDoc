@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Το περιβάλλον αναγνώρισης ομιλίας λείπει από αυτήν την έκδοση. Εγκαταστήστε ξανά το AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Η λήψη του μοντέλου ομιλίας δεν ολοκληρώθηκε. Δοκιμάστε ξανά.",
   "picker.reasonSetupVerificationFailed": "Δεν ήταν δυνατή η επαλήθευση του μοντέλου ομιλίας. Δοκιμάστε ξανά.",
-  "picker.reasonSetupFailed": "Η ρύθμιση δεν ολοκληρώθηκε. Δοκιμάστε ξανά."
+  "picker.reasonSetupFailed": "Η ρύθμιση δεν ολοκληρώθηκε. Δοκιμάστε ξανά.",
+  "onboarding.chooseUiLanguage": "Επιλέξτε τη γλώσσα σας",
+  "onboarding.uiLanguageDescription": "Το AutoDoc θα χρησιμοποιεί αυτή τη γλώσσα για μενού, κουμπιά και μηνύματα. Μπορείτε να την αλλάξετε αργότερα στις Ρυθμίσεις.",
+  "appearance.darkMode": "Σκοτεινή λειτουργία",
+  "announcement.uiAppearanceTitle": "Το AutoDoc μιλά πλέον τη γλώσσα σας",
+  "announcement.uiLanguageBody": "Επιλέξτε τη γλώσσα για τα μενού, τα κουμπιά και τα μηνύματα του AutoDoc.",
+  "announcement.darkModeBody": "Προτιμάτε πιο σκούρα εμφάνιση; Ενεργοποιήστε τη σκοτεινή λειτουργία.",
+  "announcement.done": "Τέλος"
 }

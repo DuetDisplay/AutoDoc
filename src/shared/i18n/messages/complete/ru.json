@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "В этой сборке отсутствует среда распознавания речи. Переустановите AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Загрузка речевой модели не завершилась. Попробуйте снова.",
   "picker.reasonSetupVerificationFailed": "Не удалось проверить речевую модель. Попробуйте снова.",
-  "picker.reasonSetupFailed": "Настройка не завершилась. Попробуйте снова."
+  "picker.reasonSetupFailed": "Настройка не завершилась. Попробуйте снова.",
+  "onboarding.chooseUiLanguage": "Выберите язык",
+  "onboarding.uiLanguageDescription": "AutoDoc будет использовать этот язык для меню, кнопок и сообщений. Позже его можно изменить в настройках.",
+  "appearance.darkMode": "Тёмный режим",
+  "announcement.uiAppearanceTitle": "AutoDoc теперь говорит на вашем языке",
+  "announcement.uiLanguageBody": "Выберите язык меню, кнопок и сообщений AutoDoc.",
+  "announcement.darkModeBody": "Предпочитаете тёмное оформление? Включите тёмный режим.",
+  "announcement.done": "Готово"
 }

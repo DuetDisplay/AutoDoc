@@ -7,6 +7,8 @@ test('launches and advances to the second onboarding step in e2e mode', async ()
   try {
     const page = await electronApp.firstWindow()
 
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     const getStartedButton = page.getByRole('button', { name: /get started/i })
     await expect(getStartedButton).toBeVisible()

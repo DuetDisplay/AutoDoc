@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Die Spracherkennungs-Laufzeit fehlt in dieser Version. Installieren Sie AutoDoc neu.",
   "picker.reasonSetupDownloadFailed": "Der Download des Sprachmodells wurde nicht abgeschlossen. Versuchen Sie es erneut.",
   "picker.reasonSetupVerificationFailed": "Das Sprachmodell konnte nicht überprüft werden. Versuchen Sie es erneut.",
-  "picker.reasonSetupFailed": "Die Einrichtung wurde nicht abgeschlossen. Versuchen Sie es erneut."
+  "picker.reasonSetupFailed": "Die Einrichtung wurde nicht abgeschlossen. Versuchen Sie es erneut.",
+  "onboarding.chooseUiLanguage": "Wählen Sie Ihre Sprache",
+  "onboarding.uiLanguageDescription": "AutoDoc verwendet diese Sprache für Menüs, Schaltflächen und Meldungen. Sie können sie später in den Einstellungen ändern.",
+  "appearance.darkMode": "Dunkelmodus",
+  "announcement.uiAppearanceTitle": "AutoDoc spricht jetzt Ihre Sprache",
+  "announcement.uiLanguageBody": "Wählen Sie die Sprache für Menüs, Schaltflächen und Meldungen in AutoDoc.",
+  "announcement.darkModeBody": "Lieber ein dunkleres Design? Aktivieren Sie den Dunkelmodus.",
+  "announcement.done": "Fertig"
 }

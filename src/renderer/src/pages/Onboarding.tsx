@@ -1,6 +1,7 @@
 import { useT } from '../services/i18n'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { StepDots } from '../components/onboarding/StepDots'
+import { UiLanguageStep } from '../components/onboarding/UiLanguageStep'
 import { WelcomeStep } from '../components/onboarding/WelcomeStep'
 import { FeatureStep } from '../components/onboarding/FeatureStep'
 import { MicPermissionStep } from '../components/onboarding/MicPermissionStep'
@@ -25,8 +26,8 @@ import {
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
-const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 11, 7, 8, 9, 10] as const
-const WINDOWS_STEP_ORDER = [0, 1, 2, 3, 6, 11, 7, 8, 9, 10] as const
+const DARWIN_STEP_ORDER = [12, 0, 1, 2, 3, 4, 5, 6, 11, 7, 8, 9, 10] as const
+const WINDOWS_STEP_ORDER = [12, 0, 1, 2, 3, 6, 11, 7, 8, 9, 10] as const
 type NavigationMode = 'restore' | 'forward' | 'back'
 
 function getVisibleStepOrder(platform: string | null): readonly number[] {
@@ -57,7 +58,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     ]).then(([saved, runtimeInfo, languageConfirmed]) => {
       const resolvedPlatform = runtimeInfo?.platform ?? 'darwin'
       const visibleSteps = getVisibleStepOrder(resolvedPlatform)
-      const savedStep = languageConfirmed === false && saved >= 7 && saved <= 10 ? 11 : (saved ?? 0)
+      const savedStep =
+        languageConfirmed === false && saved >= 7 && saved <= 10 ? 11 : (saved ?? 12)
       const exactIndex = visibleSteps.indexOf(savedStep)
 
       setPlatform(resolvedPlatform)
@@ -70,7 +72,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       }
 
       const migratedIndex = visibleSteps.findIndex(
-        (candidate) => candidate !== 11 && candidate > savedStep
+        (candidate) => candidate !== 11 && candidate !== 12 && candidate > savedStep
       )
       const nextIndex = migratedIndex === -1 ? visibleSteps.length - 1 : migratedIndex
       const normalizedStep = visibleSteps[nextIndex] ?? visibleSteps[0]
@@ -158,6 +160,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
 
   const renderStep = () => {
     switch (step) {
+      case 12:
+        return <UiLanguageStep onNext={next} />
       case 0:
         return <WelcomeStep onNext={next} />
       case 1:

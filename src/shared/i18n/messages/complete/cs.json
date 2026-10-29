@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "V této verzi chybí prostředí pro rozpoznávání řeči. Přeinstalujte AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Stahování modelu rozpoznávání řeči se nedokončilo. Zkuste to znovu.",
   "picker.reasonSetupVerificationFailed": "Model rozpoznávání řeči se nepodařilo ověřit. Zkuste to znovu.",
-  "picker.reasonSetupFailed": "Nastavení se nedokončilo. Zkuste to znovu."
+  "picker.reasonSetupFailed": "Nastavení se nedokončilo. Zkuste to znovu.",
+  "onboarding.chooseUiLanguage": "Vyberte si jazyk",
+  "onboarding.uiLanguageDescription": "AutoDoc bude tento jazyk používat pro nabídky, tlačítka a zprávy. Později ho můžete změnit v Nastavení.",
+  "appearance.darkMode": "Tmavý režim",
+  "announcement.uiAppearanceTitle": "AutoDoc nyní mluví vaším jazykem",
+  "announcement.uiLanguageBody": "Vyberte jazyk nabídek, tlačítek a zpráv aplikace AutoDoc.",
+  "announcement.darkModeBody": "Dáváte přednost tmavšímu vzhledu? Zapněte tmavý režim.",
+  "announcement.done": "Hotovo"
 }

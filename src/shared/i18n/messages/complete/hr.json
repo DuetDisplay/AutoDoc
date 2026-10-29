@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "Okruženje za prepoznavanje govora nedostaje u ovoj verziji. Ponovno instalirajte AutoDoc.",
   "picker.reasonSetupDownloadFailed": "Preuzimanje govornog modela nije dovršeno. Pokušajte ponovno.",
   "picker.reasonSetupVerificationFailed": "Govorni model nije bilo moguće provjeriti. Pokušajte ponovno.",
-  "picker.reasonSetupFailed": "Postavljanje nije dovršeno. Pokušajte ponovno."
+  "picker.reasonSetupFailed": "Postavljanje nije dovršeno. Pokušajte ponovno.",
+  "onboarding.chooseUiLanguage": "Odaberite svoj jezik",
+  "onboarding.uiLanguageDescription": "AutoDoc će ovaj jezik koristiti za izbornike, gumbe i poruke. Kasnije ga možete promijeniti u Postavkama.",
+  "appearance.darkMode": "Tamni način rada",
+  "announcement.uiAppearanceTitle": "AutoDoc sada govori vaš jezik",
+  "announcement.uiLanguageBody": "Odaberite jezik izbornika, gumba i poruka u aplikaciji AutoDoc.",
+  "announcement.darkModeBody": "Želite tamniji izgled? Uključite tamni način rada.",
+  "announcement.done": "Gotovo"
 }

@@ -465,5 +465,12 @@
   "picker.reasonSpeechRuntimeMissing": "このビルドには音声ランタイムが含まれていません。AutoDocを再インストールしてください。",
   "picker.reasonSetupDownloadFailed": "音声モデルのダウンロードが完了しませんでした。もう一度お試しください。",
   "picker.reasonSetupVerificationFailed": "音声モデルを検証できませんでした。もう一度お試しください。",
-  "picker.reasonSetupFailed": "セットアップが完了しませんでした。もう一度お試しください。"
+  "picker.reasonSetupFailed": "セットアップが完了しませんでした。もう一度お試しください。",
+  "onboarding.chooseUiLanguage": "言語を選択",
+  "onboarding.uiLanguageDescription": "AutoDocのメニュー、ボタン、メッセージに使用する言語です。後から設定で変更できます。",
+  "appearance.darkMode": "ダークモード",
+  "announcement.uiAppearanceTitle": "AutoDocがあなたの言語に対応しました",
+  "announcement.uiLanguageBody": "AutoDocのメニュー、ボタン、メッセージの言語を選択できます。",
+  "announcement.darkModeBody": "暗めの画面がお好みですか？ダークモードをオンにしましょう。",
+  "announcement.done": "完了"
 }
