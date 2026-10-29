@@ -201,6 +201,37 @@ describe('Auto-updater validity characterization', () => {
     )
   })
 
+  it('flags disk-full updater failures with errorKind for the renderer', () => {
+    initAutoUpdater()
+    const errorHandler = on.mock.calls.find(([eventName]) => eventName === 'error')?.[1] as
+      | ((error: Error) => void)
+      | undefined
+
+    errorHandler?.(new Error('ditto: /Applications/AutoDoc.app/Contents: No space left on device'))
+
+    expect(send).toHaveBeenLastCalledWith(
+      'updater:status',
+      expect.objectContaining({
+        state: 'error',
+        errorKind: 'disk-full',
+        error: expect.stringContaining('No space left on device')
+      })
+    )
+  })
+
+  it('does not set errorKind for other updater failures', () => {
+    initAutoUpdater()
+    const errorHandler = on.mock.calls.find(([eventName]) => eventName === 'error')?.[1] as
+      | ((error: Error) => void)
+      | undefined
+
+    errorHandler?.(new Error('404 Not Found'))
+
+    const status = send.mock.calls.at(-1)?.[1] as Record<string, unknown>
+    expect(status.state).toBe('error')
+    expect(status).not.toHaveProperty('errorKind')
+  })
+
   it('keeps startup alive when updater initialization rejects the app version', () => {
     setThrowOnConfigure(true)
 

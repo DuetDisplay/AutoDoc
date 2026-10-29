@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { writeFile, unlink } from 'fs/promises'
+import { createFfmpegExitError } from './sentry-fingerprint'
 
 export class AudioConverter {
   convert(inputPath: string, outputPath: string, ffmpegPath: string): Promise<void> {
@@ -28,7 +29,13 @@ export class AudioConverter {
         if (code === 0) {
           resolve()
         } else {
-          reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-500)}`))
+          reject(
+            createFfmpegExitError(
+              'convert',
+              code,
+              `ffmpeg exited with code ${code}: ${stderr.slice(-500)}`
+            )
+          )
         }
       })
     })
@@ -59,7 +66,15 @@ export class AudioConverter {
       })
       proc.on('close', (code) => {
         if (code === 0) resolve()
-        else reject(new Error(`ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`))
+        else {
+          reject(
+            createFfmpegExitError(
+              'merge',
+              code,
+              `ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`
+            )
+          )
+        }
       })
     })
   }
@@ -100,7 +115,13 @@ export class AudioConverter {
         if (code === 0) {
           resolve()
         } else {
-          reject(new Error(`ffmpeg extract exited with code ${code}: ${stderr.slice(-500)}`))
+          reject(
+            createFfmpegExitError(
+              'extract',
+              code,
+              `ffmpeg extract exited with code ${code}: ${stderr.slice(-500)}`
+            )
+          )
         }
       })
     })
@@ -156,7 +177,13 @@ export class AudioConverter {
         if (code === 0) {
           resolve()
         } else {
-          reject(new Error(`ffmpeg concat exited with code ${code}: ${stderr.slice(-500)}`))
+          reject(
+            createFfmpegExitError(
+              'concat',
+              code,
+              `ffmpeg concat exited with code ${code}: ${stderr.slice(-500)}`
+            )
+          )
         }
       })
     })

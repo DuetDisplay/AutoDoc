@@ -28,6 +28,7 @@ interface LogEntryInput {
   error?: unknown
   meetingId?: string
   context?: Record<string, unknown>
+  /** Sentry grouping override, passed straight to captureError. */
   fingerprint?: string[]
 }
 
@@ -71,7 +72,7 @@ export function logAutodocFailure(entry: LogEntryInput): void {
           context: entry.context ?? null
         },
         diagnosticLogAttachment,
-        fingerprint: entry.fingerprint
+        ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {})
       })
     })
     .catch(() => {
@@ -83,7 +84,7 @@ export function logAutodocFailure(entry: LogEntryInput): void {
           error: serializedError,
           context: entry.context ?? null
         },
-        fingerprint: entry.fingerprint
+        ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {})
       })
     })
 }

@@ -24,6 +24,8 @@ import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { isDiskFullError } from './disk-full'
+import { withSentryFingerprint } from './sentry-fingerprint'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
 import { getInstalledModelsDir } from './dev-runtime-paths'
 import { getStorageDiagnostics } from './storage-manager'
@@ -110,6 +112,16 @@ const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
 const MAC_WHISPER_RUNTIME_REQUIRED_FILE_PATTERNS = [
   { label: 'libggml backend plugin', pattern: /^libggml.*\.so$/i }
 ]
+
+/** Error for a failed model/runtime archive extract; groups under one Sentry issue per platform. */
+function createModelExtractError(message: string): Error {
+  return withSentryFingerprint(new Error(message), ['model-extract-failed', process.platform])
+}
+
+/** Marks setup errors caused by a full disk so the renderer can show disk-space guidance. */
+function getSetupErrorKind(err: unknown): Pick<WhisperSetupStatus, 'errorKind'> {
+  return isDiskFullError(err) ? { errorKind: 'disk-full' } : {}
+}
 
 function isSha256Hex(value: string | undefined): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
@@ -1365,7 +1377,8 @@ export class WhisperManager extends EventEmitter {
         phase: 'error',
         percent: 0,
         failedStep: 'downloading-model',
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        ...getSetupErrorKind(error)
       }
       this.emit('setup-status', this.getSetupStatus())
       throw error
@@ -1443,7 +1456,8 @@ export class WhisperManager extends EventEmitter {
       this.setupStatus = this.withBackendStatus({
         phase: 'error',
         percent: 0,
-        error: err instanceof Error ? err.message : String(err)
+        error: err instanceof Error ? err.message : String(err),
+        ...getSetupErrorKind(err)
       })
       this.emit('setup-status', this.getSetupStatus())
       throw err
@@ -1654,7 +1668,8 @@ export class WhisperManager extends EventEmitter {
         phase: 'error',
         percent: 0,
         error: err instanceof Error ? err.message : String(err),
-        failedStep: this.getFailedStep()
+        failedStep: this.getFailedStep(),
+        ...getSetupErrorKind(err)
       })
       this.emit('setup-status', this.getSetupStatus())
       throw err
@@ -2198,7 +2213,7 @@ export class WhisperManager extends EventEmitter {
   ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       execFile('tar', ['-xf', archivePath, '-C', targetDir], (err) => {
-        if (err) reject(new Error(`Failed to extract ${filename}: ${err.message}`))
+        if (err) reject(createModelExtractError(`Failed to extract ${filename}: ${err.message}`))
         else resolve()
       })
     })
@@ -2443,7 +2458,7 @@ export class WhisperManager extends EventEmitter {
           `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${extractDir}'`
         ],
         (err) => {
-          if (err) reject(new Error(`Failed to extract whisper: ${err.message}`))
+          if (err) reject(createModelExtractError(`Failed to extract whisper: ${err.message}`))
           else resolve()
         }
       )
@@ -2484,7 +2499,7 @@ export class WhisperManager extends EventEmitter {
           `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${extractDir}'`
         ],
         (err) => {
-          if (err) reject(new Error(`Failed to extract ffmpeg: ${err.message}`))
+          if (err) reject(createModelExtractError(`Failed to extract ffmpeg: ${err.message}`))
           else resolve()
         }
       )
@@ -2856,7 +2871,7 @@ export class WhisperManager extends EventEmitter {
   private async extractTarGz(archivePath: string, destDir: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       execFile('tar', ['xzf', archivePath, '-C', destDir], (err) => {
-        if (err) reject(new Error(`Failed to extract archive: ${err.message}`))
+        if (err) reject(createModelExtractError(`Failed to extract archive: ${err.message}`))
         else resolve()
       })
     })

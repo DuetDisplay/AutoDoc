@@ -1975,7 +1975,8 @@ app.whenReady().then(async () => {
 
   const {
     recoverInterruptedRecordings: recoverInterruptedRecordingsImpl,
-    hasPostProcessingWork
+    hasPostProcessingWork,
+    clearDiskFullHold
   } = registerRecordingIpc(
     recordingService,
     transcriptionService,
@@ -2257,7 +2258,12 @@ app.whenReady().then(async () => {
     })
   }
 
-  registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
+  registerTranscriptionIpc(transcriptionService, (meetingId) => {
+    // A manual retry means the user freed space (or wants another attempt), so lift the
+    // disk-full hold that stops automatic recovery from re-running this meeting's post-processing.
+    clearDiskFullHold(meetingId)
+    markReprocessNotificationPending(meetingId)
+  })
   registerLlmIpc(
     segmentationService,
     managedOllamaManager,
@@ -2266,6 +2272,7 @@ app.whenReady().then(async () => {
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
     (meetingId) => {
+      clearDiskFullHold(meetingId)
       // A manual notes retry is an explicit user action; allow one fresh attempt.
       ollamaRuntimeRecovery.clearModelLoadLatch()
       markReprocessNotificationPending(meetingId)

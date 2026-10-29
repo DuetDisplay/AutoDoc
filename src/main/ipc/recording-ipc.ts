@@ -2,7 +2,7 @@
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
 import type { Dirent } from 'fs'
 import { appendFile, readFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
@@ -19,6 +19,8 @@ import { refreshTray } from '../services/tray'
 import { getE2ECalendarEvents, getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
+import { isDiskFullError } from '../services/disk-full'
+import { createFfmpegExitError, withSentryFingerprint } from '../services/sentry-fingerprint'
 import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
 import type {
   CalendarEvent,
@@ -41,6 +43,9 @@ const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
 // the meeting cannot wedge in the "wrapping up" state until the next app launch.
 const WINDOWS_FINALIZE_WATCHDOG_MS = 60_000
 const FFMPEG_STALL_TIMEOUT_MS = 10 * 60_000
+// After a disk-full post-processing failure, automatic recovery leaves the meeting alone for
+// this long (so it does not burn freed space on a loop) and then tries again.
+const DISK_FULL_RETRY_BACKOFF_MS = 30 * 60_000
 const segmentTimingWriteQueues = new Map<string, Promise<void>>()
 const windowsVideoJobQueue: string[] = []
 const windowsVideoJobInFlight = new Set<string>()
@@ -107,6 +112,11 @@ interface SegmentTimingEntry {
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
   return type === 'video' ? 'screen' : type
+}
+
+function isSegmentFilename(name: string, baseName: string): boolean {
+  // Only real numbered segments; leftovers like screen-muxed.webm must never match.
+  return new RegExp(`^${baseName}-\\d+\\.webm$`).test(name)
 }
 
 function getFinalFilename(type: 'video' | 'mic' | 'system'): string {
@@ -289,7 +299,12 @@ export function spawnFfmpegWithStallDetection(
           stallKilled: true,
           forcedE2EStall: true
         })
-        reject(new Error(`ffmpeg ${label} stalled after ${stallTimeoutMs}ms with no progress: `))
+        reject(
+          withSentryFingerprint(
+            new Error(`ffmpeg ${label} stalled after ${stallTimeoutMs}ms with no progress: `),
+            ['ffmpeg-exit', label, 'stalled']
+          )
+        )
       }, stallTimeoutMs)
     })
   }
@@ -317,8 +332,11 @@ export function spawnFfmpegWithStallDetection(
 
     const rejectStall = (): void => {
       reject(
-        new Error(
-          `ffmpeg ${label} stalled after ${stallTimeoutMs}ms with no progress: ${stderr.slice(-500)}`
+        withSentryFingerprint(
+          new Error(
+            `ffmpeg ${label} stalled after ${stallTimeoutMs}ms with no progress: ${stderr.slice(-500)}`
+          ),
+          ['ffmpeg-exit', label, 'stalled']
         )
       )
     }
@@ -365,13 +383,25 @@ export function spawnFfmpegWithStallDetection(
           return
         }
         if (code === 0) resolve()
-        else reject(new Error(`ffmpeg ${label} exited with code ${code}: ${stderr.slice(-500)}`))
+        else {
+          reject(
+            createFfmpegExitError(
+              label,
+              code,
+              `ffmpeg ${label} exited with code ${code}: ${stderr.slice(-500)}`
+            )
+          )
+        }
       })
     })
   })
 }
 
-async function encryptScreenWebmIfNeeded(meetingDir: string, meetingId?: string): Promise<void> {
+async function encryptScreenWebmIfNeeded(
+  meetingDir: string,
+  meetingId?: string,
+  onError?: (err: unknown) => void
+): Promise<void> {
   const screenPath = join(meetingDir, 'screen.webm')
   try {
     const exists = await stat(screenPath).catch(() => null)
@@ -386,6 +416,7 @@ async function encryptScreenWebmIfNeeded(meetingDir: string, meetingId?: string)
       meetingId
     })
     console.error(`Failed to encrypt ${screenPath}:`, err)
+    onError?.(err)
   }
 }
 
@@ -422,7 +453,15 @@ function mergeAudioFiles(
     })
     proc.on('close', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`))
+      else {
+        reject(
+          createFfmpegExitError(
+            'recording-merge',
+            code,
+            `ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`
+          )
+        )
+      }
     })
   })
 }
@@ -463,7 +502,15 @@ function concatAudioSegments(
     })
     proc.on('close', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`ffmpeg audio concat exited with code ${code}: ${stderr.slice(-500)}`))
+      else {
+        reject(
+          createFfmpegExitError(
+            'audio-concat',
+            code,
+            `ffmpeg audio concat exited with code ${code}: ${stderr.slice(-500)}`
+          )
+        )
+      }
     })
   })
 }
@@ -512,7 +559,11 @@ function mixAudioSegmentsWithOffsets(
       if (code === 0) resolve()
       else {
         reject(
-          new Error(`ffmpeg audio timeline mix exited with code ${code}: ${stderr.slice(-500)}`)
+          createFfmpegExitError(
+            'audio-mix',
+            code,
+            `ffmpeg audio timeline mix exited with code ${code}: ${stderr.slice(-500)}`
+          )
         )
       }
     })
@@ -653,7 +704,7 @@ async function assembleSegmentedCaptureFile(
   const finalPath = join(meetingDir, finalFilename)
   const segmentPrefix = `${getSegmentBaseName(type)}-`
   const segmentNames = (await readdir(meetingDir))
-    .filter((name) => name.startsWith(segmentPrefix) && name.endsWith('.webm'))
+    .filter((name) => isSegmentFilename(name, getSegmentBaseName(type)))
     .sort((a, b) => a.localeCompare(b))
 
   if (segmentNames.length === 0) {
@@ -889,10 +940,11 @@ async function getSegmentedCapturePresence(meetingDir: string): Promise<{
   return {
     hasSegmentedAudio: names.some(
       (name) =>
-        (name.startsWith('mic-') || name.startsWith('system-') || name.startsWith('audio-')) &&
-        name.endsWith('.webm')
+        isSegmentFilename(name, 'mic') ||
+        isSegmentFilename(name, 'system') ||
+        isSegmentFilename(name, 'audio')
     ),
-    hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm')),
+    hasSegmentedVideo: names.some((name) => isSegmentFilename(name, 'screen')),
     hasTranscript: names.includes('transcript.json'),
     hasNotes: names.includes('notes.json')
   }
@@ -1041,6 +1093,8 @@ export function registerRecordingIpc(
   recoverInterruptedRecordings: () => Promise<void>
   recoverWindowsFinalizingMeetings: () => Promise<void>
   hasPostProcessingWork: () => boolean
+  /** Lets automatic recovery retry a meeting held back after a disk-full failure (manual retry). */
+  clearDiskFullHold: (meetingId: string) => void
 } {
   let cachedRecentEvents: {
     fetchedAt: number
@@ -1052,6 +1106,64 @@ export function registerRecordingIpc(
   const windowsPostProcessingInFlight = new Set<string>()
   const macPostProcessingInFlight = new Set<string>()
   const videoCaptureEndedEarlyMeetings = new Set<string>()
+  // Meetings whose post-processing failed because the disk is full, mapped to when automatic
+  // recovery may try them again. Recovery skips them until then so it stops re-running (and
+  // failing) every pass; a manual retry or an app restart clears the hold immediately.
+  const diskFullHoldUntil = new Map<string, number>()
+
+  function isDiskFullHeld(meetingId: string): boolean {
+    const holdUntil = diskFullHoldUntil.get(meetingId)
+    if (holdUntil === undefined) return false
+    if (Date.now() < holdUntil) return true
+    diskFullHoldUntil.delete(meetingId)
+    logRecordingDebug('disk-full recovery hold expired; retrying', meetingId)
+    return false
+  }
+
+  function noteDiskFullFailure(meetingId: string, err: unknown): void {
+    if (!isDiskFullError(err)) return
+    if (!isDiskFullHeld(meetingId)) {
+      logRecordingDebug('disk full during post-processing; holding automatic recovery', meetingId)
+    }
+    diskFullHoldUntil.set(meetingId, Date.now() + DISK_FULL_RETRY_BACKOFF_MS)
+  }
+
+  function clearDiskFullHold(meetingId: string): void {
+    if (diskFullHoldUntil.delete(meetingId)) {
+      logRecordingDebug('disk-full recovery hold cleared', meetingId)
+    }
+  }
+
+  // Removes a leftover ffmpeg output (screen-muxed.webm / screen-seekable.webm) without ever
+  // dropping the last copy of the video. replaceFileWithRetry unlinks screen.webm before it
+  // renames the intermediate into place, so a failed rename can leave the intermediate as the
+  // only copy: restore it, and keep it if that fails too.
+  async function cleanupVideoIntermediate(
+    intermediatePath: string,
+    videoPath: string,
+    meetingId: string
+  ): Promise<void> {
+    if (await stat(videoPath).catch(() => null)) {
+      await unlink(intermediatePath).catch(() => {})
+      return
+    }
+    if (!(await stat(intermediatePath).catch(() => null))) return
+    try {
+      await renameWithRetry(intermediatePath, videoPath)
+      logRecordingDebug('restored screen.webm from interrupted replace', meetingId, {
+        restoredFrom: basename(intermediatePath)
+      })
+    } catch (err) {
+      noteDiskFullFailure(meetingId, err)
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Could not restore screen.webm after a failed replace; keeping the intermediate',
+        error: err,
+        meetingId,
+        context: { intermediate: basename(intermediatePath) }
+      })
+    }
+  }
 
   async function persistRecordingMetadata(
     meetingDir: string,
@@ -1101,6 +1213,7 @@ export function registerRecordingIpc(
         pendingAfterCount: windowsPendingFinalization.size
       })
     } catch (err) {
+      noteDiskFullFailure(meetingId, err)
       logAutodocFailure({
         area: 'recording',
         message: 'Failed to clear Windows recording finalizing state',
@@ -1134,6 +1247,7 @@ export function registerRecordingIpc(
       const existingFfmpeg = await stat(whisperManager.getFfmpegPath())
         .then(() => whisperManager.getFfmpegPath())
         .catch(() => null)
+      noteDiskFullFailure(meetingId, err)
       logAutodocFailure({
         area: 'recording',
         message: 'Failed to ensure whisper tools are ready during recording post-processing',
@@ -1156,14 +1270,18 @@ export function registerRecordingIpc(
     const videoPath = join(meetingDir, 'screen.webm')
     if (await isEncrypted(videoPath).catch(() => false)) return true
     const tempFiles: string[] = []
+    // Temp merge output; never the only copy of anything (mic/system originals remain).
+    const partialOutputs: string[] = []
     let videoProcessingFailed = false
+    // Cleaned up via cleanupVideoIntermediate: after a failed replace it may be the only copy.
+    let muxedPath: string | null = null
 
     try {
       const micStat = await stat(micPath).catch(() => null)
       const systemStat = await stat(systemPath).catch(() => null)
       const videoStat = await stat(videoPath).catch(() => null)
       if (videoStat && (micStat || systemStat)) {
-        const muxedPath = join(meetingDir, 'screen-muxed.webm')
+        muxedPath = join(meetingDir, 'screen-muxed.webm')
         const audioInputs: string[] = []
         if (micStat) audioInputs.push(micPath)
         if (systemStat) audioInputs.push(systemPath)
@@ -1172,11 +1290,11 @@ export function registerRecordingIpc(
         }
         if (audioInputs.length === 2) {
           const mergedAudioPath = join(meetingDir, 'merged-audio-tmp.webm')
+          partialOutputs.push(mergedAudioPath)
           const micInput = await decryptAudioForMux(micPath, tempFiles)
           const systemInput = await decryptAudioForMux(systemPath, tempFiles)
           await mergeAudioFiles(ffmpegPath, micInput, systemInput, mergedAudioPath)
           await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath, meetingId)
-          await unlink(mergedAudioPath).catch(() => {})
         } else {
           const audioInput = await decryptAudioForMux(audioInputs[0], tempFiles)
           await muxAudioIntoVideo(ffmpegPath, videoPath, audioInput, muxedPath, meetingId)
@@ -1185,6 +1303,7 @@ export function registerRecordingIpc(
       }
     } catch (err) {
       videoProcessingFailed = true
+      noteDiskFullFailure(meetingId, err)
       logAutodocFailure({
         area: 'recording',
         message: 'Failed to mux audio into recorded video',
@@ -1193,16 +1312,19 @@ export function registerRecordingIpc(
       })
       console.error('Failed to mux audio into video:', err)
     } finally {
-      await Promise.all(tempFiles.map((tempPath) => unlink(tempPath).catch(() => {})))
+      await Promise.all(
+        [...tempFiles, ...partialOutputs].map((tempPath) => unlink(tempPath).catch(() => {}))
+      )
+      if (muxedPath) await cleanupVideoIntermediate(muxedPath, videoPath, meetingId)
     }
 
+    const seekablePath = join(meetingDir, 'screen-seekable.webm')
     try {
       const videoExists = await stat(videoPath).catch(() => null)
       if (videoExists) {
         if (!ffmpegPath) {
           throw new Error('ffmpeg path unavailable for remux')
         }
-        const seekablePath = join(meetingDir, 'screen-seekable.webm')
         await remuxForSeeking(ffmpegPath, videoPath, seekablePath, meetingId)
         await replaceFileWithRetry(seekablePath, videoPath)
         const finalStat = await stat(videoPath).catch(() => null)
@@ -1214,6 +1336,7 @@ export function registerRecordingIpc(
       }
     } catch (err) {
       videoProcessingFailed = true
+      noteDiskFullFailure(meetingId, err)
       logAutodocFailure({
         area: 'recording',
         message: 'Failed to remux recorded video for seeking',
@@ -1221,10 +1344,14 @@ export function registerRecordingIpc(
         meetingId
       })
       console.error('Failed to remux for seeking (video will still play but may not seek):', err)
+    } finally {
+      await cleanupVideoIntermediate(seekablePath, videoPath, meetingId)
     }
 
     if (!videoProcessingFailed) {
-      await encryptScreenWebmIfNeeded(meetingDir, meetingId)
+      await encryptScreenWebmIfNeeded(meetingDir, meetingId, (err) =>
+        noteDiskFullFailure(meetingId, err)
+      )
     }
 
     return !videoProcessingFailed
@@ -1244,6 +1371,7 @@ export function registerRecordingIpc(
         await assembleRecordingVideoSegment(meetingDir, ffmpegPath, meetingId)
       } catch (err) {
         videoProcessingFailed = true
+        noteDiskFullFailure(meetingId, err)
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to assemble segmented recording video',
@@ -1279,6 +1407,7 @@ export function registerRecordingIpc(
         })
       }
     } catch (err) {
+      noteDiskFullFailure(meetingId, err)
       logAutodocFailure({
         area: 'recording',
         message: 'Windows video post-processing job failed',
@@ -1375,6 +1504,7 @@ export function registerRecordingIpc(
         try {
           await assembleRecordingAudioSegments(meetingDir, ffmpegPath)
         } catch (err) {
+          noteDiskFullFailure(meetingId, err)
           logAutodocFailure({
             area: 'recording',
             message: 'Failed to assemble segmented recording audio',
@@ -1411,6 +1541,7 @@ export function registerRecordingIpc(
               }
             )
           } catch (err) {
+            noteDiskFullFailure(meetingId, err)
             logAutodocFailure({
               area: 'recording',
               message: 'Failed to persist video processing state during Phase 1 post-processing',
@@ -1441,6 +1572,7 @@ export function registerRecordingIpc(
     })().catch((err) => {
       windowsPostProcessingInFlight.delete(meetingId)
       void (async () => {
+        noteDiskFullFailure(meetingId, err)
         logAutodocFailure({
           area: 'recording',
           message: 'Recording post-processing failed',
@@ -1746,6 +1878,7 @@ export function registerRecordingIpc(
         await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
         scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, metadata)
       } catch (err) {
+        noteDiskFullFailure(meetingId, err)
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to save recording metadata',
@@ -1770,6 +1903,7 @@ export function registerRecordingIpc(
             .then(() => whisperManager.getFfmpegPath())
             .catch(() => null)
           ffmpegPath = existingFfmpeg
+          noteDiskFullFailure(meetingId, err)
           logAutodocFailure({
             area: 'recording',
             message: 'Failed to ensure whisper tools are ready during recording post-processing',
@@ -1784,6 +1918,7 @@ export function registerRecordingIpc(
       try {
         await assembleRecordingAudioSegments(meetingDir, ffmpegPath)
       } catch (err) {
+        noteDiskFullFailure(meetingId, err)
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to assemble segmented recording audio',
@@ -1807,6 +1942,7 @@ export function registerRecordingIpc(
         await assembleRecordingVideoSegment(meetingDir, ffmpegPath, meetingId)
       } catch (err) {
         videoProcessingFailed = true
+        noteDiskFullFailure(meetingId, err)
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to assemble segmented recording video',
@@ -1820,7 +1956,9 @@ export function registerRecordingIpc(
         videoProcessingFailed = !(await runVideoMuxRemuxEncrypt(meetingDir, meetingId, ffmpegPath))
       }
 
-      await encryptScreenWebmIfNeeded(meetingDir, meetingId)
+      await encryptScreenWebmIfNeeded(meetingDir, meetingId, (err) =>
+        noteDiskFullFailure(meetingId, err)
+      )
 
       {
         try {
@@ -1834,6 +1972,9 @@ export function registerRecordingIpc(
             join(meetingDir, 'metadata.json')
           )
         } catch (err) {
+          // On a full disk this write fails and isFinalizing stays true; the hold keeps
+          // recovery from re-running the whole pipeline every pass.
+          noteDiskFullFailure(meetingId, err)
           logAutodocFailure({
             area: 'recording',
             message: 'Failed to persist video processing failure breadcrumb',
@@ -1844,6 +1985,7 @@ export function registerRecordingIpc(
       }
     })()
       .catch((err) => {
+        noteDiskFullFailure(meetingId, err)
         logAutodocFailure({
           area: 'recording',
           message: 'Recording post-processing failed',
@@ -2182,6 +2324,7 @@ export function registerRecordingIpc(
       throw new Error(`Recording metadata not found: ${meetingId}`)
     }
 
+    clearDiskFullHold(meetingId)
     const updatedMetadata: MeetingMetadata = {
       ...metadata,
       videoStatus: 'processing',
@@ -2373,7 +2516,8 @@ export function registerRecordingIpc(
         (state.isRecording && state.meetingId === meetingId) ||
         macPostProcessingInFlight.has(meetingId) ||
         windowsPendingFinalization.has(meetingId) ||
-        windowsPostProcessingInFlight.has(meetingId)
+        windowsPostProcessingInFlight.has(meetingId) ||
+        isDiskFullHeld(meetingId)
       )
         continue
       const meetingDir = join(baseDir, meetingId)
@@ -2427,6 +2571,7 @@ export function registerRecordingIpc(
           await runMacRecordingPostProcessing(meetingId, recovered)
         }
       } catch (error) {
+        noteDiskFullFailure(meetingId, error)
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to recover interrupted recording',
@@ -2466,7 +2611,8 @@ export function registerRecordingIpc(
           windowsPendingFinalization.has(meetingId) ||
           windowsPostProcessingInFlight.has(meetingId) ||
           windowsVideoJobInFlight.has(meetingId) ||
-          windowsVideoJobQueue.includes(meetingId)
+          windowsVideoJobQueue.includes(meetingId) ||
+          isDiskFullHeld(meetingId)
         ) {
           continue
         }
@@ -2520,7 +2666,8 @@ export function registerRecordingIpc(
     stopActiveRecording,
     recoverInterruptedRecordings,
     recoverWindowsFinalizingMeetings,
-    hasPostProcessingWork
+    hasPostProcessingWork,
+    clearDiskFullHold
   }
 }
 

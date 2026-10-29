@@ -69,4 +69,36 @@ describe('AudioConverter', () => {
       converter.convert('/input/audio.webm', '/output/audio.wav', '/bin/ffmpeg')
     ).rejects.toThrow('ffmpeg exited with code 1')
   })
+
+  it('tags ffmpeg exit failures with a sentryFingerprint per step', async () => {
+    const cases: Array<[string, () => Promise<void>, string]> = [
+      ['convert', () => converter.convert('/in.webm', '/out.wav', '/bin/ffmpeg'), 'convert'],
+      ['merge', () => converter.mergeAudio('/a.wav', '/b.wav', '/out.wav', '/bin/ffmpeg'), 'merge'],
+      [
+        'extract',
+        () => converter.extractClip('/in.wav', '/out.wav', '/bin/ffmpeg', 1, 2),
+        'extract'
+      ]
+    ]
+    for (const [, run, step] of cases) {
+      mockSpawn.mockReturnValue(createMockProcess(228, 'No space left on device') as any)
+      const error = await run().then(
+        () => null,
+        (err: Error & { sentryFingerprint?: string[] }) => err
+      )
+      expect(error?.message).toContain('No space left on device')
+      expect(error?.sentryFingerprint).toEqual(['ffmpeg-exit', step, '228'])
+    }
+  })
+
+  it('tags concat failures with a sentryFingerprint', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(1, 'bad concat') as any)
+    const error = await converter
+      .concatClips(['/a.wav'], '/out.wav', '/bin/ffmpeg', '/tmp/autodoc-concat-test.txt')
+      .then(
+        () => null,
+        (err: Error & { sentryFingerprint?: string[] }) => err
+      )
+    expect(error?.sentryFingerprint).toEqual(['ffmpeg-exit', 'concat', '1'])
+  })
 })

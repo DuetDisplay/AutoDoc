@@ -79,6 +79,8 @@ export interface UpdateStatus {
   version?: string
   percent?: number
   error?: string
+  /** Set with `error` when the update failed because the disk is full. */
+  errorKind?: 'disk-full'
   installBlockedReason?: string
 }
 

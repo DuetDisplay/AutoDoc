@@ -503,6 +503,8 @@ export interface WhisperSetupStatus {
     | 'error'
   percent: number
   error?: string
+  /** Set with `error` when the failure was caused by a full disk (e.g. extract/download ENOSPC). */
+  errorKind?: 'disk-full'
   backend?:
     | 'mlx-whisper'
     | 'faster-whisper-cuda'
