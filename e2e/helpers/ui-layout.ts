@@ -133,6 +133,101 @@ export async function expectTextWithin(target: Locator, bounds: Locator = target
   expect(escaped).toEqual([])
 }
 
+/**
+ * Geometry audit of an alert/card: every text line stays inside both its own element and the
+ * card, nothing is ellipsized or clamped, buttons stay inside the card without covering text or
+ * each other, and the card and page do not overflow the viewport horizontally.
+ */
+export async function expectCardLayout(card: Locator, label: string) {
+  const problems = await card.evaluate((root) => {
+    const out: string[] = []
+    const tol = 1
+    const box = root.getBoundingClientRect()
+    if (box.left < -tol || box.right > innerWidth + tol) out.push('card outside viewport')
+    if (document.documentElement.scrollWidth > innerWidth + tol) out.push('page h-scroll')
+    const textRects: { text: string; el: Element; r: DOMRect }[] = []
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    while (walker.nextNode()) {
+      const node = walker.currentNode,
+        parent = node.parentElement!
+      if (!node.textContent?.trim() || parent.closest('[aria-hidden="true"],.sr-only')) continue
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      const own = parent.getBoundingClientRect()
+      for (const r of range.getClientRects()) {
+        if (!r.width) continue
+        const text = node.textContent!.trim().slice(0, 40)
+        if (r.left < box.left - tol || r.right > box.right + tol)
+          out.push(`text outside card: ${text}`)
+        if (r.left < own.left - tol || r.right > own.right + tol)
+          out.push(`text outside own box: ${text}`)
+        textRects.push({ text, el: parent, r })
+      }
+    }
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (el instanceof SVGElement) continue
+      const css = getComputedStyle(el)
+      if (css.display !== 'inline' && el.scrollWidth > el.clientWidth + tol && el.clientWidth)
+        out.push(`scrollWidth ${el.scrollWidth} > ${el.clientWidth}: ${el.tagName}`)
+      if (/hidden|clip/.test(css.overflowY) && el.scrollHeight > el.clientHeight + tol)
+        out.push(`clipped vertically: ${el.tagName}`)
+      if (
+        css.textOverflow === 'ellipsis' ||
+        (css.webkitLineClamp && css.webkitLineClamp !== 'none')
+      )
+        out.push(`ellipsis/clamp: ${el.tagName}`)
+    }
+    const buttons = [...root.querySelectorAll('button')]
+    buttons.forEach((button, i) => {
+      const r = button.getBoundingClientRect()
+      if (r.left < box.left - tol || r.right > box.right + tol || r.bottom > box.bottom + tol)
+        out.push(`button outside card: ${button.textContent}`)
+      for (const t of textRects)
+        if (
+          !button.contains(t.el) &&
+          t.r.left < r.right - tol &&
+          t.r.right > r.left + tol &&
+          t.r.top < r.bottom - tol &&
+          t.r.bottom > r.top + tol
+        )
+          out.push(`button ${button.textContent} overlaps text: ${t.text}`)
+      for (const other of buttons.slice(i + 1)) {
+        const o = other.getBoundingClientRect()
+        if (
+          r.left < o.right - tol &&
+          r.right > o.left + tol &&
+          r.top < o.bottom - tol &&
+          r.bottom > o.top + tol
+        )
+          out.push(`buttons overlap: ${button.textContent} / ${other.textContent}`)
+      }
+    })
+    return out
+  })
+  expect(problems, label).toEqual([])
+  // Cards may break an over-long word as a last resort (overflow-wrap: anywhere), but only a
+  // cramped column forces that. With normal wrapping, ordinary words must still fit.
+  const midWord = await card.evaluate((root) => {
+    const style = document.createElement('style')
+    style.textContent =
+      '[data-wrap-probe], [data-wrap-probe] * { overflow-wrap: normal !important; word-break: normal !important; }'
+    document.head.append(style)
+    root.setAttribute('data-wrap-probe', '')
+    const out: string[] = []
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (el instanceof SVGElement || getComputedStyle(el).display === 'inline') continue
+      if (el.clientWidth && el.scrollWidth > el.clientWidth + 1)
+        out.push(`${el.tagName}: ${(el.textContent ?? '').trim().slice(0, 40)}`)
+    }
+    root.removeAttribute('data-wrap-probe')
+    style.remove()
+    return out
+  })
+  expect(midWord, `${label}: words only fit by breaking mid-word`).toEqual([])
+  await expectTextWithin(card, card)
+  for (const button of await card.getByRole('button').all()) await expectTextWithin(button, button)
+}
+
 /** Scroll vertically without automatically panning away an overflow bug. */
 export async function revealVertically(target: Locator) {
   await target.evaluate((element) => {
