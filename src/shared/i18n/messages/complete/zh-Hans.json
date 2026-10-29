@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc无法启动麦克风。录制可仅使用系统音频继续。",
   "recording.audioOnlyReminderBody": "视频已于 {minutes} 分钟前停止。AutoDoc 仍在录制音频。",
   "recording.audioOnlyReminderStop": "停止录制",
-  "recording.audioOnlyReminderKeep": "继续录制"
+  "recording.audioOnlyReminderKeep": "继续录制",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "此录音正在使用 CPU,因此需要更长时间。",
+  "ui.whyIsThisTakingLonger": "为什么花的时间更长?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc 通常使用电脑的图形芯片来快速转写。这次没能做到:电脑可用内存不足,或图形芯片停止响应。因此 AutoDoc 为这段录音改用了主处理器。转写内容同样完整,只是耗时更长。下次关闭其他应用可能会有帮助。下一次录音会再次尝试更快的方式。"
 }

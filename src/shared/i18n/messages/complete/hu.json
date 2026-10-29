@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "Az AutoDoc nem tudta elindítani a mikrofont. A felvétel csak rendszerhanggal folytatódhat.",
   "recording.audioOnlyReminderBody": "A videó {minutes} perce leállt. Az AutoDoc továbbra is hangot rögzít.",
   "recording.audioOnlyReminderStop": "Felvétel leállítása",
-  "recording.audioOnlyReminderKeep": "Felvétel folytatása"
+  "recording.audioOnlyReminderKeep": "Felvétel folytatása",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "A rendszer ehhez a felvételhez a processzort használja, ezért tovább fog tartani.",
+  "ui.whyIsThisTakingLonger": "Miért tart tovább?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "Az AutoDoc általában a számítógép grafikus chipjét használja a gyors átíráshoz. Ezúttal nem sikerült: a számítógépen kevés volt a szabad memória, vagy a grafikus chip nem válaszolt. Ezért az AutoDoc ennél a felvételnél a fő processzorra váltott. Az átirat ugyanolyan teljes lesz, csak tovább tart. Legközelebb segíthet, ha bezár más alkalmazásokat. A következő felvétel újra megpróbálja a gyorsabb módot."
 }

@@ -21,6 +21,14 @@ export function registerTranscriptionIpc(
     return transcriptionService.getMemoryFailure(meetingId)
   })
 
+  ipcMain.handle('transcription:get-error-code', (_event, meetingId: string) => {
+    return transcriptionService.getErrorCode(meetingId)
+  })
+
+  ipcMain.handle('transcription:get-cpu-fallback', (_event, meetingId: string): boolean => {
+    return transcriptionService.getCpuFallback(meetingId)
+  })
+
   ipcMain.handle(
     'transcription:get-transcript',
     async (_event, meetingId: string): Promise<Transcript[]> => {

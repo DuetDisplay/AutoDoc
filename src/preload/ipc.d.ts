@@ -204,6 +204,8 @@ export interface IpcInvokeEvents {
   'transcription:get-status': [meetingId: string]
   'transcription:get-memory-failure': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
+  'transcription:get-error-code': [meetingId: string]
+  'transcription:get-cpu-fallback': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string, options?: { reprocess: boolean }]
   'transcription:get-reprocess-failure': [meetingId: string]
@@ -372,6 +374,8 @@ export interface IpcInvokeReturns {
   'transcription:get-status': TranscriptionStatus
   'transcription:get-memory-failure': MemoryFailure | undefined
   'transcription:get-progress': number | undefined
+  'transcription:get-error-code': string | undefined
+  'transcription:get-cpu-fallback': boolean
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
   'transcription:get-reprocess-failure': boolean

@@ -1046,7 +1046,9 @@ export function Settings() {
                   onClick={handleCheckForUpdates}
                   className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
                 >
-                  {t('settings.updateFailed')}
+                  {updateStatus.errorKind === 'disk-full'
+                    ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
+                    : t('settings.updateFailed')}
                 </button>
               )}
             </div>

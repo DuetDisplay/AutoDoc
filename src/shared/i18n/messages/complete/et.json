@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc ei saanud mikrofoni käivitada. Salvestamine võib jätkuda ainult süsteemiheliga.",
   "recording.audioOnlyReminderBody": "Video peatus {minutes} minutit tagasi. AutoDoc salvestab endiselt heli.",
   "recording.audioOnlyReminderStop": "Peata salvestus",
-  "recording.audioOnlyReminderKeep": "Jätka salvestamist"
+  "recording.audioOnlyReminderKeep": "Jätka salvestamist",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Selle salvestuse jaoks kasutatakse protsessorit, seega võtab see kauem aega.",
+  "ui.whyIsThisTakingLonger": "Miks see kauem aega võtab?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc kasutab kiireks transkribeerimiseks tavaliselt teie arvuti graafikakiipi. Seekord see ei õnnestunud: arvutil oli vähe vaba mälu või graafikakiip lakkas vastamast. Seetõttu lülitus AutoDoc selle salvestuse jaoks peaprotsessorile. Transkriptsioon on sama täielik, see lihtsalt võtab kauem aega. Järgmine kord võib aidata muude rakenduste sulgemine. Järgmine salvestus proovib jälle kiiremat moodust."
 }

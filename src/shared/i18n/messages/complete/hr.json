@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc nije mogao pokrenuti mikrofon. Snimanje se može nastaviti samo sa zvukom sustava.",
   "recording.audioOnlyReminderBody": "Video se zaustavio prije {minutes} minuta. AutoDoc i dalje snima zvuk.",
   "recording.audioOnlyReminderStop": "Zaustavi snimanje",
-  "recording.audioOnlyReminderKeep": "Nastavi snimati"
+  "recording.audioOnlyReminderKeep": "Nastavi snimati",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Za ovu snimku koristi se procesor pa će trajati dulje.",
+  "ui.whyIsThisTakingLonger": "Zašto ovo traje dulje?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc obično koristi grafički čip vašeg računala za brzu transkripciju. Ovaj put nije mogao: računalu je ponestalo slobodne memorije ili je grafički čip prestao odgovarati. Zato je AutoDoc za ovu snimku prešao na glavni procesor. Transkripcija će biti jednako potpuna, samo traje dulje. Zatvaranje drugih aplikacija može pomoći sljedeći put. Sljedeća snimka ponovno će pokušati brži način."
 }

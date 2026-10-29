@@ -25,6 +25,8 @@ import type {
 import { notesFailureKindFromCode, notesUserCopy } from '../../../shared/notes-user-copy'
 import type { MemoryFailure } from '../../../shared/memory-failure'
 import { MemoryFailureCallout } from '../components/MemoryFailureCallout'
+import { DiskFullCallout } from '../components/DiskFullCallout'
+import { CpuFallbackNotice } from '../components/CpuFallbackNotice'
 import { TranscriptView } from '../components/TranscriptView'
 import { NotesV2Document } from '../components/NotesV2Document'
 import { useMeetingSpan } from '../hooks/useMeetingSpan'
@@ -324,6 +326,8 @@ export function MeetingDetail() {
   const [reprocessFailed, setReprocessFailed] = useState(false)
   const [transcriptionMemoryFailure, setTranscriptionMemoryFailure] = useState<MemoryFailure>()
   const [segmentationMemoryFailure, setSegmentationMemoryFailure] = useState<MemoryFailure>()
+  const [transcriptionErrorCode, setTranscriptionErrorCode] = useState<string | undefined>()
+  const [transcriptionCpuFallback, setTranscriptionCpuFallback] = useState(false)
   const transcriptionEventRevisionRef = useRef(0)
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [transcriptionBackendLabel, setTranscriptionBackendLabel] = useState<string | undefined>()
@@ -879,7 +883,9 @@ export function MeetingDetail() {
       window.electronAPI.invoke('segmentation:get-error-code', id),
       window.electronAPI.invoke('segmentation:get-activity', id),
       window.electronAPI.invoke('transcription:get-memory-failure', id),
-      window.electronAPI.invoke('segmentation:get-memory-failure', id)
+      window.electronAPI.invoke('segmentation:get-memory-failure', id),
+      window.electronAPI.invoke('transcription:get-error-code', id),
+      window.electronAPI.invoke('transcription:get-cpu-fallback', id)
     ]).then(
       ([
         status,
@@ -889,7 +895,9 @@ export function MeetingDetail() {
         nextSegmentationErrorCode,
         nextSegmentationActivity,
         nextTranscriptionMemoryFailure,
-        nextSegmentationMemoryFailure
+        nextSegmentationMemoryFailure,
+        nextTranscriptionErrorCode,
+        nextTranscriptionCpuFallback
       ]) => {
         if (cancelled) return
 
@@ -899,6 +907,8 @@ export function MeetingDetail() {
           setTranscriptionMemoryFailure(
             status === 'failed' ? nextTranscriptionMemoryFailure : undefined
           )
+          setTranscriptionErrorCode(status === 'failed' ? nextTranscriptionErrorCode : undefined)
+          setTranscriptionCpuFallback(nextTranscriptionCpuFallback === true)
         }
         if (segmentationEventRevisionRef.current === initialSegmentationRevision) {
           setSegmentationMemoryFailure(
@@ -958,6 +968,8 @@ export function MeetingDetail() {
         setTranscriptionMemoryFailure(
           payload.status === 'failed' ? payload.memoryFailure : undefined
         )
+        setTranscriptionErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
+        setTranscriptionCpuFallback(payload.cpuFallback === true)
         setTranscriptionStatus(payload.status)
         if (isWindowsRenderer()) setReprocessFailed(payload.reprocessFailed === true)
         setTranscriptionProgress((current) =>
@@ -1139,6 +1151,20 @@ export function MeetingDetail() {
       }
     />
   ) : null
+  const showTranscriptionDiskFull =
+    !showMemoryCallout && transcriptionStatus === 'failed' && transcriptionErrorCode === 'disk-full'
+  const showNotesDiskFull =
+    !showMemoryCallout && segmentationStatus === 'failed' && segmentationErrorCode === 'disk-full'
+  const showDiskFullCallout = showTranscriptionDiskFull || showNotesDiskFull
+  const diskFullCallout = showDiskFullCallout ? (
+    <DiskFullCallout
+      stage={showTranscriptionDiskFull ? 'transcription' : 'notes'}
+      onRetry={showTranscriptionDiskFull ? handleReprocessTranscript : handleReprocessNotes}
+    />
+  ) : null
+  const showCpuFallbackNotice =
+    transcriptionCpuFallback &&
+    ['queued', 'downloading', 'transcribing', 'diarizing'].includes(transcriptionStatus)
   const failCopy = notesUserCopy(
     notesFailureKindFromCode(
       segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
@@ -1521,6 +1547,8 @@ export function MeetingDetail() {
         </div>
       </div>
 
+      {showCpuFallbackNotice && <CpuFallbackNotice />}
+
       {/* Tabs */}
       {isWindowsRenderer() && reprocessFailed && (
         <p
@@ -1594,49 +1622,52 @@ export function MeetingDetail() {
                 </div>
               )}
             {memoryCallout}
-            {!showMemoryCallout && (showHardFailCallout || layoutDegraded) && (
-              <div className="rounded-xl border border-clay/30 bg-clay-light px-4 py-3.5">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-clay/30 bg-bg-card text-clay-dark">
-                    <svg
-                      aria-hidden="true"
-                      className="h-4 w-4"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    >
-                      <path d="M5.75 2.75h5.5l3 3v9.5a2 2 0 0 1-2 2h-6.5a2 2 0 0 1-2-2V4.75a2 2 0 0 1 2-2Z" />
-                      <path d="M11.25 2.75v3h3M9 8.5v3.25M9 14h.01" />
-                    </svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-[13px] font-semibold text-ink">
-                      {layoutDegraded ? notesUserCopy('layout', language).title : failCopy.title}
-                    </h3>
-                    <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
-                      {layoutDegraded ? notesUserCopy('layout', language).body : failCopy.body}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2 mt-3">
-                      <button
-                        onClick={handleReprocessNotes}
-                        className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+            {diskFullCallout}
+            {!showMemoryCallout &&
+              !showDiskFullCallout &&
+              (showHardFailCallout || layoutDegraded) && (
+                <div className="rounded-xl border border-clay/30 bg-clay-light px-4 py-3.5">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-clay/30 bg-bg-card text-clay-dark">
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
                       >
-                        {segmentationErrorCode === 'scan_or_persist'
-                          ? t('meeting.regenerateNotes')
-                          : t('meeting.tryAgain')}
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('transcript')}
-                        className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
-                      >
-                        {t('meeting.viewTranscript')}
-                      </button>
+                        <path d="M5.75 2.75h5.5l3 3v9.5a2 2 0 0 1-2 2h-6.5a2 2 0 0 1-2-2V4.75a2 2 0 0 1 2-2Z" />
+                        <path d="M11.25 2.75v3h3M9 8.5v3.25M9 14h.01" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-[13px] font-semibold text-ink">
+                        {layoutDegraded ? notesUserCopy('layout', language).title : failCopy.title}
+                      </h3>
+                      <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
+                        {layoutDegraded ? notesUserCopy('layout', language).body : failCopy.body}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <button
+                          onClick={handleReprocessNotes}
+                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+                        >
+                          {segmentationErrorCode === 'scan_or_persist'
+                            ? t('meeting.regenerateNotes')
+                            : t('meeting.tryAgain')}
+                        </button>
+                        <button
+                          onClick={() => setActiveTab('transcript')}
+                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
+                        >
+                          {t('meeting.viewTranscript')}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
             {notesV2 && segmentationStatus === 'complete' && !layoutDegraded ? (
               <>
                 <NotesV2Document
@@ -1875,6 +1906,8 @@ export function MeetingDetail() {
             )}
             {showTranscriptionMemoryFailure ? (
               memoryCallout
+            ) : showTranscriptionDiskFull ? (
+              diskFullCallout
             ) : (
               <TranscriptView
                 segments={transcript}

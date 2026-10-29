@@ -139,6 +139,28 @@ describe('Settings', () => {
     ).toBeChecked()
   })
 
+  it.each([
+    [
+      { state: 'error' as const, errorKind: 'disk-full' as const },
+      'Not enough disk space. Free up space and try again.'
+    ],
+    [{ state: 'error' as const }, 'Update Failed. Retry']
+  ])('shows the right update failure text for %j', async (status, expected) => {
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(status),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+    render(<Settings />)
+    expect(await screen.findByRole('button', { name: expected })).toBeInTheDocument()
+    if (status.errorKind) {
+      expect(screen.queryByRole('button', { name: 'Update Failed. Retry' })).not.toBeInTheDocument()
+    }
+  })
+
   it('shows the video watermark by default and persists the playback preference', async () => {
     const state = {
       videoWatermarkVisible: true

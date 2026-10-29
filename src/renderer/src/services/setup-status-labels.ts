@@ -31,7 +31,9 @@ export function getWhisperSetupLabel(
     case 'downloading-speaker-model':
       return t('setup.downloadingSpeakerModel', { percent: status.percent })
     case 'error':
-      return t('setup.transcriptionFailed')
+      return status.errorKind === 'disk-full'
+        ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
+        : t('setup.transcriptionFailed')
     default:
       return null
   }

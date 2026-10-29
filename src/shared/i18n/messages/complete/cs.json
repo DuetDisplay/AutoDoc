@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc nemohl spustit mikrofon. Nahrávání může pokračovat pouze se systémovým zvukem.",
   "recording.audioOnlyReminderBody": "Video se zastavilo před {minutes} minutami. AutoDoc stále nahrává zvuk.",
   "recording.audioOnlyReminderStop": "Zastavit nahrávání",
-  "recording.audioOnlyReminderKeep": "Pokračovat v nahrávání"
+  "recording.audioOnlyReminderKeep": "Pokračovat v nahrávání",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Pro tuto nahrávku se používá procesor, takže to potrvá déle.",
+  "ui.whyIsThisTakingLonger": "Proč to trvá déle?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc obvykle k rychlému přepisu používá grafický čip počítače. Tentokrát to nešlo: počítači docházela volná paměť nebo grafický čip přestal reagovat. AutoDoc proto pro tuto nahrávku přešel na hlavní procesor. Přepis bude stejně úplný, jen to trvá déle. Příště může pomoci zavřít jiné aplikace. Další nahrávka zkusí rychlejší způsob znovu."
 }

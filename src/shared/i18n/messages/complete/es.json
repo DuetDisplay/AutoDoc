@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc no pudo iniciar el micrófono. La grabación puede continuar solo con el audio del sistema.",
   "recording.audioOnlyReminderBody": "El vídeo se detuvo hace {minutes} minutos. AutoDoc sigue grabando audio.",
   "recording.audioOnlyReminderStop": "Detener grabación",
-  "recording.audioOnlyReminderKeep": "Seguir grabando"
+  "recording.audioOnlyReminderKeep": "Seguir grabando",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Se está usando la CPU para esta grabación, por lo que tardará más.",
+  "ui.whyIsThisTakingLonger": "¿Por qué tarda más?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc suele usar el chip gráfico de tu ordenador para transcribir rápido. Esta vez no pudo: tu ordenador tenía poca memoria libre o el chip gráfico dejó de responder. Por eso AutoDoc cambió al procesador principal para esta grabación. La transcripción será igual de completa; solo tarda más. Cerrar otras aplicaciones puede ayudar la próxima vez. Tu próxima grabación volverá a intentar la vía más rápida."
 }

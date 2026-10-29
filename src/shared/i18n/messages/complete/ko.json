@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc에서 마이크를 시작하지 못했습니다. 시스템 오디오만으로 녹음을 계속할 수 있습니다.",
   "recording.audioOnlyReminderBody": "{minutes}분 전에 비디오가 중지되었습니다. AutoDoc은 계속 오디오를 녹음하고 있습니다.",
   "recording.audioOnlyReminderStop": "녹음 중지",
-  "recording.audioOnlyReminderKeep": "계속 녹음"
+  "recording.audioOnlyReminderKeep": "계속 녹음",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "이 녹음에는 CPU를 사용하므로 시간이 더 걸립니다.",
+  "ui.whyIsThisTakingLonger": "왜 시간이 더 걸리나요?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc은 보통 컴퓨터의 그래픽 칩을 사용해 빠르게 받아쓰기를 합니다. 이번에는 사용 가능한 메모리가 부족하거나 그래픽 칩이 응답하지 않아 이 녹음에는 메인 프로세서로 전환했습니다. 받아쓰기 내용은 동일하게 완전하며, 시간만 더 걸립니다. 다음에는 다른 앱을 닫으면 도움이 될 수 있습니다. 다음 녹음에서는 다시 더 빠른 방법을 시도합니다."
 }

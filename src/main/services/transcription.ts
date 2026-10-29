@@ -3437,6 +3437,17 @@ export class TranscriptionService {
     return typeof error?.error === 'string' ? memoryFailureFromError(error.error) : undefined
   }
 
+  async getErrorCode(meetingId: string): Promise<string | undefined> {
+    const error = await this.readErrorFile(
+      join(this.recordingsBaseDir, meetingId, 'transcript.error')
+    )
+    return typeof error?.error === 'string' ? classifyError(error.error) : undefined
+  }
+
+  getCpuFallback(meetingId: string): boolean {
+    return this.windowsCpuFallbackMeetingId === meetingId
+  }
+
   private async readErrorFile(
     errorPath: string
   ): Promise<{ error: string; retries: number } | null> {

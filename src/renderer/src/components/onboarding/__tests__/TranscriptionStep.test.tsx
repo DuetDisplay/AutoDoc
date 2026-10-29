@@ -298,6 +298,41 @@ describe('TranscriptionStep', () => {
     }
   }, 10000)
 
+  it('says the disk is full when setup fails for lack of space', async () => {
+    vi.useFakeTimers()
+    let progress: ((status: Record<string, unknown>) => Promise<void>) | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      return Promise.resolve({})
+    })
+    const full = { phase: 'error', percent: 0, error: 'ENOSPC', errorKind: 'disk-full' }
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await act(async () => {
+          await progress?.(full)
+          await vi.advanceTimersByTimeAsync(1500)
+        })
+      }
+      expect(
+        screen.getAllByText('Not enough disk space. Free up space and try again.').length
+      ).toBeGreaterThan(0)
+      expect(screen.queryByText("You're offline")).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
+
   it('says the machine is offline when the download cannot reach the server', async () => {
     vi.useFakeTimers()
     let progress:

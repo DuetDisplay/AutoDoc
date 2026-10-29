@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc kon de microfoon niet starten. De opname kan doorgaan met alleen systeemaudio.",
   "recording.audioOnlyReminderBody": "De video is {minutes} minuten geleden gestopt. AutoDoc neemt nog steeds audio op.",
   "recording.audioOnlyReminderStop": "Opname stoppen",
-  "recording.audioOnlyReminderKeep": "Opname voortzetten"
+  "recording.audioOnlyReminderKeep": "Opname voortzetten",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "De processor wordt gebruikt voor deze opname, dus het duurt langer.",
+  "ui.whyIsThisTakingLonger": "Waarom duurt dit langer?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc gebruikt normaal de grafische chip van je computer om snel te transcriberen. Dit keer lukte dat niet: je computer had te weinig vrij geheugen, of de grafische chip reageerde niet meer. Daarom schakelde AutoDoc voor deze opname over op de hoofdprocessor. Je transcript is net zo volledig, het duurt alleen langer. Andere apps sluiten kan de volgende keer helpen. Je volgende opname probeert weer de snellere manier."
 }

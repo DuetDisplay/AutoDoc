@@ -217,6 +217,7 @@ export function TranscriptionStep({
 
   // A failed download because the machine is offline gets its own message.
   const lockedReason = languageLocked ? t('ui.thisLanguageIsnTAvailableOnThisPC2') : null
+  const diskFullFailure = setupStatus.errorKind === 'disk-full'
   const networkFailure = isNetworkErrorMessage(error ?? setupStatus.error)
   const languageLabel = meetingLanguageName(meetingLanguage ?? 'en')
 
@@ -333,19 +334,23 @@ export function TranscriptionStep({
         <div className="flex flex-col items-center gap-3">
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
             <h3 className="text-[14px] font-semibold text-ink mb-2">
-              {networkFailure
-                ? t('ui.youReOffline')
-                : t('ui.transcriptionSetupIsTakingLongerThanExpected')}
+              {diskFullFailure
+                ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
+                : networkFailure
+                  ? t('ui.youReOffline')
+                  : t('ui.transcriptionSetupIsTakingLongerThanExpected')}
             </h3>
-            <p className="text-[13px] text-ink-muted leading-relaxed">
-              {networkFailure
-                ? t('ui.connectToTheInternetToDownloadTheLanguageSpeechModelThenPressRetry', {
-                    language: languageLabel
-                  })
-                : t(
-                    'ui.youCanContinueAndAutoDocWillKeepWorkingOnThisInTheBackgroundOrRetryRightNow'
-                  )}
-            </p>
+            {!diskFullFailure && (
+              <p className="text-[13px] text-ink-muted leading-relaxed">
+                {networkFailure
+                  ? t('ui.connectToTheInternetToDownloadTheLanguageSpeechModelThenPressRetry', {
+                      language: languageLabel
+                    })
+                  : t(
+                      'ui.youCanContinueAndAutoDocWillKeepWorkingOnThisInTheBackgroundOrRetryRightNow'
+                    )}
+              </p>
+            )}
           </div>
           <button
             onClick={async () => {

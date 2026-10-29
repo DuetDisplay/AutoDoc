@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc nie mógł uruchomić mikrofonu. Nagrywanie może być kontynuowane tylko z dźwiękiem systemowym.",
   "recording.audioOnlyReminderBody": "Wideo zatrzymało się {minutes} minut temu. AutoDoc nadal nagrywa dźwięk.",
   "recording.audioOnlyReminderStop": "Zatrzymaj nagrywanie",
-  "recording.audioOnlyReminderKeep": "Kontynuuj nagrywanie"
+  "recording.audioOnlyReminderKeep": "Kontynuuj nagrywanie",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Do tego nagrania używany jest procesor, więc potrwa to dłużej.",
+  "ui.whyIsThisTakingLonger": "Dlaczego to trwa dłużej?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc zwykle używa układu graficznego komputera, aby szybko transkrybować. Tym razem to się nie udało: komputerowi brakowało wolnej pamięci albo układ graficzny przestał odpowiadać. Dlatego AutoDoc przełączył się dla tego nagrania na główny procesor. Transkrypcja będzie tak samo kompletna, tylko potrwa dłużej. Następnym razem może pomóc zamknięcie innych aplikacji. Kolejne nagranie znów spróbuje szybszej metody."
 }

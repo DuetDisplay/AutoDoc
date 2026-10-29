@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc не удалось запустить микрофон. Запись может продолжиться только с системным звуком.",
   "recording.audioOnlyReminderBody": "Видео остановилось {minutes} минут назад. AutoDoc продолжает записывать звук.",
   "recording.audioOnlyReminderStop": "Остановить запись",
-  "recording.audioOnlyReminderKeep": "Продолжить запись"
+  "recording.audioOnlyReminderKeep": "Продолжить запись",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Для этой записи используется процессор, поэтому это займёт больше времени.",
+  "ui.whyIsThisTakingLonger": "Почему это занимает больше времени?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "Обычно AutoDoc использует графический чип вашего компьютера для быстрой расшифровки. В этот раз не получилось: на компьютере не хватало свободной памяти или графический чип перестал отвечать. Поэтому для этой записи AutoDoc переключился на основной процессор. Расшифровка будет такой же полной, просто займёт больше времени. В следующий раз может помочь закрытие других приложений. Следующая запись снова попробует более быстрый способ."
 }

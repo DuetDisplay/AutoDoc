@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc nu a putut porni microfonul. Înregistrarea poate continua doar cu sunetul sistemului.",
   "recording.audioOnlyReminderBody": "Videoclipul s-a oprit acum {minutes} minute. AutoDoc încă înregistrează sunetul.",
   "recording.audioOnlyReminderStop": "Oprește înregistrarea",
-  "recording.audioOnlyReminderKeep": "Continuă înregistrarea"
+  "recording.audioOnlyReminderKeep": "Continuă înregistrarea",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Pentru această înregistrare se folosește procesorul, așa că va dura mai mult.",
+  "ui.whyIsThisTakingLonger": "De ce durează mai mult?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc folosește de obicei cipul grafic al computerului pentru a transcrie rapid. De data aceasta nu a fost posibil: computerul avea puțină memorie liberă sau cipul grafic a încetat să răspundă. Așa că AutoDoc a trecut pe procesorul principal pentru această înregistrare. Transcrierea va fi la fel de completă, doar că durează mai mult. Închiderea altor aplicații poate ajuta data viitoare. Următoarea înregistrare va încerca din nou metoda mai rapidă."
 }

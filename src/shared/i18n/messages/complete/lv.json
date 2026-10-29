@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc nevarēja palaist mikrofonu. Ierakstīšanu var turpināt tikai ar sistēmas audio.",
   "recording.audioOnlyReminderBody": "Video apstājās pirms {minutes} minūtēm. AutoDoc joprojām ieraksta skaņu.",
   "recording.audioOnlyReminderStop": "Apturēt ierakstīšanu",
-  "recording.audioOnlyReminderKeep": "Turpināt ierakstīšanu"
+  "recording.audioOnlyReminderKeep": "Turpināt ierakstīšanu",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Šim ierakstam tiek izmantots procesors, tāpēc tas aizņems ilgāk.",
+  "ui.whyIsThisTakingLonger": "Kāpēc tas aizņem ilgāk?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc parasti ātrai transkribēšanai izmanto datora grafikas mikroshēmu. Šoreiz tas neizdevās: datoram trūka brīvās atmiņas vai grafikas mikroshēma pārstāja reaģēt. Tāpēc AutoDoc šim ierakstam pārslēdzās uz galveno procesoru. Transkripts būs tikpat pilnīgs, tikai tas aizņems ilgāk. Nākamreiz var palīdzēt citu lietotņu aizvēršana. Nākamais ieraksts atkal mēģinās ātrāko veidu."
 }

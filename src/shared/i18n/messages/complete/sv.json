@@ -438,5 +438,8 @@
   "recording.microphoneStartFailed": "AutoDoc kunde inte starta mikrofonen. Inspelningen kan fortsätta med enbart systemljud.",
   "recording.audioOnlyReminderBody": "Videon stoppade för {minutes} minuter sedan. AutoDoc spelar fortfarande in ljud.",
   "recording.audioOnlyReminderStop": "Stoppa inspelningen",
-  "recording.audioOnlyReminderKeep": "Fortsätt spela in"
+  "recording.audioOnlyReminderKeep": "Fortsätt spela in",
+  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Processorn används för den här inspelningen, så det tar längre tid.",
+  "ui.whyIsThisTakingLonger": "Varför tar det längre tid?",
+  "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc använder vanligtvis datorns grafikchip för att transkribera snabbt. Den här gången gick det inte: datorn hade för lite ledigt minne, eller så slutade grafikchippet svara. AutoDoc bytte därför till huvudprocessorn för den här inspelningen. Din transkription blir lika fullständig, det tar bara längre tid. Att stänga andra appar kan hjälpa nästa gång. Din nästa inspelning provar det snabbare sättet igen."
 }
