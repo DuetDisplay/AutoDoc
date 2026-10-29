@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Åtkomsten till mikrofonen är blockerad. Aktivera den i Windows-inställningarna och försök spela in igen.",
   "recording.microphoneMissing": "Ingen mikrofon hittades, eller så döljs den av Windows sekretessinställningar. AutoDoc kan fortfarande spela in systemljud.",
   "recording.microphoneBusy": "Mikrofonen är inte tillgänglig eller används av en annan app. AutoDoc kan fortfarande spela in systemljud.",
-  "recording.microphoneStartFailed": "AutoDoc kunde inte starta mikrofonen. Inspelningen kan fortsätta med enbart systemljud."
+  "recording.microphoneStartFailed": "AutoDoc kunde inte starta mikrofonen. Inspelningen kan fortsätta med enbart systemljud.",
+  "recording.audioOnlyReminderBody": "Videon stoppade för {minutes} minuter sedan. AutoDoc spelar fortfarande in ljud.",
+  "recording.audioOnlyReminderStop": "Stoppa inspelningen",
+  "recording.audioOnlyReminderKeep": "Fortsätt spela in"
 }

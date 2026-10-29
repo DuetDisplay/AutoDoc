@@ -764,6 +764,17 @@ app.whenReady().then(async () => {
       onUpdateDownloaded: notifyUpdateReadyIfHidden
     })
   }
+  // OS reminder that a recording kept running audio-only; clicking it shows the in-app banner.
+  ipcMain.on('recording:audio-only-reminder', (event, title: unknown, body: unknown) => {
+    if (event.sender !== getMainWindow()?.webContents) return
+    if (typeof title !== 'string' || typeof body !== 'string') return
+    if (!Notification.isSupported()) return
+    const notification = new Notification({ title: title.slice(0, 200), body: body.slice(0, 500) })
+    notification.on('click', () => {
+      focusMainWindow()
+    })
+    notification.show()
+  })
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {
     if (!isE2E && !__AUTODOC_QA_BUILD__) {

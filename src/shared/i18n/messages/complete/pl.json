@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Dostęp do mikrofonu jest zablokowany. Włącz go w ustawieniach systemu Windows i spróbuj nagrać ponownie.",
   "recording.microphoneMissing": "Nie wykryto mikrofonu lub ukrywają go ustawienia prywatności systemu Windows. AutoDoc nadal może nagrywać dźwięk systemowy.",
   "recording.microphoneBusy": "Mikrofon jest niedostępny lub używa go inna aplikacja. AutoDoc nadal może nagrywać dźwięk systemowy.",
-  "recording.microphoneStartFailed": "AutoDoc nie mógł uruchomić mikrofonu. Nagrywanie może być kontynuowane tylko z dźwiękiem systemowym."
+  "recording.microphoneStartFailed": "AutoDoc nie mógł uruchomić mikrofonu. Nagrywanie może być kontynuowane tylko z dźwiękiem systemowym.",
+  "recording.audioOnlyReminderBody": "Wideo zatrzymało się {minutes} minut temu. AutoDoc nadal nagrywa dźwięk.",
+  "recording.audioOnlyReminderStop": "Zatrzymaj nagrywanie",
+  "recording.audioOnlyReminderKeep": "Kontynuuj nagrywanie"
 }

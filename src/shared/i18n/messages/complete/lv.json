@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Piekļuve mikrofonam ir bloķēta. Iespējojiet to Windows iestatījumos un mēģiniet ierakstīt vēlreiz.",
   "recording.microphoneMissing": "Mikrofons nav atrasts vai to slēpj Windows privātuma iestatījumi. AutoDoc joprojām var ierakstīt sistēmas audio.",
   "recording.microphoneBusy": "Mikrofons nav pieejams vai to izmanto cita lietotne. AutoDoc joprojām var ierakstīt sistēmas audio.",
-  "recording.microphoneStartFailed": "AutoDoc nevarēja palaist mikrofonu. Ierakstīšanu var turpināt tikai ar sistēmas audio."
+  "recording.microphoneStartFailed": "AutoDoc nevarēja palaist mikrofonu. Ierakstīšanu var turpināt tikai ar sistēmas audio.",
+  "recording.audioOnlyReminderBody": "Video apstājās pirms {minutes} minūtēm. AutoDoc joprojām ieraksta skaņu.",
+  "recording.audioOnlyReminderStop": "Apturēt ierakstīšanu",
+  "recording.audioOnlyReminderKeep": "Turpināt ierakstīšanu"
 }

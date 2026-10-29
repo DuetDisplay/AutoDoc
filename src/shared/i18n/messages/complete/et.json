@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Mikrofoni juurdepääs on blokeeritud. Luba see Windowsi sätetes ja proovi uuesti salvestada.",
   "recording.microphoneMissing": "Mikrofoni ei leitud või Windowsi privaatsussätted peidavad selle. AutoDoc saab endiselt süsteemiheli salvestada.",
   "recording.microphoneBusy": "Mikrofon pole saadaval või seda kasutab teine rakendus. AutoDoc saab endiselt süsteemiheli salvestada.",
-  "recording.microphoneStartFailed": "AutoDoc ei saanud mikrofoni käivitada. Salvestamine võib jätkuda ainult süsteemiheliga."
+  "recording.microphoneStartFailed": "AutoDoc ei saanud mikrofoni käivitada. Salvestamine võib jätkuda ainult süsteemiheliga.",
+  "recording.audioOnlyReminderBody": "Video peatus {minutes} minutit tagasi. AutoDoc salvestab endiselt heli.",
+  "recording.audioOnlyReminderStop": "Peata salvestus",
+  "recording.audioOnlyReminderKeep": "Jätka salvestamist"
 }

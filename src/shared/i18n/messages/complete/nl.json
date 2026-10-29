@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "De toegang tot de microfoon is geblokkeerd. Schakel deze in via de Windows-instellingen en probeer opnieuw op te nemen.",
   "recording.microphoneMissing": "Er is geen microfoon gevonden, of de privacyinstellingen van Windows verbergen deze. AutoDoc kan nog steeds systeemaudio opnemen.",
   "recording.microphoneBusy": "De microfoon is niet beschikbaar of wordt door een andere app gebruikt. AutoDoc kan nog steeds systeemaudio opnemen.",
-  "recording.microphoneStartFailed": "AutoDoc kon de microfoon niet starten. De opname kan doorgaan met alleen systeemaudio."
+  "recording.microphoneStartFailed": "AutoDoc kon de microfoon niet starten. De opname kan doorgaan met alleen systeemaudio.",
+  "recording.audioOnlyReminderBody": "De video is {minutes} minuten geleden gestopt. AutoDoc neemt nog steeds audio op.",
+  "recording.audioOnlyReminderStop": "Opname stoppen",
+  "recording.audioOnlyReminderKeep": "Opname voortzetten"
 }

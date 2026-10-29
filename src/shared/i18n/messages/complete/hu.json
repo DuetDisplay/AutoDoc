@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "A mikrofonhoz való hozzáférés blokkolva van. Engedélyezze a Windows beállításaiban, majd próbálja újra a felvételt.",
   "recording.microphoneMissing": "Nem található mikrofon, vagy a Windows adatvédelmi beállításai elrejtik. Az AutoDoc továbbra is rögzítheti a rendszerhangot.",
   "recording.microphoneBusy": "A mikrofon nem érhető el, vagy másik alkalmazás használja. Az AutoDoc továbbra is rögzítheti a rendszerhangot.",
-  "recording.microphoneStartFailed": "Az AutoDoc nem tudta elindítani a mikrofont. A felvétel csak rendszerhanggal folytatódhat."
+  "recording.microphoneStartFailed": "Az AutoDoc nem tudta elindítani a mikrofont. A felvétel csak rendszerhanggal folytatódhat.",
+  "recording.audioOnlyReminderBody": "A videó {minutes} perce leállt. Az AutoDoc továbbra is hangot rögzít.",
+  "recording.audioOnlyReminderStop": "Felvétel leállítása",
+  "recording.audioOnlyReminderKeep": "Felvétel folytatása"
 }

@@ -26,6 +26,8 @@ import {
   type AutoRecordWindowWait
 } from './services/auto-record-wait'
 import { RecordingBanner } from './components/RecordingBanner'
+import { AudioOnlyReminderBanner } from './components/AudioOnlyReminderBanner'
+import { useAudioOnlyReminder } from './hooks/useAudioOnlyReminder'
 import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
@@ -311,6 +313,7 @@ export default function App() {
   const [feedbackClock, setFeedbackClock] = useState(() => Date.now())
   const {
     isRecording,
+    meetingId: recordingMeetingId,
     sourceName,
     videoDisabled,
     elapsedSeconds,
@@ -318,6 +321,11 @@ export default function App() {
     fetchSources,
     handleStart
   } = useRecording()
+  const audioOnlyReminder = useAudioOnlyReminder({
+    isRecording,
+    meetingId: recordingMeetingId,
+    videoDisabled
+  })
 
   const { events, setAccounts, setEvents } = useCalendarStore()
   const recordingPickerOpen = useRecordingPickerStore((state) => state.isOpen)
@@ -1033,6 +1041,12 @@ export default function App() {
             elapsedSeconds={elapsedSeconds}
             sourceName={sourceName}
             onStop={handleStop}
+          />
+          <AudioOnlyReminderBanner
+            visible={audioOnlyReminder.visible}
+            minutes={audioOnlyReminder.minutes}
+            onStop={handleStop}
+            onKeep={audioOnlyReminder.dismiss}
           />
           {isRecording && videoDisabled && (
             <div className="px-5 pt-3">

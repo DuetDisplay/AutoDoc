@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Prístup k mikrofónu je blokovaný. Povoľte ho v nastaveniach Windows a skúste nahrávanie znova.",
   "recording.microphoneMissing": "Mikrofón sa nenašiel alebo ho skrývajú nastavenia súkromia Windows. AutoDoc môže stále nahrávať systémový zvuk.",
   "recording.microphoneBusy": "Mikrofón nie je dostupný alebo ho používa iná aplikácia. AutoDoc môže stále nahrávať systémový zvuk.",
-  "recording.microphoneStartFailed": "AutoDoc nemohol spustiť mikrofón. Nahrávanie môže pokračovať iba so systémovým zvukom."
+  "recording.microphoneStartFailed": "AutoDoc nemohol spustiť mikrofón. Nahrávanie môže pokračovať iba so systémovým zvukom.",
+  "recording.audioOnlyReminderBody": "Video sa zastavilo pred {minutes} minútami. AutoDoc stále nahráva zvuk.",
+  "recording.audioOnlyReminderStop": "Zastaviť nahrávanie",
+  "recording.audioOnlyReminderKeep": "Pokračovať v nahrávaní"
 }

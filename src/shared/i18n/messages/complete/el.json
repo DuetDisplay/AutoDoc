@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Η πρόσβαση στο μικρόφωνο έχει αποκλειστεί. Ενεργοποιήστε την στις Ρυθμίσεις των Windows και δοκιμάστε ξανά.",
   "recording.microphoneMissing": "Δεν εντοπίστηκε μικρόφωνο ή αποκρύπτεται από τις ρυθμίσεις απορρήτου των Windows. Το AutoDoc μπορεί να καταγράφει τον ήχο συστήματος.",
   "recording.microphoneBusy": "Το μικρόφωνο δεν είναι διαθέσιμο ή χρησιμοποιείται από άλλη εφαρμογή. Το AutoDoc μπορεί να καταγράφει τον ήχο συστήματος.",
-  "recording.microphoneStartFailed": "Το AutoDoc δεν μπόρεσε να ξεκινήσει το μικρόφωνο. Η εγγραφή μπορεί να συνεχιστεί μόνο με ήχο συστήματος."
+  "recording.microphoneStartFailed": "Το AutoDoc δεν μπόρεσε να ξεκινήσει το μικρόφωνο. Η εγγραφή μπορεί να συνεχιστεί μόνο με ήχο συστήματος.",
+  "recording.audioOnlyReminderBody": "Το βίντεο σταμάτησε πριν από {minutes} λεπτά. Το AutoDoc εξακολουθεί να ηχογραφεί.",
+  "recording.audioOnlyReminderStop": "Διακοπή εγγραφής",
+  "recording.audioOnlyReminderKeep": "Συνέχιση εγγραφής"
 }

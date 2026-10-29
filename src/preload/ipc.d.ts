@@ -109,6 +109,7 @@ export interface ChatClarificationOption {
 
 export interface IpcSendEvents {
   'recording:quit-ready': [requestId: string, error?: string]
+  'recording:audio-only-reminder': [title: string, body: string]
   'window:minimize': []
   'window:maximize': []
   'window:close': []

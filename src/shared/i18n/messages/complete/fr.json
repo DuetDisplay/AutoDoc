@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "L’accès au microphone est bloqué. Activez-le dans les paramètres Windows, puis réessayez d’enregistrer.",
   "recording.microphoneMissing": "Aucun microphone n’a été détecté, ou les paramètres de confidentialité Windows le masquent. AutoDoc peut toujours enregistrer le son système.",
   "recording.microphoneBusy": "Le microphone est indisponible ou utilisé par une autre application. AutoDoc peut toujours enregistrer le son système.",
-  "recording.microphoneStartFailed": "AutoDoc n’a pas pu démarrer le microphone. L’enregistrement peut continuer avec le son système uniquement."
+  "recording.microphoneStartFailed": "AutoDoc n’a pas pu démarrer le microphone. L’enregistrement peut continuer avec le son système uniquement.",
+  "recording.audioOnlyReminderBody": "La vidéo s’est arrêtée il y a {minutes} minutes. AutoDoc enregistre toujours l’audio.",
+  "recording.audioOnlyReminderStop": "Arrêter l’enregistrement",
+  "recording.audioOnlyReminderKeep": "Continuer l’enregistrement"
 }

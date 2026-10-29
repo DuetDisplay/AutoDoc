@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Mikrofonin käyttö on estetty. Salli se Windowsin asetuksissa ja yritä tallennusta uudelleen.",
   "recording.microphoneMissing": "Mikrofonia ei löytynyt tai Windowsin tietosuoja-asetukset piilottavat sen. AutoDoc voi silti tallentaa järjestelmäääntä.",
   "recording.microphoneBusy": "Mikrofoni ei ole käytettävissä tai toinen sovellus käyttää sitä. AutoDoc voi silti tallentaa järjestelmäääntä.",
-  "recording.microphoneStartFailed": "AutoDoc ei voinut käynnistää mikrofonia. Tallennusta voi jatkaa pelkällä järjestelmääänellä."
+  "recording.microphoneStartFailed": "AutoDoc ei voinut käynnistää mikrofonia. Tallennusta voi jatkaa pelkällä järjestelmääänellä.",
+  "recording.audioOnlyReminderBody": "Video pysähtyi {minutes} minuuttia sitten. AutoDoc tallentaa edelleen ääntä.",
+  "recording.audioOnlyReminderStop": "Lopeta tallennus",
+  "recording.audioOnlyReminderKeep": "Jatka tallennusta"
 }

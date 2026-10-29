@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Accesul la microfon este blocat. Activați-l în setările Windows și încercați din nou să înregistrați.",
   "recording.microphoneMissing": "Nu a fost detectat niciun microfon sau setările de confidențialitate Windows îl ascund. AutoDoc poate înregistra în continuare sunetul sistemului.",
   "recording.microphoneBusy": "Microfonul nu este disponibil sau este folosit de altă aplicație. AutoDoc poate înregistra în continuare sunetul sistemului.",
-  "recording.microphoneStartFailed": "AutoDoc nu a putut porni microfonul. Înregistrarea poate continua doar cu sunetul sistemului."
+  "recording.microphoneStartFailed": "AutoDoc nu a putut porni microfonul. Înregistrarea poate continua doar cu sunetul sistemului.",
+  "recording.audioOnlyReminderBody": "Videoclipul s-a oprit acum {minutes} minute. AutoDoc încă înregistrează sunetul.",
+  "recording.audioOnlyReminderStop": "Oprește înregistrarea",
+  "recording.audioOnlyReminderKeep": "Continuă înregistrarea"
 }

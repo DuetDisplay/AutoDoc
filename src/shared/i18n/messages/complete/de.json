@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Der Mikrofonzugriff ist blockiert. Aktiviere ihn in den Windows-Einstellungen und versuche die Aufnahme erneut.",
   "recording.microphoneMissing": "Es wurde kein Mikrofon erkannt oder die Windows-Datenschutzeinstellungen verbergen es. AutoDoc kann weiterhin Systemaudio aufnehmen.",
   "recording.microphoneBusy": "Dein Mikrofon ist nicht verfügbar oder wird von einer anderen App verwendet. AutoDoc kann weiterhin Systemaudio aufnehmen.",
-  "recording.microphoneStartFailed": "AutoDoc konnte das Mikrofon nicht starten. Die Aufnahme kann mit Systemaudio allein fortgesetzt werden."
+  "recording.microphoneStartFailed": "AutoDoc konnte das Mikrofon nicht starten. Die Aufnahme kann mit Systemaudio allein fortgesetzt werden.",
+  "recording.audioOnlyReminderBody": "Das Video wurde vor {minutes} Minuten beendet. AutoDoc nimmt weiterhin Audio auf.",
+  "recording.audioOnlyReminderStop": "Aufnahme beenden",
+  "recording.audioOnlyReminderKeep": "Aufnahme fortsetzen"
 }

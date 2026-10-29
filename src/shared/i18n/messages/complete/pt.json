@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "O acesso ao microfone está bloqueado. Ative-o nas definições do Windows e tente gravar novamente.",
   "recording.microphoneMissing": "Não foi detetado nenhum microfone, ou as definições de privacidade do Windows estão a ocultá-lo. O AutoDoc pode continuar a gravar o áudio do sistema.",
   "recording.microphoneBusy": "O microfone está indisponível ou a ser usado por outra aplicação. O AutoDoc pode continuar a gravar o áudio do sistema.",
-  "recording.microphoneStartFailed": "O AutoDoc não conseguiu iniciar o microfone. A gravação pode continuar apenas com o áudio do sistema."
+  "recording.microphoneStartFailed": "O AutoDoc não conseguiu iniciar o microfone. A gravação pode continuar apenas com o áudio do sistema.",
+  "recording.audioOnlyReminderBody": "O vídeo parou há {minutes} minutos. O AutoDoc continua a gravar áudio.",
+  "recording.audioOnlyReminderStop": "Parar gravação",
+  "recording.audioOnlyReminderKeep": "Continuar a gravar"
 }

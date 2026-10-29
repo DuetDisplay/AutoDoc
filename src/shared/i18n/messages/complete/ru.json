@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Доступ к микрофону заблокирован. Разрешите его в параметрах Windows и попробуйте записать снова.",
   "recording.microphoneMissing": "Микрофон не обнаружен или скрыт настройками конфиденциальности Windows. AutoDoc может продолжать запись системного звука.",
   "recording.microphoneBusy": "Микрофон недоступен или используется другим приложением. AutoDoc может продолжать запись системного звука.",
-  "recording.microphoneStartFailed": "AutoDoc не удалось запустить микрофон. Запись может продолжиться только с системным звуком."
+  "recording.microphoneStartFailed": "AutoDoc не удалось запустить микрофон. Запись может продолжиться только с системным звуком.",
+  "recording.audioOnlyReminderBody": "Видео остановилось {minutes} минут назад. AutoDoc продолжает записывать звук.",
+  "recording.audioOnlyReminderStop": "Остановить запись",
+  "recording.audioOnlyReminderKeep": "Продолжить запись"
 }

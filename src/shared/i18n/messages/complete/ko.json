@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "마이크 접근이 차단되었습니다. Windows 설정에서 마이크 접근을 허용한 후 다시 녹음해 보세요.",
   "recording.microphoneMissing": "마이크가 감지되지 않거나 Windows 개인정보 설정에 의해 숨겨져 있습니다. AutoDoc에서 시스템 오디오는 계속 녹음할 수 있습니다.",
   "recording.microphoneBusy": "마이크를 사용할 수 없거나 다른 앱에서 사용 중입니다. AutoDoc에서 시스템 오디오는 계속 녹음할 수 있습니다.",
-  "recording.microphoneStartFailed": "AutoDoc에서 마이크를 시작하지 못했습니다. 시스템 오디오만으로 녹음을 계속할 수 있습니다."
+  "recording.microphoneStartFailed": "AutoDoc에서 마이크를 시작하지 못했습니다. 시스템 오디오만으로 녹음을 계속할 수 있습니다.",
+  "recording.audioOnlyReminderBody": "{minutes}분 전에 비디오가 중지되었습니다. AutoDoc은 계속 오디오를 녹음하고 있습니다.",
+  "recording.audioOnlyReminderStop": "녹음 중지",
+  "recording.audioOnlyReminderKeep": "계속 녹음"
 }

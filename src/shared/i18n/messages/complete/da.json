@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Adgang til mikrofonen er blokeret. Aktivér den i Windows-indstillinger, og prøv at optage igen.",
   "recording.microphoneMissing": "Ingen mikrofon blev fundet, eller Windows' privatlivsindstillinger skjuler den. AutoDoc kan stadig optage systemlyd.",
   "recording.microphoneBusy": "Mikrofonen er utilgængelig eller bruges af en anden app. AutoDoc kan stadig optage systemlyd.",
-  "recording.microphoneStartFailed": "AutoDoc kunne ikke starte mikrofonen. Optagelsen kan fortsætte med kun systemlyd."
+  "recording.microphoneStartFailed": "AutoDoc kunne ikke starte mikrofonen. Optagelsen kan fortsætte med kun systemlyd.",
+  "recording.audioOnlyReminderBody": "Videoen stoppede for {minutes} minutter siden. AutoDoc optager stadig lyd.",
+  "recording.audioOnlyReminderStop": "Stop optagelsen",
+  "recording.audioOnlyReminderKeep": "Fortsæt optagelsen"
 }

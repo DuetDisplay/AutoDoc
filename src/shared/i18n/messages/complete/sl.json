@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Dostop do mikrofona je blokiran. Omogočite ga v nastavitvah sistema Windows in znova poskusite snemati.",
   "recording.microphoneMissing": "Mikrofon ni bil zaznan ali pa ga skrivajo nastavitve zasebnosti sistema Windows. AutoDoc lahko še vedno snema sistemski zvok.",
   "recording.microphoneBusy": "Mikrofon ni na voljo ali ga uporablja druga aplikacija. AutoDoc lahko še vedno snema sistemski zvok.",
-  "recording.microphoneStartFailed": "AutoDoc ni mogel zagnati mikrofona. Snemanje se lahko nadaljuje samo s sistemskim zvokom."
+  "recording.microphoneStartFailed": "AutoDoc ni mogel zagnati mikrofona. Snemanje se lahko nadaljuje samo s sistemskim zvokom.",
+  "recording.audioOnlyReminderBody": "Video se je ustavil pred {minutes} minutami. AutoDoc še vedno snema zvok.",
+  "recording.audioOnlyReminderStop": "Ustavi snemanje",
+  "recording.audioOnlyReminderKeep": "Nadaljuj snemanje"
 }

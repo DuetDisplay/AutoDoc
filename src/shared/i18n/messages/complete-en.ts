@@ -526,5 +526,9 @@ export const completeEn = {
   'recording.microphoneBusy':
     'Your microphone is unavailable or in use by another app. AutoDoc can still record system audio.',
   'recording.microphoneStartFailed':
-    'AutoDoc could not start the microphone. Recordings can continue with system audio only.'
+    'AutoDoc could not start the microphone. Recordings can continue with system audio only.',
+  'recording.audioOnlyReminderBody':
+    'Video stopped {minutes} minutes ago. AutoDoc is still recording audio.',
+  'recording.audioOnlyReminderStop': 'Stop recording',
+  'recording.audioOnlyReminderKeep': 'Keep recording'
 } as const

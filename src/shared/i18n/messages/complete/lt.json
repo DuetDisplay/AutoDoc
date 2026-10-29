@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "Prieiga prie mikrofono užblokuota. Įjunkite ją „Windows“ nustatymuose ir bandykite įrašyti dar kartą.",
   "recording.microphoneMissing": "Mikrofonas neaptiktas arba jį slepia „Windows“ privatumo nustatymai. AutoDoc vis tiek gali įrašyti sistemos garsą.",
   "recording.microphoneBusy": "Mikrofonas nepasiekiamas arba jį naudoja kita programa. AutoDoc vis tiek gali įrašyti sistemos garsą.",
-  "recording.microphoneStartFailed": "AutoDoc nepavyko paleisti mikrofono. Įrašymą galima tęsti tik su sistemos garsu."
+  "recording.microphoneStartFailed": "AutoDoc nepavyko paleisti mikrofono. Įrašymą galima tęsti tik su sistemos garsu.",
+  "recording.audioOnlyReminderBody": "Vaizdo įrašymas sustojo prieš {minutes} min. AutoDoc vis dar įrašo garsą.",
+  "recording.audioOnlyReminderStop": "Sustabdyti įrašymą",
+  "recording.audioOnlyReminderKeep": "Tęsti įrašymą"
 }

@@ -435,5 +435,8 @@
   "recording.microphoneBlocked": "麦克风访问被阻止。请在Windows设置中允许访问麦克风，然后重新尝试录制。",
   "recording.microphoneMissing": "未检测到麦克风，或Windows隐私设置将其隐藏。AutoDoc仍可录制系统音频。",
   "recording.microphoneBusy": "麦克风不可用或正被其他应用使用。AutoDoc仍可录制系统音频。",
-  "recording.microphoneStartFailed": "AutoDoc无法启动麦克风。录制可仅使用系统音频继续。"
+  "recording.microphoneStartFailed": "AutoDoc无法启动麦克风。录制可仅使用系统音频继续。",
+  "recording.audioOnlyReminderBody": "视频已于 {minutes} 分钟前停止。AutoDoc 仍在录制音频。",
+  "recording.audioOnlyReminderStop": "停止录制",
+  "recording.audioOnlyReminderKeep": "继续录制"
 }
