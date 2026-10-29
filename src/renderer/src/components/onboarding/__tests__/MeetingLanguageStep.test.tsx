@@ -83,6 +83,7 @@ describe('MeetingLanguageStep', () => {
           es: {
             availability: 'locked',
             reason,
+            reasonCode: 'needs-supported-graphics-card',
             firstUseDownloadBytes: 5_583_216_230
           },
           de: {
@@ -103,7 +104,7 @@ describe('MeetingLanguageStep', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Meeting language: English' }))
 
     const spanish = screen.getByRole('option', {
-      name: new RegExp('Spanish\\s+This language isn.t available on this PC.')
+      name: `Spanish ${reason}`
     })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     expect(

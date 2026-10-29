@@ -141,6 +141,7 @@ export function registerWhisperIpc(
         engineId: ready.engineId,
         availability: ready.availability,
         reason: ready.reason,
+        reasonCode: ready.reasonCode ?? null,
         fallbackFrom: ready.fallbackFrom,
         fallbackReason: ready.fallbackReason
       }

@@ -10,8 +10,11 @@ import {
   type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../../shared/meeting-language'
-import { meetingLanguageSelectableNote } from '../services/meeting-language-copy'
-import { useT } from '../services/i18n'
+import {
+  meetingLanguageReasonText,
+  meetingLanguageSelectableNote
+} from '../services/meeting-language-copy'
+import { useI18n } from '../services/i18n'
 
 interface MeetingLanguagePickerProps {
   value: MeetingLanguageCode
@@ -42,7 +45,7 @@ export function MeetingLanguagePicker({
   availability = UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
   offline = false
 }: MeetingLanguagePickerProps) {
-  const t = useT()
+  const { t, language: uiLanguage } = useI18n()
   // Available languages first, then locked ones under their own heading.
   const options = [
     ...MEETING_LANGUAGE_DEFINITIONS.filter((definition) =>
@@ -238,10 +241,14 @@ export function MeetingLanguagePicker({
                 ? null
                 : offline && needsDownload
                   ? t('picker.offlineDownload')
-                  : meetingLanguageSelectableNote(engineState)
+                  : meetingLanguageSelectableNote(engineState, uiLanguage)
               const lockedReason =
                 isLocked && engineState?.availability === 'locked'
-                  ? t('ui.thisLanguageIsnTAvailableOnThisPC2')
+                  ? (meetingLanguageReasonText(
+                      engineState.reasonCode,
+                      meetingLanguageName(definition.code, uiLanguage),
+                      uiLanguage
+                    ) ?? t('ui.thisLanguageIsnTAvailableOnThisPC2'))
                   : null
               return (
                 <Fragment key={definition.code}>

@@ -1,10 +1,12 @@
 import { meetingLanguageName } from '../../services/meeting-language-name'
-import { useT } from '../../services/i18n'
+import { useI18n } from '../../services/i18n'
+import { meetingLanguageReasonText } from '../../services/meeting-language-copy'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
 import {
   normalizeMeetingLanguage,
-  type MeetingLanguageCode
+  type MeetingLanguageCode,
+  type MeetingLanguageReasonCode
 } from '../../../../shared/meeting-language'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
@@ -22,12 +24,15 @@ export function TranscriptionStep({
   onNext: () => void
   onChooseLanguage?: () => void
 }) {
-  const t = useT()
+  const { t, language: uiLanguage } = useI18n()
 
   const [phase, setPhase] = useState<string>('checking')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [languageLocked, setLanguageLocked] = useState(false)
+  // Set when the selected language is locked on this PC; holds the reason code, if known.
+  const [languageLock, setLanguageLock] = useState<{
+    reasonCode: MeetingLanguageReasonCode | null
+  } | null>(null)
   const [cpuSlower, setCpuSlower] = useState(false)
   const [meetingLanguage, setMeetingLanguage] = useState<MeetingLanguageCode | null>(null)
   const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus>({
@@ -60,7 +65,7 @@ export function TranscriptionStep({
     setPercent(100)
     setSetupStatus({ phase: 'ready', percent: 100 })
     setError(null)
-    setLanguageLocked(false)
+    setLanguageLock(null)
     setIsAutoRetrying(false)
     setDiskFullSeen(false)
     autoRetryAttempts.current = 0
@@ -115,7 +120,7 @@ export function TranscriptionStep({
             attempt_number: autoRetryAttempts.current + 1
           })
         }
-        setLanguageLocked(false)
+        setLanguageLock(null)
         const diskFull = status.errorKind === 'disk-full'
         setDiskFullSeen(diskFull)
         if (diskFull) {
@@ -141,7 +146,7 @@ export function TranscriptionStep({
               clearRetryTimer()
               setIsAutoRetrying(false)
               setError(null)
-              setLanguageLocked(true)
+              setLanguageLock({ reasonCode: availability.reasonCode ?? null })
             })
             .catch(() => {})
         }
@@ -153,7 +158,7 @@ export function TranscriptionStep({
       }
 
       setError(null)
-      setLanguageLocked(false)
+      setLanguageLock(null)
       setIsAutoRetrying(false)
       setDiskFullSeen(false)
       if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
@@ -234,7 +239,7 @@ export function TranscriptionStep({
     autoRetryAttempts.current = 0
     hasSeenMeaningfulSetupProgress.current = false
     setError(null)
-    setLanguageLocked(false)
+    setLanguageLock(null)
     setIsAutoRetrying(false)
     setDiskFullSeen(false)
     setPhase('checking')
@@ -244,9 +249,12 @@ export function TranscriptionStep({
   }
 
   // A failed download because the machine is offline gets its own message.
-  const lockedReason = languageLocked ? t('ui.thisLanguageIsnTAvailableOnThisPC2') : null
   const networkFailure = isNetworkErrorMessage(error ?? setupStatus.error)
   const languageLabel = meetingLanguageName(meetingLanguage ?? 'en')
+  const lockedReason = languageLock
+    ? (meetingLanguageReasonText(languageLock.reasonCode, languageLabel, uiLanguage) ??
+      t('ui.thisLanguageIsnTAvailableOnThisPC2'))
+    : null
 
   if (phase === 'ready') {
     return (

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { meetingLanguageAvailability } from '../../../shared/meeting-language'
 import { formatMeetingLanguageFirstUseDownload } from '../services/format-bytes'
 import {
@@ -8,6 +8,9 @@ import {
   OFFLINE_DOWNLOAD_NOTE,
   SLOWER_MEETING_LANGUAGE_NOTE
 } from '../services/meeting-language-copy'
+import { translate } from '../../../shared/i18n'
+import { I18nProvider } from '../services/i18n'
+import { applyDocumentLanguage } from '../services/document-language'
 import { LOCKED_MEETING_LANGUAGES_HEADING, MeetingLanguagePicker } from './MeetingLanguagePicker'
 
 describe('MeetingLanguagePicker', () => {
@@ -118,6 +121,10 @@ describe('MeetingLanguagePicker offline', () => {
 })
 
 describe('MeetingLanguagePicker Windows engine availability', () => {
+  afterEach(() => {
+    applyDocumentLanguage('en')
+  })
+
   it('keeps a slower language selectable and shows the note', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()
@@ -143,7 +150,7 @@ describe('MeetingLanguagePicker Windows engine availability', () => {
     expect(onChange).toHaveBeenCalledWith('de')
   })
 
-  it('disables a locked language and shows localized availability copy', async () => {
+  it('disables a locked language and explains why from the reason code', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()
     const reason = 'Spanish needs a supported graphics card on this PC.'
@@ -154,20 +161,82 @@ describe('MeetingLanguagePicker Windows engine availability', () => {
         availability={{
           ...meetingLanguageAvailability(false),
           languageStates: {
-            es: { availability: 'locked', reason, firstUseDownloadBytes: 0 }
+            es: {
+              availability: 'locked',
+              reason,
+              reasonCode: 'needs-supported-graphics-card',
+              firstUseDownloadBytes: 0
+            }
           }
         }}
       />
     )
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
-    const spanish = screen.getByRole('option', {
-      name: "Spanish This language isn't available on this PC."
-    })
+    const spanish = screen.getByRole('option', { name: `Spanish ${reason}` })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     await user.click(spanish)
     expect(onChange).not.toHaveBeenCalled()
     expect(screen.queryByText(LOCKED_MEETING_LANGUAGES_HEADING)).not.toBeInTheDocument()
+  })
+
+  it('falls back to the generic text when a locked language has no reason code', async () => {
+    const user = userEvent.setup()
+    render(
+      <MeetingLanguagePicker
+        value="en"
+        onChange={vi.fn()}
+        availability={{
+          ...meetingLanguageAvailability(false),
+          languageStates: {
+            es: {
+              availability: 'locked',
+              reason: 'Spanish needs a supported graphics card on this PC.',
+              firstUseDownloadBytes: 0
+            }
+          }
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
+    expect(
+      screen.getByRole('option', { name: "Spanish This language isn't available on this PC." })
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/graphics card/i)).not.toBeInTheDocument()
+  })
+
+  it('localizes the locked reason, including the inserted language name', async () => {
+    applyDocumentLanguage('de')
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) =>
+      Promise.resolve(channel === 'prefs:get-ui-language' ? 'de' : undefined)
+    )
+    const user = userEvent.setup()
+    render(
+      <I18nProvider>
+        <MeetingLanguagePicker
+          value="en"
+          onChange={vi.fn()}
+          availability={{
+            ...meetingLanguageAvailability(false),
+            languageStates: {
+              es: {
+                availability: 'locked',
+                reason: 'Spanish needs a supported graphics card on this PC.',
+                reasonCode: 'needs-supported-graphics-card',
+                firstUseDownloadBytes: 0
+              }
+            }
+          }}
+        />
+      </I18nProvider>
+    )
+
+    await user.click(screen.getByRole('button', { name: /Besprechungssprache|Meeting language/ }))
+    const localized = translate('de', 'picker.reasonNeedsGraphicsCard', { language: 'Spanisch' })
+    expect(localized).toBe('Spanisch benötigt eine unterstützte Grafikkarte auf diesem PC.')
+    expect(screen.getByText(localized)).toBeInTheDocument()
+    expect(screen.queryByText(/needs a supported graphics card/i)).not.toBeInTheDocument()
   })
 
   it('leaves an available language unmarked', async () => {

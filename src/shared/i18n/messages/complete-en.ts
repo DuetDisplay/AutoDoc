@@ -541,5 +541,27 @@ export const completeEn = {
   'ui.notEnoughSpaceToSetUpTranscription': 'Not enough space to set up transcription',
   'ui.whyIsThisTakingLonger': 'Why is this taking longer?',
   'ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT':
-    "AutoDoc usually uses your computer's graphics chip to transcribe quickly. This time it couldn't: your computer was low on free memory, or the graphics chip stopped responding. So AutoDoc switched to the main processor for this recording. Your transcript will be just as complete; it just takes longer. Closing other apps can help next time. Your next recording will try the faster way again."
+    "AutoDoc usually uses your computer's graphics chip to transcribe quickly. This time it couldn't: your computer was low on free memory, or the graphics chip stopped responding. So AutoDoc switched to the main processor for this recording. Your transcript will be just as complete; it just takes longer. Closing other apps can help next time. Your next recording will try the faster way again.",
+  'recording.startedNoticeBody': 'AI notes started. This meeting is being recorded.',
+  'recording.chooseMeetingWindowSubtitle': 'Choose the window for this meeting to start AI notes.',
+  'ui.new': 'New',
+  'ui.noNotesFoundRetry': 'No notes found — Retry',
+  'settings.syncReconnectRequiredGoogle':
+    'Google Calendar needs to be reconnected to resume calendar sync. Disconnect it, then connect again and allow calendar access.',
+  'notesFailure.nothingFoundBody':
+    'AutoDoc didn’t find anything in the transcript to turn into notes. You can retry, and your transcript is still available.',
+  'nav.notesModelUnavailable': 'Notes model unavailable',
+  'onboarding.notesBody':
+    'AutoDoc writes a summary, topics, and key takeaways you can edit. Decisions show up when the meeting made them.',
+  'onboarding.topicsTitle': 'Topics',
+  'onboarding.summaryDescription': 'A short overview of the meeting',
+  'onboarding.topicsDescription': 'The conversation, grouped by topic',
+  'onboarding.keyTakeawaysDescription': 'The points worth keeping',
+  'onboarding.keyTakeawaysTitle': 'Key takeaways',
+  'picker.reasonNeedsGraphicsCard': '{language} needs a supported graphics card on this PC.',
+  'picker.reasonSpeechRuntimeMissing':
+    'The speech runtime is missing from this build. Reinstall AutoDoc.',
+  'picker.reasonSetupDownloadFailed': "The speech model download didn't finish. Try again.",
+  'picker.reasonSetupVerificationFailed': "The speech model couldn't be verified. Try again.",
+  'picker.reasonSetupFailed': "Setup didn't finish. Try again."
 } as const

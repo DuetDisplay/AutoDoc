@@ -87,6 +87,7 @@ describe('whisper Windows multilingual IPC', () => {
       engineId: 'canary-cpu',
       availability: 'slower',
       reason: null,
+      reasonCode: null,
       fallbackFrom: 'canary-cuda',
       fallbackReason: 'canary-cuda self-test failed'
     })
@@ -107,13 +108,15 @@ describe('whisper Windows multilingual IPC', () => {
     ensureWindowsMultilingualEngineReady.mockResolvedValue({
       engineId: null,
       availability: 'locked',
-      reason: 'German needs a supported graphics card on this PC.'
+      reason: 'German needs a supported graphics card on this PC.',
+      reasonCode: 'needs-supported-graphics-card'
     })
 
     await expect(handler('whisper:ensure-windows-multilingual-engine')({}, 'de')).resolves.toEqual({
       engineId: null,
       availability: 'locked',
       reason: 'German needs a supported graphics card on this PC.',
+      reasonCode: 'needs-supported-graphics-card',
       fallbackFrom: undefined,
       fallbackReason: undefined
     })

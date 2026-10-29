@@ -25,6 +25,7 @@ import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { isDiskFullError } from './disk-full'
+import { classifyMacLanguageSetupError } from './meeting-language-reason'
 import { withSentryFingerprint } from './sentry-fingerprint'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
 import { getInstalledModelsDir } from './dev-runtime-paths'
@@ -69,7 +70,8 @@ import {
   getMeetingAsrRoute,
   type MeetingLanguageCode,
   type MeetingAsrRoute,
-  type MeetingLanguageEngineState
+  type MeetingLanguageEngineState,
+  type MeetingLanguageReasonCode
 } from '../../shared/meeting-language'
 import {
   downloadMacSpeechModels,
@@ -205,7 +207,10 @@ export class WhisperManager extends EventEmitter {
   /** Aborts the running language setup's in-flight download when the language changes. */
   private activeSetupAbort: AbortController | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
-  private macLanguageSetupErrors = new Map<MeetingAsrRoute, string>()
+  private macLanguageSetupErrors = new Map<
+    MeetingAsrRoute,
+    { message: string; code: MeetingLanguageReasonCode }
+  >()
   private runtimeValidated = false
   private validatedWorkerFingerprint: string | null = null
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
@@ -1369,10 +1374,10 @@ export class WhisperManager extends EventEmitter {
       this.emit('setup-status', this.getSetupStatus())
     } catch (error) {
       if (IS_MAC_ARM)
-        this.macLanguageSetupErrors.set(
-          getMeetingAsrRoute(language),
-          error instanceof Error ? error.message : String(error)
-        )
+        this.macLanguageSetupErrors.set(getMeetingAsrRoute(language), {
+          message: error instanceof Error ? error.message : String(error),
+          code: classifyMacLanguageSetupError(error)
+        })
       this.setupStatus = {
         phase: 'error',
         percent: 0,
@@ -1401,12 +1406,15 @@ export class WhisperManager extends EventEmitter {
         return {
           availability: 'locked',
           reason: 'The speech runtime is missing from this build. Reinstall AutoDoc.',
+          reasonCode: 'speech-runtime-missing',
           firstUseDownloadBytes: 0
         }
     }
+    const setupError = this.macLanguageSetupErrors.get(route)
     return {
       availability: 'available' as const,
-      reason: this.macLanguageSetupErrors.get(route) ?? null,
+      reason: setupError?.message ?? null,
+      reasonCode: setupError?.code ?? null,
       firstUseDownloadBytes: await getMacRouteFirstUseDownloadBytes(language)
     }
   }

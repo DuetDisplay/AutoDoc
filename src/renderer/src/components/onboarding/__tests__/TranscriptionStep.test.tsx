@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { TranscriptionStep } from '../TranscriptionStep'
+import { I18nProvider } from '../../../services/i18n'
+import { applyDocumentLanguage } from '../../../services/document-language'
+import { translate } from '../../../../../shared/i18n'
+import type { WhisperSetupStatus } from '../../../../../shared/types'
 
 describe('TranscriptionStep', () => {
   beforeEach(() => {
@@ -476,7 +480,8 @@ describe('TranscriptionStep', () => {
       if (channel === 'whisper:get-windows-meeting-language-availability') {
         return Promise.resolve({
           availability: 'locked',
-          reason: 'This PC cannot run Spanish transcription.',
+          reason: 'Spanish needs a supported graphics card on this PC.',
+          reasonCode: 'needs-supported-graphics-card',
           engineId: null,
           firstUseDownloadBytes: 0
         })
@@ -505,7 +510,7 @@ describe('TranscriptionStep', () => {
         screen.getByRole('heading', { name: "This language isn't available on this PC" })
       ).toBeInTheDocument()
       expect(
-        screen.getAllByText("This language isn't available on this PC.").length
+        screen.getAllByText('Spanish needs a supported graphics card on this PC.').length
       ).toBeGreaterThan(0)
       expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 
@@ -674,5 +679,70 @@ describe('TranscriptionStep', () => {
       'whisper:get-windows-meeting-language-availability',
       expect.anything()
     )
+  })
+})
+
+describe('TranscriptionStep locked language reason', () => {
+  async function renderLocked(
+    availability: Record<string, unknown>,
+    options: { uiLanguage?: 'de' } = {}
+  ) {
+    let progress: ((status: WhisperSetupStatus) => Promise<void>) | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-ui-language') return Promise.resolve(options.uiLanguage ?? 'en')
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({ engineId: null, firstUseDownloadBytes: 0, ...availability })
+      }
+      return Promise.resolve({})
+    })
+    await act(async () => {
+      render(
+        <I18nProvider>
+          <TranscriptionStep onNext={vi.fn()} onChooseLanguage={vi.fn()} />
+        </I18nProvider>
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await progress?.({ phase: 'error', percent: 0, error: 'whisper-turbo-cuda self-test failed' })
+    })
+  }
+
+  afterEach(() => {
+    applyDocumentLanguage('en')
+  })
+
+  it('shows the generic text when the lock has no reason code', async () => {
+    await renderLocked({
+      availability: 'locked',
+      reason: 'Spanish needs a supported graphics card on this PC.'
+    })
+    expect(
+      await screen.findAllByText("This language isn't available on this PC.")
+    ).not.toHaveLength(0)
+    expect(screen.queryByText(/graphics card/i)).not.toBeInTheDocument()
+  })
+
+  it('localizes the reason with the localized language name', async () => {
+    applyDocumentLanguage('de')
+    await renderLocked(
+      {
+        availability: 'locked',
+        reason: 'Spanish needs a supported graphics card on this PC.',
+        reasonCode: 'needs-supported-graphics-card'
+      },
+      { uiLanguage: 'de' }
+    )
+    const localized = translate('de', 'picker.reasonNeedsGraphicsCard', { language: 'Spanisch' })
+    expect(await screen.findAllByText(localized)).not.toHaveLength(0)
+    expect(screen.queryByText(/needs a supported graphics card/i)).not.toBeInTheDocument()
   })
 })

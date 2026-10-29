@@ -289,17 +289,32 @@ describe('WhisperManager', () => {
       expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
         availability: 'available',
         reason: 'offline',
+        reasonCode: 'setup-download-failed',
         firstUseDownloadBytes: 100
       })
       await manager.prepareMeetingLanguage('fr')
-      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({ reason: null })
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
+        reason: null,
+        reasonCode: null
+      })
+    })
+
+    it('gives an unrecognized Mac setup failure the generic setup reason code', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      vi.mocked(downloadMacSpeechModels).mockRejectedValueOnce(new Error('something odd'))
+      await expect(manager.prepareMeetingLanguage('fr')).rejects.toThrow('something odd')
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
+        reason: 'something odd',
+        reasonCode: 'setup-failed'
+      })
     })
   })
 
   it('locks a missing Mac turbo runtime with a reason', async () => {
     expect(await manager.getMacMeetingLanguageState('es')).toMatchObject({
       availability: 'locked',
-      reason: expect.stringContaining('runtime')
+      reason: expect.stringContaining('runtime'),
+      reasonCode: 'speech-runtime-missing'
     })
   })
 

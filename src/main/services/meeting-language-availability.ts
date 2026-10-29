@@ -166,6 +166,7 @@ export async function resolveRecordingMeetingLanguage(
           [saved]: {
             availability: 'locked',
             reason: engine.reason,
+            reasonCode: engine.reasonCode ?? null,
             engineId: engine.engineId,
             firstUseDownloadBytes: engine.firstUseDownloadBytes,
             needsSelfTest: engine.needsSelfTest

@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
-import type { MeetingAsrRoute } from '../../shared/meeting-language'
+import type { MeetingAsrRoute, MeetingLanguageReasonCode } from '../../shared/meeting-language'
 import type { WindowsProcessingProfileId } from './windows-processing-profile'
 import {
   CANARY_CUDA_MIN_VRAM_GIB,
@@ -46,6 +46,7 @@ export interface WindowsMultilingualEngineChoice {
   engine: WindowsMultilingualEngineId
   availability: WindowsMultilingualAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
 }
 
 export interface WindowsMultilingualEnginePlan {
@@ -55,6 +56,7 @@ export interface WindowsMultilingualEnginePlan {
   fallbacks: WindowsMultilingualEngineChoice[]
   availability: WindowsMultilingualAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
 }
 
 export interface ResolveWindowsMultilingualEngineInput {
@@ -419,7 +421,8 @@ function resolveTurboPlan(
       primary: null,
       fallbacks: [],
       availability: 'locked',
-      reason: lockedReason
+      reason: lockedReason,
+      reasonCode: 'needs-supported-graphics-card'
     }
   }
 
