@@ -559,6 +559,48 @@ describe('App', () => {
     expect(screen.queryByText('Optimized local processing is on')).not.toBeInTheDocument()
   })
 
+  it('shows a disk-full update alert that can retry or be dismissed until the next failure', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus(),
+      'updater:check': undefined
+    })
+
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+
+    act(() => {
+      api.emit('updater:status', createUpdateStatus({ state: 'error', error: 'boom' }))
+    })
+    expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+
+    const diskFull = createUpdateStatus({
+      state: 'error',
+      error: 'ENOSPC',
+      errorKind: 'disk-full'
+    })
+    act(() => api.emit('updater:status', diskFull))
+    expect(await screen.findByText('Not enough space to install the update')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Your computer is almost out of disk space. Free up some space, then try again.'
+      )
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(api.invoke).toHaveBeenCalledWith('updater:check')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+
+    act(() => api.emit('updater:status', createUpdateStatus({ state: 'checking' })))
+    act(() => api.emit('updater:status', diskFull))
+    expect(await screen.findByText('Not enough space to install the update')).toBeInTheDocument()
+  })
+
   it('shows a restart prompt when an update is ready', async () => {
     const api = installMockElectronApi({
       'prefs:get-onboarding-complete': true,

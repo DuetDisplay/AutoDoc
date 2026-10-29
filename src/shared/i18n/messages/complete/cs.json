@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Video se zastavilo před {minutes} minutami. AutoDoc stále nahrává zvuk.",
   "recording.audioOnlyReminderStop": "Zastavit nahrávání",
   "recording.audioOnlyReminderKeep": "Pokračovat v nahrávání",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Pro tuto nahrávku se používá procesor, takže to potrvá déle.",
+  "ui.usingCPUForThisRecording": "Pro tuto nahrávku se používá procesor",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Tento přepis potrvá déle než obvykle.",
+  "ui.why": "Proč?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Nedostatek místa pro instalaci aktualizace",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "V počítači dochází místo na disku. Uvolněte místo a zkuste to znovu.",
+  "ui.tryAgain": "Zkusit znovu",
   "ui.whyIsThisTakingLonger": "Proč to trvá déle?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc obvykle k rychlému přepisu používá grafický čip počítače. Tentokrát to nešlo: počítači docházela volná paměť nebo grafický čip přestal reagovat. AutoDoc proto pro tuto nahrávku přešel na hlavní procesor. Přepis bude stejně úplný, jen to trvá déle. Příště může pomoci zavřít jiné aplikace. Další nahrávka zkusí rychlejší způsob znovu."
 }

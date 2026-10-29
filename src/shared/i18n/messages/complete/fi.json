@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Video pysähtyi {minutes} minuuttia sitten. AutoDoc tallentaa edelleen ääntä.",
   "recording.audioOnlyReminderStop": "Lopeta tallennus",
   "recording.audioOnlyReminderKeep": "Jatka tallennusta",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Tälle tallenteelle käytetään suoritinta, joten se kestää kauemmin.",
+  "ui.usingCPUForThisRecording": "Tähän tallenteeseen käytetään suoritinta",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Tämä litterointi kestää tavallista kauemmin.",
+  "ui.why": "Miksi?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Päivityksen asentamiseen ei ole tarpeeksi tilaa",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Tietokoneen levytila on lähes lopussa. Vapauta tilaa ja yritä uudelleen.",
+  "ui.tryAgain": "Yritä uudelleen",
   "ui.whyIsThisTakingLonger": "Miksi tämä kestää kauemmin?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc käyttää yleensä tietokoneen grafiikkapiiriä litterointiin nopeasti. Tällä kertaa se ei onnistunut: tietokoneessa oli vähän vapaata muistia tai grafiikkapiiri lakkasi vastaamasta. Siksi AutoDoc siirtyi tämän tallenteen kohdalla pääsuorittimeen. Litteraatti on yhtä täydellinen, se vain kestää kauemmin. Muiden sovellusten sulkeminen voi auttaa ensi kerralla. Seuraava tallenne kokeilee taas nopeampaa tapaa."
 }

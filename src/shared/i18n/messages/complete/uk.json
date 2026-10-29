@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Відео зупинилося {minutes} хвилин тому. AutoDoc продовжує записувати звук.",
   "recording.audioOnlyReminderStop": "Зупинити запис",
   "recording.audioOnlyReminderKeep": "Продовжити запис",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Для цього запису використовується процесор, тому це займе більше часу.",
+  "ui.usingCPUForThisRecording": "Для цього запису використовується процесор",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Ця транскрипція триватиме довше, ніж зазвичай.",
+  "ui.why": "Чому?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Недостатньо місця для встановлення оновлення",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "На комп’ютері майже не залишилося місця на диску. Звільніть місце та повторіть спробу.",
+  "ui.tryAgain": "Спробувати ще раз",
   "ui.whyIsThisTakingLonger": "Чому це триває довше?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "Зазвичай AutoDoc використовує графічний чип вашого комп’ютера для швидкої розшифровки. Цього разу не вийшло: комп’ютеру бракувало вільної пам’яті або графічний чип перестав відповідати. Тому для цього запису AutoDoc перейшов на основний процесор. Розшифровка буде такою ж повною, просто триватиме довше. Наступного разу може допомогти закриття інших програм. Наступний запис знову спробує швидший спосіб."
 }

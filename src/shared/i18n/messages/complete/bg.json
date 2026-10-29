@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Видеото спря преди {minutes} минути. AutoDoc все още записва аудио.",
   "recording.audioOnlyReminderStop": "Спиране на записа",
   "recording.audioOnlyReminderKeep": "Продължаване на записа",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "За този запис се използва процесорът, затова ще отнеме повече време.",
+  "ui.usingCPUForThisRecording": "Използва се процесорът за този запис",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Тази транскрипция ще отнеме повече време от обичайното.",
+  "ui.why": "Защо?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Няма достатъчно място за инсталиране на актуализацията",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Компютърът ви почти няма свободно място на диска. Освободете място и опитайте отново.",
+  "ui.tryAgain": "Опитайте отново",
   "ui.whyIsThisTakingLonger": "Защо отнема повече време?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc обикновено използва графичния чип на компютъра ви за бърза транскрипция. Този път не успя: на компютъра ви не достигаше свободна памет или графичният чип спря да отговаря. Затова AutoDoc премина към основния процесор за този запис. Транскрипцията ще бъде също толкова пълна, просто отнема повече време. Затварянето на други приложения може да помогне следващия път. Следващият ви запис отново ще опита по-бързия начин."
 }

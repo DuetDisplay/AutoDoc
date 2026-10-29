@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "A videó {minutes} perce leállt. Az AutoDoc továbbra is hangot rögzít.",
   "recording.audioOnlyReminderStop": "Felvétel leállítása",
   "recording.audioOnlyReminderKeep": "Felvétel folytatása",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "A rendszer ehhez a felvételhez a processzort használja, ezért tovább fog tartani.",
+  "ui.usingCPUForThisRecording": "A processzor dolgozik ezen a felvételen",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Ez az átirat a szokásosnál tovább tart.",
+  "ui.why": "Miért?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Nincs elég hely a frissítés telepítéséhez",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "A számítógépén majdnem elfogyott a lemezterület. Szabadítson fel helyet, majd próbálja újra.",
+  "ui.tryAgain": "Újrapróbálás",
   "ui.whyIsThisTakingLonger": "Miért tart tovább?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "Az AutoDoc általában a számítógép grafikus chipjét használja a gyors átíráshoz. Ezúttal nem sikerült: a számítógépen kevés volt a szabad memória, vagy a grafikus chip nem válaszolt. Ezért az AutoDoc ennél a felvételnél a fő processzorra váltott. Az átirat ugyanolyan teljes lesz, csak tovább tart. Legközelebb segíthet, ha bezár más alkalmazásokat. A következő felvétel újra megpróbálja a gyorsabb módot."
 }

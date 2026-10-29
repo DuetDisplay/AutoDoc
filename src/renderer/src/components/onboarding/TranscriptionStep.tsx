@@ -34,6 +34,8 @@ export function TranscriptionStep({
     percent: 0
   })
   const [isAutoRetrying, setIsAutoRetrying] = useState(false)
+  // Auto-retry resets setupStatus, so remember a disk-full failure until setup moves on.
+  const [diskFullSeen, setDiskFullSeen] = useState(false)
   const [showSkip, setShowSkip] = useState(false)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoRetryAttempts = useRef(0)
@@ -59,6 +61,7 @@ export function TranscriptionStep({
     setError(null)
     setLanguageLocked(false)
     setIsAutoRetrying(false)
+    setDiskFullSeen(false)
     autoRetryAttempts.current = 0
     hasSeenMeaningfulSetupProgress.current = false
     lastFailureKey.current = null
@@ -112,6 +115,7 @@ export function TranscriptionStep({
           })
         }
         setLanguageLocked(false)
+        setDiskFullSeen(status.errorKind === 'disk-full')
         scheduleAutoRetry()
         if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
           setIsAutoRetrying(false)
@@ -142,6 +146,7 @@ export function TranscriptionStep({
       setError(null)
       setLanguageLocked(false)
       setIsAutoRetrying(false)
+      setDiskFullSeen(false)
       if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
         autoRetryAttempts.current = 0
         hasSeenMeaningfulSetupProgress.current = false
@@ -300,7 +305,7 @@ export function TranscriptionStep({
         </div>
       )}
 
-      {isAutoRetrying && (
+      {isAutoRetrying && !diskFullSeen && (
         <div className="max-w-[360px] mx-auto mb-5 rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
           <h3 className="text-[14px] font-semibold text-ink mb-2">
             {t('ui.stillFinishingTranscriptionSetup')}
@@ -360,6 +365,7 @@ export function TranscriptionStep({
               setError(null)
               setLanguageLocked(false)
               setIsAutoRetrying(false)
+              setDiskFullSeen(false)
               setPhase('checking')
               setPercent(0)
               setSetupStatus({ phase: 'checking', percent: 0 })

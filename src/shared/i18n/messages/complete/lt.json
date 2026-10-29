@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Vaizdo įrašymas sustojo prieš {minutes} min. AutoDoc vis dar įrašo garsą.",
   "recording.audioOnlyReminderStop": "Sustabdyti įrašymą",
   "recording.audioOnlyReminderKeep": "Tęsti įrašymą",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Šiam įrašui naudojamas procesorius, todėl užtruks ilgiau.",
+  "ui.usingCPUForThisRecording": "Šiam įrašui naudojamas procesorius",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Ši transkripcija užtruks ilgiau nei įprastai.",
+  "ui.why": "Kodėl?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Nepakanka vietos atnaujinimui įdiegti",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Jūsų kompiuteryje beveik nebėra vietos diske. Atlaisvinkite vietos ir bandykite dar kartą.",
+  "ui.tryAgain": "Bandyti dar kartą",
   "ui.whyIsThisTakingLonger": "Kodėl tai trunka ilgiau?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc paprastai greitai transkribuoja naudodama jūsų kompiuterio grafikos lustą. Šįkart nepavyko: kompiuteriui trūko laisvosios atminties arba grafikos lustas nustojo reaguoti. Todėl šiam įrašui AutoDoc perjungė į pagrindinį procesorių. Transkripcija bus tokia pat išsami, tik užtruks ilgiau. Kitą kartą gali padėti uždarius kitas programas. Kitas įrašas vėl bandys greitesnį būdą."
 }

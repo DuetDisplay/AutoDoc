@@ -36,6 +36,7 @@ import {
   trackEvent
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
+import { UpdateDiskFullAlert } from '../components/UpdateDiskFullAlert'
 import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { isNetworkErrorMessage } from '../services/network-errors'
@@ -1041,17 +1042,20 @@ export function Settings() {
                   {t('settings.restarting')}
                 </span>
               )}
-              {updateStatus.state === 'error' && (
+              {updateStatus.state === 'error' && updateStatus.errorKind !== 'disk-full' && (
                 <button
                   onClick={handleCheckForUpdates}
                   className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
                 >
-                  {updateStatus.errorKind === 'disk-full'
-                    ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
-                    : t('settings.updateFailed')}
+                  {t('settings.updateFailed')}
                 </button>
               )}
             </div>
+            {updateStatus.state === 'error' && updateStatus.errorKind === 'disk-full' && (
+              <div className="mt-3">
+                <UpdateDiskFullAlert variant="card" onTryAgain={handleCheckForUpdates} />
+              </div>
+            )}
           </div>
         </div>
       </div>

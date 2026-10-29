@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Videoclipul s-a oprit acum {minutes} minute. AutoDoc încă înregistrează sunetul.",
   "recording.audioOnlyReminderStop": "Oprește înregistrarea",
   "recording.audioOnlyReminderKeep": "Continuă înregistrarea",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Pentru această înregistrare se folosește procesorul, așa că va dura mai mult.",
+  "ui.usingCPUForThisRecording": "Se folosește procesorul pentru această înregistrare",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Această transcriere va dura mai mult decât de obicei.",
+  "ui.why": "De ce?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Spațiu insuficient pentru instalarea actualizării",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Computerul dvs. aproape nu mai are spațiu pe disc. Eliberați spațiu, apoi încercați din nou.",
+  "ui.tryAgain": "Încearcă din nou",
   "ui.whyIsThisTakingLonger": "De ce durează mai mult?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc folosește de obicei cipul grafic al computerului pentru a transcrie rapid. De data aceasta nu a fost posibil: computerul avea puțină memorie liberă sau cipul grafic a încetat să răspundă. Așa că AutoDoc a trecut pe procesorul principal pentru această înregistrare. Transcrierea va fi la fel de completă, doar că durează mai mult. Închiderea altor aplicații poate ajuta data viitoare. Următoarea înregistrare va încerca din nou metoda mai rapidă."
 }

@@ -60,6 +60,7 @@ import {
   setDiagnosticConsentEnabled
 } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
+import { UpdateDiskFullAlert } from './components/UpdateDiskFullAlert'
 import { onManualUpdateCheckStarted } from './services/update-check-events'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
@@ -95,6 +96,7 @@ function UpdateReadyPrompt({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
   const [showUpToDateBanner, setShowUpToDateBanner] = useState(false)
+  const [diskFullDismissed, setDiskFullDismissed] = useState(false)
   const location = useLocation()
   const previousUpdateState = useRef<UpdateStatus['state']>('idle')
   const manualUpdateCheckPending = useRef(false)
@@ -110,6 +112,10 @@ function UpdateReadyPrompt({
       setUpdateStatus(status)
       if (status.state !== 'downloaded') {
         setDismissedVersion(null)
+      }
+      // A later disk-full failure (after a retry) should show the alert again.
+      if (status.state !== 'error' || status.errorKind !== 'disk-full') {
+        setDiskFullDismissed(false)
       }
 
       const previousState = previousUpdateState.current
@@ -170,7 +176,9 @@ function UpdateReadyPrompt({
       (updateStatus.state === 'downloaded' &&
         dismissedVersion !== (updateStatus.version ?? 'unknown')))
   )
-  const promptVisible = showUpToDateBanner || downloadedPromptVisible
+  const diskFullVisible =
+    updateStatus?.state === 'error' && updateStatus.errorKind === 'disk-full' && !diskFullDismissed
+  const promptVisible = showUpToDateBanner || downloadedPromptVisible || diskFullVisible
 
   useEffect(() => {
     onVisibilityChange?.(promptVisible)
@@ -225,6 +233,16 @@ function UpdateReadyPrompt({
           </div>
         </div>
       </div>
+    )
+  }
+
+  if (diskFullVisible) {
+    return (
+      <UpdateDiskFullAlert
+        variant="banner"
+        onTryAgain={() => void window.electronAPI.invoke('updater:check')}
+        onDismiss={() => setDiskFullDismissed(true)}
+      />
     )
   }
 

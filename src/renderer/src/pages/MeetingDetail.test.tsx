@@ -239,10 +239,9 @@ describe('memory failure guidance', () => {
     api.setHandler('transcription:get-status', 'transcribing')
     api.setHandler('transcription:get-cpu-fallback', true)
     await renderMeetingDetail()
-    expect(
-      screen.getByText('Using CPU for this recording, so it will take longer.')
-    ).toBeInTheDocument()
+    expect(screen.getByText('Using CPU for this recording')).toBeInTheDocument()
     const info = screen.getByRole('button', { name: 'Why is this taking longer?' })
+    expect(screen.getByText('This transcription will take longer than usual.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     info.focus()
     await userEvent.keyboard('{Enter}')
@@ -264,14 +263,14 @@ describe('memory failure guidance', () => {
         cpuFallback: true
       })
     )
-    expect(screen.queryByText(/Using CPU for this recording/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Using CPU for this recording')).not.toBeInTheDocument()
   })
 
   it('shows the CPU line from a live status event and hides it without cpuFallback', async () => {
     const api = window.electronAPI as unknown as MockElectronAPI
     api.setHandler('transcription:get-status', 'transcribing')
     await renderMeetingDetail()
-    expect(screen.queryByText(/Using CPU for this recording/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Using CPU for this recording')).not.toBeInTheDocument()
     act(() =>
       api.emit('transcription:status-changed', {
         meetingId: 'test-123',
@@ -279,7 +278,7 @@ describe('memory failure guidance', () => {
         cpuFallback: true
       })
     )
-    expect(screen.getByText(/Using CPU for this recording/)).toBeInTheDocument()
+    expect(screen.getByText('Using CPU for this recording')).toBeInTheDocument()
   })
 
   it('preserves the generic failure UI for failures without memory evidence', async () => {

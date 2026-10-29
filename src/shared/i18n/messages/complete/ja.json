@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "{minutes}分前にビデオが停止しました。AutoDocは引き続き音声を録音しています。",
   "recording.audioOnlyReminderStop": "録音を停止",
   "recording.audioOnlyReminderKeep": "録音を続ける",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "この録音ではCPUを使用しているため、時間がかかります。",
+  "ui.usingCPUForThisRecording": "この録音ではCPUを使用しています",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "この文字起こしは通常より時間がかかります。",
+  "ui.why": "なぜ？",
+  "ui.notEnoughSpaceToInstallTheUpdate": "アップデートをインストールするための空き容量が足りません",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "コンピュータのディスク容量がほとんどありません。空き容量を確保してから、もう一度お試しください。",
+  "ui.tryAgain": "再試行",
   "ui.whyIsThisTakingLonger": "なぜ時間がかかっているのですか？",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDocは通常、お使いのコンピュータのグラフィックチップを使って素早く文字起こしを行います。今回は、空きメモリが少なかったか、グラフィックチップが応答しなくなったため、この録音ではメインプロセッサに切り替えました。文字起こしの内容は変わりませんが、時間がかかります。次回は、他のアプリを閉じると改善することがあります。次の録音では、再び高速な方法を試します。"
 }

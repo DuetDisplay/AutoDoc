@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Wideo zatrzymało się {minutes} minut temu. AutoDoc nadal nagrywa dźwięk.",
   "recording.audioOnlyReminderStop": "Zatrzymaj nagrywanie",
   "recording.audioOnlyReminderKeep": "Kontynuuj nagrywanie",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Do tego nagrania używany jest procesor, więc potrwa to dłużej.",
+  "ui.usingCPUForThisRecording": "Do tego nagrania używany jest procesor",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Ta transkrypcja potrwa dłużej niż zwykle.",
+  "ui.why": "Dlaczego?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Za mało miejsca na zainstalowanie aktualizacji",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Na komputerze kończy się miejsce na dysku. Zwolnij trochę miejsca i spróbuj ponownie.",
+  "ui.tryAgain": "Spróbuj ponownie",
   "ui.whyIsThisTakingLonger": "Dlaczego to trwa dłużej?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc zwykle używa układu graficznego komputera, aby szybko transkrybować. Tym razem to się nie udało: komputerowi brakowało wolnej pamięci albo układ graficzny przestał odpowiadać. Dlatego AutoDoc przełączył się dla tego nagrania na główny procesor. Transkrypcja będzie tak samo kompletna, tylko potrwa dłużej. Następnym razem może pomóc zamknięcie innych aplikacji. Kolejne nagranie znów spróbuje szybszej metody."
 }

@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
 import { useT } from '../services/i18n'
 
-/** Passive status line shown while a recording is transcribed on the CPU instead of the GPU. */
+/** Informational card shown while a recording is transcribed on the CPU instead of the GPU. */
 export function CpuFallbackNotice() {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -36,32 +36,50 @@ export function CpuFallbackNotice() {
   }, [open])
 
   return (
-    <div className="mb-3 flex items-center gap-1.5 text-[11.5px] text-ink-muted">
-      <span role="status">{t('ui.usingCPUForThisRecordingSoItWillTakeLonger')}</span>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label={t('ui.whyIsThisTakingLonger')}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={open ? dialogId : undefined}
-        onClick={() => setOpen((current) => !current)}
-        className="flex size-5 shrink-0 items-center justify-center rounded-full text-ink-faint transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
-      >
-        <svg
-          aria-hidden="true"
-          focusable="false"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-          className="size-3.5"
-        >
-          <circle cx="8" cy="8" r="6.25" />
-          <path d="M8 7.25v3.5M8 5h.01" />
-        </svg>
-      </button>
+    <div
+      className="app-banner mx-6 mt-3 mb-0 rounded-xl border border-sage/20 bg-bg-card px-4 py-3 shadow-sm"
+      role="status"
+    >
+      <div className="app-banner-row">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sage/20 bg-sage-light text-sage">
+          <svg
+            aria-hidden="true"
+            focusable="false"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+          >
+            <rect x="5.5" y="5.5" width="9" height="9" rx="1.75" />
+            <path d="M8.5 2.75v2.75M11.5 2.75v2.75M8.5 14.5v2.75M11.5 14.5v2.75M2.75 8.5h2.75M2.75 11.5h2.75M14.5 8.5h2.75M14.5 11.5h2.75" />
+          </svg>
+        </div>
+        <div className="app-banner-copy">
+          <h2 className="text-[12.5px] font-semibold text-ink">
+            {t('ui.usingCPUForThisRecording')}
+          </h2>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            {t('ui.thisTranscriptionWillTakeLongerThanUsual')}
+          </p>
+        </div>
+        <div className="app-banner-actions">
+          <button
+            ref={triggerRef}
+            type="button"
+            aria-label={t('ui.whyIsThisTakingLonger')}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            aria-controls={open ? dialogId : undefined}
+            onClick={() => setOpen((current) => !current)}
+            className="i18n-btn text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
+          >
+            {t('ui.why')}
+          </button>
+        </div>
+      </div>
       {open
         ? createPortal(
             <div

@@ -531,8 +531,13 @@ export const completeEn = {
     'Video stopped {minutes} minutes ago. AutoDoc is still recording audio.',
   'recording.audioOnlyReminderStop': 'Stop recording',
   'recording.audioOnlyReminderKeep': 'Keep recording',
-  'ui.usingCPUForThisRecordingSoItWillTakeLonger':
-    'Using CPU for this recording, so it will take longer.',
+  'ui.usingCPUForThisRecording': 'Using CPU for this recording',
+  'ui.thisTranscriptionWillTakeLongerThanUsual': 'This transcription will take longer than usual.',
+  'ui.why': 'Why?',
+  'ui.notEnoughSpaceToInstallTheUpdate': 'Not enough space to install the update',
+  'ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain':
+    'Your computer is almost out of disk space. Free up some space, then try again.',
+  'ui.tryAgain': 'Try again',
   'ui.whyIsThisTakingLonger': 'Why is this taking longer?',
   'ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT':
     "AutoDoc usually uses your computer's graphics chip to transcribe quickly. This time it couldn't: your computer was low on free memory, or the graphics chip stopped responding. So AutoDoc switched to the main processor for this recording. Your transcript will be just as complete; it just takes longer. Closing other apps can help next time. Your next recording will try the faster way again."

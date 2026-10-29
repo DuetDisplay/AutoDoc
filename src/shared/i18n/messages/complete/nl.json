@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "De video is {minutes} minuten geleden gestopt. AutoDoc neemt nog steeds audio op.",
   "recording.audioOnlyReminderStop": "Opname stoppen",
   "recording.audioOnlyReminderKeep": "Opname voortzetten",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "De processor wordt gebruikt voor deze opname, dus het duurt langer.",
+  "ui.usingCPUForThisRecording": "CPU wordt gebruikt voor deze opname",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Deze transcriptie duurt langer dan normaal.",
+  "ui.why": "Waarom?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Niet genoeg ruimte om de update te installeren",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Je computer heeft bijna geen schijfruimte meer. Maak ruimte vrij en probeer het opnieuw.",
+  "ui.tryAgain": "Opnieuw proberen",
   "ui.whyIsThisTakingLonger": "Waarom duurt dit langer?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc gebruikt normaal de grafische chip van je computer om snel te transcriberen. Dit keer lukte dat niet: je computer had te weinig vrij geheugen, of de grafische chip reageerde niet meer. Daarom schakelde AutoDoc voor deze opname over op de hoofdprocessor. Je transcript is net zo volledig, het duurt alleen langer. Andere apps sluiten kan de volgende keer helpen. Je volgende opname probeert weer de snellere manier."
 }

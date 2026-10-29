@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Το βίντεο σταμάτησε πριν από {minutes} λεπτά. Το AutoDoc εξακολουθεί να ηχογραφεί.",
   "recording.audioOnlyReminderStop": "Διακοπή εγγραφής",
   "recording.audioOnlyReminderKeep": "Συνέχιση εγγραφής",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Για αυτή την εγγραφή χρησιμοποιείται ο επεξεργαστής, γι' αυτό θα διαρκέσει περισσότερο.",
+  "ui.usingCPUForThisRecording": "Χρήση επεξεργαστή για αυτή την εγγραφή",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Αυτή η μεταγραφή θα διαρκέσει περισσότερο από το συνηθισμένο.",
+  "ui.why": "Γιατί;",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Δεν υπάρχει αρκετός χώρος για την εγκατάσταση της ενημέρωσης",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Ο υπολογιστής σας έχει σχεδόν εξαντλήσει τον χώρο στον δίσκο. Ελευθερώστε χώρο και δοκιμάστε ξανά.",
+  "ui.tryAgain": "Δοκιμή ξανά",
   "ui.whyIsThisTakingLonger": "Γιατί διαρκεί περισσότερο;",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "Το AutoDoc συνήθως χρησιμοποιεί το τσιπ γραφικών του υπολογιστή σας για γρήγορη απομαγνητοφώνηση. Αυτή τη φορά δεν μπόρεσε: ο υπολογιστής σας είχε λίγη ελεύθερη μνήμη ή το τσιπ γραφικών σταμάτησε να ανταποκρίνεται. Έτσι το AutoDoc πέρασε στον κύριο επεξεργαστή για αυτή την εγγραφή. Η απομαγνητοφώνηση θα είναι εξίσου πλήρης, απλώς θα πάρει περισσότερο χρόνο. Το κλείσιμο άλλων εφαρμογών μπορεί να βοηθήσει την επόμενη φορά. Η επόμενη εγγραφή θα δοκιμάσει ξανά τον γρηγορότερο τρόπο."
 }

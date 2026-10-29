@@ -140,10 +140,7 @@ describe('Settings', () => {
   })
 
   it.each([
-    [
-      { state: 'error' as const, errorKind: 'disk-full' as const },
-      'Not enough disk space. Free up space and try again.'
-    ],
+    [{ state: 'error' as const, errorKind: 'disk-full' as const }, 'Try again'],
     [{ state: 'error' as const }, 'Update Failed. Retry']
   ])('shows the right update failure text for %j', async (status, expected) => {
     installMockElectronApi({
@@ -158,6 +155,11 @@ describe('Settings', () => {
     expect(await screen.findByRole('button', { name: expected })).toBeInTheDocument()
     if (status.errorKind) {
       expect(screen.queryByRole('button', { name: 'Update Failed. Retry' })).not.toBeInTheDocument()
+      expect(screen.getByText('Not enough space to install the update')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('updater:check')
+    } else {
+      expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
     }
   })
 

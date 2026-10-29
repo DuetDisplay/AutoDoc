@@ -439,7 +439,12 @@
   "recording.audioOnlyReminderBody": "Il video si è interrotto {minutes} minuti fa. AutoDoc sta ancora registrando l’audio.",
   "recording.audioOnlyReminderStop": "Interrompi registrazione",
   "recording.audioOnlyReminderKeep": "Continua a registrare",
-  "ui.usingCPUForThisRecordingSoItWillTakeLonger": "Per questa registrazione viene usata la CPU, quindi ci vorrà più tempo.",
+  "ui.usingCPUForThisRecording": "Uso della CPU per questa registrazione",
+  "ui.thisTranscriptionWillTakeLongerThanUsual": "Questa trascrizione richiederà più tempo del solito.",
+  "ui.why": "Perché?",
+  "ui.notEnoughSpaceToInstallTheUpdate": "Spazio insufficiente per installare l'aggiornamento",
+  "ui.yourComputerIsAlmostOutOfDiskSpaceFreeUpSomeSpaceThenTryAgain": "Il computer ha quasi esaurito lo spazio su disco. Libera un po' di spazio, poi riprova.",
+  "ui.tryAgain": "Riprova",
   "ui.whyIsThisTakingLonger": "Perché ci vuole più tempo?",
   "ui.autoDocUsuallyUsesYourGraphicsChipToTranscribeQuicklyThisTimeItCouldnT": "AutoDoc di solito usa il chip grafico del computer per trascrivere velocemente. Questa volta non è stato possibile: il computer aveva poca memoria libera oppure il chip grafico ha smesso di rispondere. Per questo AutoDoc è passato al processore principale per questa registrazione. La trascrizione sarà completa come sempre, ma richiederà più tempo. Chiudere altre app può aiutare la prossima volta. La prossima registrazione riproverà con il metodo più veloce."
 }

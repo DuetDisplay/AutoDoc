@@ -328,6 +328,37 @@ describe('TranscriptionStep', () => {
       ).toBeGreaterThan(0)
       expect(screen.queryByText("You're offline")).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+      expect(screen.queryByText('Still finishing transcription setup')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
+
+  it('hides the background-retry card during auto-retry after a disk-full failure', async () => {
+    vi.useFakeTimers()
+    let progress: ((status: Record<string, unknown>) => Promise<void>) | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      return Promise.resolve({})
+    })
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await progress?.({ phase: 'error', percent: 0, error: 'ENOSPC', errorKind: 'disk-full' })
+      })
+      expect(screen.queryByText('Still finishing transcription setup')).not.toBeInTheDocument()
+      await act(async () => {
+        await progress?.({ phase: 'error', percent: 0, error: 'boom' })
+      })
+      expect(screen.getByText('Still finishing transcription setup')).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
