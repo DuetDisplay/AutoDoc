@@ -20,6 +20,87 @@ async function loadAnalytics() {
 }
 
 describe('analytics consent', () => {
+  it('sends a pending update once per version through the existing install identity and context', async () => {
+    const analytics = await loadAnalytics()
+    const report = { version: '1.3.2', downloadedAt: '2026-10-29T20:00:00Z' }
+    let pending: typeof report | null = report
+    const api = installMockElectronApi({
+      'analytics:get-pending-update-download': () => pending,
+      'analytics:acknowledge-update-download': () => {
+        pending = null
+        return true
+      }
+    })
+    analytics.initAnalytics()
+    analytics.restoreAnalyticsConsent(true)
+    analytics.identifyDevice('install-123')
+    analytics.setAnalyticsContext(createRuntimeInfo())
+    const results = await Promise.all([
+      analytics.trackPendingUpdateDownload(),
+      analytics.trackPendingUpdateDownload()
+    ])
+    expect(results.filter(Boolean)).toHaveLength(1)
+    expect(
+      posthogMock.capture.mock.calls.filter((call) => call[0] === 'update_download_completed')
+    ).toHaveLength(1)
+    expect(posthogMock.capture).toHaveBeenCalledWith(
+      'update_download_completed',
+      expect.objectContaining({
+        available_version: '1.3.2',
+        app_version: '0.1.24',
+        platform: 'desktop',
+        app_platform: 'darwin'
+      })
+    )
+    expect(api.invoke).toHaveBeenCalledWith('analytics:acknowledge-update-download', report)
+    expect(await analytics.trackPendingUpdateDownload()).toBe(false)
+    pending = { ...report, version: '1.3.3' }
+    expect(await analytics.trackPendingUpdateDownload()).toBe(true)
+    expect(
+      posthogMock.capture.mock.calls.filter((call) => call[0] === 'update_download_completed')
+    ).toHaveLength(2)
+  })
+
+  it('does not claim or send a pending update without consent or configuration', async () => {
+    const api = installMockElectronApi({
+      'analytics:get-pending-update-download': {
+        version: '1.3.2',
+        downloadedAt: '2026-10-29T20:00:00Z'
+      }
+    })
+    let analytics = await loadAnalytics()
+    analytics.initAnalytics()
+    expect(await analytics.trackPendingUpdateDownload()).toBe(false)
+    expect(api.invoke).not.toHaveBeenCalled()
+    vi.stubEnv('VITE_POSTHOG_KEY', '')
+    analytics = await loadAnalytics()
+    analytics.initAnalytics()
+    analytics.restoreAnalyticsConsent(true)
+    expect(await analytics.trackPendingUpdateDownload()).toBe(false)
+    expect(posthogMock.capture).not.toHaveBeenCalled()
+  })
+
+  it('releases a failed capture claim for retry and suppresses a duplicate after acknowledgement failure', async () => {
+    const analytics = await loadAnalytics()
+    const report = { version: '1.3.2', downloadedAt: '2026-10-29T20:00:00Z' }
+    const api = installMockElectronApi({
+      'analytics:get-pending-update-download': report,
+      'analytics:acknowledge-update-download': false
+    })
+    analytics.initAnalytics()
+    analytics.restoreAnalyticsConsent(true)
+    analytics.identifyDevice('install-123')
+    posthogMock.capture.mockImplementationOnce(() => {
+      throw new Error('capture failed')
+    })
+    expect(await analytics.trackPendingUpdateDownload()).toBe(false)
+    expect(api.invoke).toHaveBeenCalledWith('analytics:release-update-download')
+    expect(await analytics.trackPendingUpdateDownload()).toBe(true)
+    expect(await analytics.trackPendingUpdateDownload()).toBe(false)
+    expect(
+      posthogMock.capture.mock.calls.filter((call) => call[0] === 'update_download_completed')
+    ).toHaveLength(2)
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     vi.unstubAllEnvs()

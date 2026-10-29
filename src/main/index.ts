@@ -751,6 +751,9 @@ app.whenReady().then(async () => {
   // Auto-updater
   if (!isE2E && !__AUTODOC_QA_BUILD__) {
     initAutoUpdater({
+      recordUpdateDownload: (version) => {
+        analyticsStateStore.recordPendingUpdateDownload(version)
+      },
       getInstallBlockReason: () => getUpdateInstallBlockReason(),
       onInstallFailed: () => {
         cancelIdleUpdateInstall()

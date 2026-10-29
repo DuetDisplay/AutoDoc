@@ -23,6 +23,7 @@ let getInstallBlockReason: (() => string | undefined) | undefined
 let onInstallFailed: (() => void) | undefined
 
 interface AutoUpdaterOptions {
+  recordUpdateDownload?: (version: string) => void
   prepareForInstall?: () => void
   onUpdateDownloaded?: (status: UpdateStatus) => void
   getInstallBlockReason?: () => string | undefined
@@ -199,6 +200,13 @@ export function initAutoUpdater(options: AutoUpdaterOptions = {}): void {
 
     autoUpdater.on('update-downloaded', (info) => {
       const status: UpdateStatus = { state: 'downloaded', version: getUpdaterVersion(info) }
+      if (status.version) {
+        try {
+          options.recordUpdateDownload?.(status.version)
+        } catch {
+          console.warn('Pending update analytics could not be persisted')
+        }
+      }
       broadcast(status)
       onUpdateDownloaded?.(status)
       if (shouldQuitAndInstallAfterDownloadForSmoke()) {

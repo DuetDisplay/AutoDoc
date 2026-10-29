@@ -9,6 +9,7 @@ import type {
 import { Settings } from './Settings'
 import { I18nProvider } from '../services/i18n'
 import { ThemeProvider } from '../services/theme'
+import * as analytics from '../services/analytics'
 import {
   createCalendarAccount,
   createRuntimeInfo,
@@ -21,6 +22,30 @@ import {
 describe('Settings', () => {
   beforeEach(() => {
     resetRendererStores()
+  })
+
+  it('never reports completed downloads when Settings mounts or downloaded status is repeated', async () => {
+    const track = vi.spyOn(analytics, 'trackEvent')
+    const api = installMockElectronApi({
+      'app:get-version': '1.3.1',
+      'updater:get-status': createUpdateStatus({ state: 'downloaded', version: '1.3.2' }),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'calendar:get-accounts': []
+    })
+    try {
+      for (let count = 0; count < 3; count += 1) {
+        const view = render(<Settings />)
+        await waitFor(() => expect(api.invoke).toHaveBeenCalledWith('updater:get-status'))
+        await act(async () => api.emit('updater:status', { state: 'downloaded', version: '1.3.2' }))
+        view.unmount()
+      }
+      expect(
+        track.mock.calls.filter(([event]) => event === 'update_download_completed')
+      ).toHaveLength(0)
+    } finally {
+      track.mockRestore()
+    }
   })
 
   it('disconnects a calendar and persists that disconnected state after reload', async () => {

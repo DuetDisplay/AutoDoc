@@ -13,6 +13,7 @@ import type {
   AnalyticsSessionStartResult,
   AnalyticsState,
   AnalyticsUpgradeTransition,
+  AnalyticsUpdateDownload,
   AutoRecordMode,
   CalendarAccount,
   CalendarEvent,
@@ -121,6 +122,8 @@ export interface IpcInvokeEvents {
   'app:get-version': []
   'app:get-speech-runtime-licenses': []
   'app:get-locale': []
+  'prefs:get-ui-appearance-announcement-pending': []
+  'prefs:dismiss-ui-appearance-announcement': []
   'prefs:get-meeting-language-announcement-pending': []
   'prefs:dismiss-meeting-language-announcement': []
   'prefs:get-onboarding-language-confirmed': []
@@ -138,6 +141,9 @@ export interface IpcInvokeEvents {
   'analytics:end-session': []
   'analytics:get-consent-snapshot': []
   'analytics:get-pending-upgrade': []
+  'analytics:get-pending-update-download': []
+  'analytics:acknowledge-update-download': [report: AnalyticsUpdateDownload]
+  'analytics:release-update-download': []
   'analytics:acknowledge-upgrade': [transition: AnalyticsUpgradeTransition]
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
@@ -312,6 +318,8 @@ export interface IpcInvokeReturns {
   'app:get-version': string
   'app:get-speech-runtime-licenses': SpeechLicenseNotice[]
   'app:get-locale': string
+  'prefs:get-ui-appearance-announcement-pending': boolean
+  'prefs:dismiss-ui-appearance-announcement': void
   'prefs:get-meeting-language-announcement-pending': boolean
   'prefs:dismiss-meeting-language-announcement': void
   'prefs:get-onboarding-language-confirmed': boolean
@@ -331,6 +339,9 @@ export interface IpcInvokeReturns {
   'analytics:end-session': AnalyticsSessionEndResult | null
   'analytics:get-consent-snapshot': AnalyticsConsentSnapshot
   'analytics:get-pending-upgrade': AnalyticsUpgradeTransition | null
+  'analytics:get-pending-update-download': AnalyticsUpdateDownload | null
+  'analytics:acknowledge-update-download': boolean
+  'analytics:release-update-download': void
   'analytics:acknowledge-upgrade': boolean
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void

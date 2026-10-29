@@ -624,6 +624,11 @@ export interface AnalyticsUpgradeTransition {
   currentVersion: string
 }
 
+export interface AnalyticsUpdateDownload {
+  version: string
+  downloadedAt: string
+}
+
 export interface AnalyticsConsentSnapshot {
   days_since_first_launch: number
   onboarding_started: boolean

@@ -340,6 +340,34 @@ describe('Auto-updater validity characterization', () => {
     })
   })
 
+  it('persists the downloaded version before notifying renderer windows', () => {
+    const recordUpdateDownload = vi.fn()
+    initAutoUpdater({ recordUpdateDownload })
+    const downloaded = on.mock.calls.find(
+      ([event]) => event === 'update-downloaded'
+    )?.[1] as (info: { version: string }) => void
+    downloaded({ version: '1.3.2' })
+    expect(recordUpdateDownload).toHaveBeenCalledWith('1.3.2')
+    expect(recordUpdateDownload.mock.invocationCallOrder[0]).toBeLessThan(
+      send.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('keeps update delivery functional when pending analytics cannot be persisted', () => {
+    const onUpdateDownloaded = vi.fn()
+    initAutoUpdater({
+      recordUpdateDownload: () => {
+        throw new Error('disk unavailable')
+      },
+      onUpdateDownloaded
+    })
+    const downloaded = on.mock.calls.find(
+      ([event]) => event === 'update-downloaded'
+    )?.[1] as (info: { version: string }) => void
+    expect(() => downloaded({ version: '1.3.2' })).not.toThrow()
+    expect(onUpdateDownloaded).toHaveBeenCalledWith({ state: 'downloaded', version: '1.3.2' })
+  })
+
   it('prepares the app to fully quit before installing an update', () => {
     const prepareForInstall = vi.fn()
 

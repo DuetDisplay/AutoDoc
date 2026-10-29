@@ -9,6 +9,7 @@ import type {
   AnalyticsLocalSignal,
   AnalyticsState,
   AnalyticsUpgradeTransition,
+  AnalyticsUpdateDownload,
   AppRuntimeInfo
 } from '../../../shared/types'
 
@@ -23,6 +24,8 @@ let initialized = false
 let consentGiven = false
 let identifiedInstallId: string | null = null
 const queuedUpgradePairs = new Set<string>()
+const queuedDownloadVersions = new Set<string>()
+let updateDownloadInFlight = false
 let analyticsContext: Record<string, string | boolean | undefined> = {
   platform: 'desktop',
   build_mode: import.meta.env.MODE,
@@ -365,6 +368,7 @@ export async function setAnalyticsConsent(enabled: boolean): Promise<void> {
       send_instantly: true
     })
     await trackPendingAppUpdate('disclosed-at-consent')
+    await trackPendingUpdateDownload()
   } else {
     consentGiven = false
     posthog.opt_out_capturing()
@@ -422,6 +426,47 @@ export async function trackPendingAppUpdate(
 
   await window.electronAPI.invoke('analytics:acknowledge-upgrade', transition).catch(() => false)
   return true
+}
+
+export async function trackPendingUpdateDownload(): Promise<boolean> {
+  if (!initialized || !consentGiven || !hasElectronApi() || updateDownloadInFlight) return false
+  updateDownloadInFlight = true
+  let claimed = false
+  try {
+    if (!identifiedInstallId) await identifyConsentedInstall()
+    if (!consentGiven || !identifiedInstallId) return false
+    const report: AnalyticsUpdateDownload | null = await window.electronAPI
+      .invoke('analytics:get-pending-update-download')
+      .catch(() => null)
+    if (
+      !report ||
+      !isBoundedAppVersion(report.version) ||
+      !Number.isFinite(Date.parse(report.downloadedAt))
+    )
+      return false
+    claimed = true
+    if (!consentGiven) return false
+    const alreadyQueued = queuedDownloadVersions.has(report.version)
+    if (!alreadyQueued) {
+      posthog.capture(
+        'update_download_completed',
+        buildEventProperties({
+          available_version: report.version
+        })
+      )
+      queuedDownloadVersions.add(report.version)
+    }
+    await window.electronAPI
+      .invoke('analytics:acknowledge-update-download', report)
+      .catch(() => false)
+    return !alreadyQueued
+  } catch {
+    return false
+  } finally {
+    if (claimed)
+      await window.electronAPI.invoke('analytics:release-update-download').catch(() => {})
+    updateDownloadInFlight = false
+  }
 }
 
 export async function recordAnalyticsLocalSignal(signal: AnalyticsLocalSignal): Promise<boolean> {
@@ -490,4 +535,5 @@ export function shutdownAnalytics(): void {
   posthog.reset()
   identifiedInstallId = null
   queuedUpgradePairs.clear()
+  queuedDownloadVersions.clear()
 }

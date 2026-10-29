@@ -7,10 +7,14 @@ import type {
   AnalyticsSessionEndResult,
   AnalyticsSessionStartResult,
   AnalyticsState,
-  AnalyticsUpgradeTransition
+  AnalyticsUpgradeTransition,
+  AnalyticsUpdateDownload
 } from '../../shared/types'
 
-interface AnalyticsStateSchema extends AnalyticsState {}
+interface AnalyticsStateSchema extends AnalyticsState {
+  lastReportedUpdateVersion: string | null
+  pendingUpdateDownload: AnalyticsUpdateDownload | null
+}
 
 const MAX_APP_VERSION_LENGTH = 64
 const SEMVER_LIKE_PATTERN =
@@ -79,12 +83,16 @@ function createDefaultState(): AnalyticsStateSchema {
     firstSeenAppVersion: null,
     lastSeenAppVersion: null,
     pendingUpgradeFromVersion: null,
-    pendingUpgradeToVersion: null
+    pendingUpgradeToVersion: null,
+    lastReportedUpdateVersion: null,
+    pendingUpdateDownload: null
   }
 }
 
 export class AnalyticsStateStore {
   private store: Store<AnalyticsStateSchema>
+  private updateDownloadClaim: { version: string; downloadedAt: string; senderId: number } | null =
+    null
 
   constructor() {
     const defaults = createDefaultState()
@@ -105,7 +113,7 @@ export class AnalyticsStateStore {
     this.normalizeVersionState()
   }
 
-  getState(): AnalyticsState {
+  getState(): AnalyticsStateSchema {
     const state = this.store.store
     return {
       ...state,
@@ -281,7 +289,67 @@ export class AnalyticsStateStore {
     return true
   }
 
+  recordPendingUpdateDownload(version: unknown): boolean {
+    const normalized = normalizeAnalyticsAppVersion(version)
+    if (!normalized) return false
+    const state = this.store.store
+    if (
+      state.lastReportedUpdateVersion === normalized ||
+      state.pendingUpdateDownload?.version === normalized
+    )
+      return false
+    this.store.set('pendingUpdateDownload', {
+      version: normalized,
+      downloadedAt: new Date().toISOString()
+    })
+    this.updateDownloadClaim = null
+    return true
+  }
+
+  claimPendingUpdateDownload(senderId: number): AnalyticsUpdateDownload | null {
+    if (this.updateDownloadClaim) return null
+    const pending = this.store.get('pendingUpdateDownload')
+    if (
+      !pending ||
+      !normalizeAnalyticsAppVersion(pending.version) ||
+      !Number.isFinite(Date.parse(pending.downloadedAt)) ||
+      pending.version === this.store.get('lastReportedUpdateVersion')
+    )
+      return null
+    this.updateDownloadClaim = { ...pending, senderId }
+    return { version: pending.version, downloadedAt: pending.downloadedAt }
+  }
+
+  acknowledgePendingUpdateDownload(report: unknown, senderId: number): boolean {
+    if (!report || typeof report !== 'object') return false
+    const supplied = report as Partial<AnalyticsUpdateDownload>
+    const claim = this.updateDownloadClaim
+    const pending = this.store.get('pendingUpdateDownload')
+    if (
+      !claim ||
+      claim.senderId !== senderId ||
+      !pending ||
+      supplied.version !== claim.version ||
+      supplied.downloadedAt !== claim.downloadedAt ||
+      pending.version !== claim.version ||
+      pending.downloadedAt !== claim.downloadedAt
+    )
+      return false
+    this.store.set({
+      ...this.store.store,
+      lastReportedUpdateVersion: pending.version,
+      pendingUpdateDownload: null
+    })
+    this.updateDownloadClaim = null
+    return true
+  }
+
+  releasePendingUpdateDownload(senderId: number): void {
+    if (this.updateDownloadClaim?.senderId === senderId) this.updateDownloadClaim = null
+  }
+
   clear(): void {
+    this.updateDownloadClaim = null
     this.store.clear()
     const defaults = createDefaultState()
     for (const [key, value] of Object.entries(defaults) as Array<

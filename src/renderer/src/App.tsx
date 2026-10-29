@@ -32,7 +32,7 @@ import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
-import { MeetingLanguageAnnouncement } from './components/MeetingLanguageAnnouncement'
+import { AnnouncementQueue } from './components/AnnouncementQueue'
 import { NotesEngineUpgradeBanner } from './components/NotesEngineUpgradeBanner'
 import { Onboarding } from './pages/Onboarding'
 import type { UpdateStatus } from '../../preload/ipc.d'
@@ -47,7 +47,8 @@ import {
   trackDailyActiveIfNeeded,
   trackEvent,
   trackFirstEventOnce,
-  trackPendingAppUpdate
+  trackPendingAppUpdate,
+  trackPendingUpdateDownload
 } from './services/analytics'
 import {
   rememberTranscriptionComplete,
@@ -395,6 +396,7 @@ export default function App() {
       if (consent === true) {
         await identifyConsentedInstall()
         await trackPendingAppUpdate('observed-after-consent')
+        await trackPendingUpdateDownload()
         recordDiagnosticAction({
           category: 'app',
           action: 'app_opened'
@@ -409,6 +411,10 @@ export default function App() {
       restoreAnalyticsConsent(enabled)
       setDiagnosticConsentEnabled(enabled)
       updateRendererSentryConsent(enabled)
+      if (enabled) void trackPendingUpdateDownload()
+    })
+    const unsubUpdateDownload = window.electronAPI.on('updater:status', (status) => {
+      if (status.state === 'downloaded') void trackPendingUpdateDownload()
     })
     let unsubE2ETrackAnalytics: (() => void) | null = null
     let disposed = false
@@ -438,6 +444,7 @@ export default function App() {
       window.removeEventListener('beforeunload', handleBeforeUnload)
       void endAnalyticsSession()
       unsubConsent()
+      unsubUpdateDownload()
       disposed = true
       unsubE2ETrackAnalytics?.()
     }
@@ -1037,7 +1044,7 @@ export default function App() {
   return (
     <HashRouter>
       <RouteDiagnosticTracker />
-      <MeetingLanguageAnnouncement
+      <AnnouncementQueue
         suppressed={
           isRecording ||
           recordingPickerOpen ||

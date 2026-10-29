@@ -30,7 +30,6 @@ import {
   identifyConsentedInstall,
   setAnalyticsConsent,
   startAnalyticsSession,
-  toDurationBucket,
   trackConsentSnapshot,
   trackDailyActiveIfNeeded,
   trackEvent
@@ -153,7 +152,6 @@ export function Settings() {
   const [isResettingLocalData, setIsResettingLocalData] = useState(false)
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false)
   const previousUpdateState = useRef<UpdateStatus['state']>('idle')
-  const downloadStartedAt = useRef<number | null>(null)
 
   const refreshStorageInfo = useCallback(() => {
     return window.electronAPI.invoke('app:get-storage-info').then(setStorageInfo)
@@ -262,20 +260,8 @@ export function Settings() {
     }
 
     if (updateStatus.state === 'downloading' && previousState !== 'downloading') {
-      downloadStartedAt.current = performance.now()
       trackEvent('update_download_started', {
         available_version: updateStatus.version ?? 'unknown'
-      })
-      return
-    }
-
-    if (updateStatus.state === 'downloaded' && updateStatus.version) {
-      const startedAt = downloadStartedAt.current
-      downloadStartedAt.current = null
-      trackEvent('update_download_completed', {
-        available_version: updateStatus.version,
-        duration_bucket:
-          startedAt === null ? undefined : toDurationBucket((performance.now() - startedAt) / 1000)
       })
       return
     }
