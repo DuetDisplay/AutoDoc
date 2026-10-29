@@ -8,6 +8,7 @@ import { EventEmitter } from 'events'
 import path from 'path'
 import { classifyError } from '../error-classification'
 import { runWithMeetingLanguage } from '../notes-language'
+import { LocalProcessingCoordinator } from '../local-processing-coordinator'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
@@ -2144,6 +2145,318 @@ describe('TranscriptionService', () => {
       expect(await service.getReprocessFailure('complete')).toBe(true)
       expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
       expect(fsMock.unlink).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Windows GPU memory floor CPU fallback', () => {
+    const RECOVERY = 'Automatically recovering transcription attempt'
+    let elapsedAtDowngradeMs: number | null
+    let startedAt: number
+    let coordinator: LocalProcessingCoordinator
+    let free: number
+    let virtualElapsedMs: number
+    let freeAt: ((elapsedMs: number) => number) | null
+    let payloads: any[]
+
+    async function setup() {
+      setPlatform('win32')
+      vi.useFakeTimers()
+      let backend = 'parakeet-gpu'
+      elapsedAtDowngradeMs = null
+      virtualElapsedMs = 0
+      freeAt = null
+      Object.assign(mockWhisper, {
+        isWorkerEngineSelected: vi.fn(() => true),
+        getWorkerEngine: vi.fn(() => 'parakeet'),
+        getWorkerDevice: vi.fn(() => (backend === 'parakeet-gpu' ? 'dml' : 'cpu')),
+        getTranscriptionBackend: vi.fn(() => backend),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn(() =>
+          backend === 'parakeet-gpu' ? 2.5 : 1.5
+        ),
+        prepareWindowsRecording: vi.fn(async (forceCpu: boolean) => {
+          backend = forceCpu ? 'parakeet-cpu' : 'parakeet-gpu'
+        }),
+        downgradeParakeetGpuToCpuForSession: vi.fn(() => {
+          elapsedAtDowngradeMs = Date.now() - startedAt
+          backend = 'parakeet-cpu'
+          return true
+        })
+      })
+      fsMock.readFile.mockImplementation(async (file) => {
+        if (String(file).endsWith('.wav.json')) return JSON.stringify({ transcription: [] })
+        throw new Error('ENOENT')
+      })
+      fsMock.access.mockImplementation(async (file) => {
+        if (String(file).endsWith('mic.webm')) return
+        throw new Error('ENOENT')
+      })
+      coordinator = new LocalProcessingCoordinator(() => false)
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        coordinator,
+        // Worst case: the profile keeps reading win-gpu after the CPU downgrade.
+        async () =>
+          ({
+            id: 'win-gpu',
+            dualSourceMode: 'concurrent',
+            threadPolicy: 'default'
+          }) as any,
+        async (ms) => {
+          virtualElapsedMs += ms
+          if (freeAt) free = freeAt(virtualElapsedMs)
+          await vi.advanceTimersByTimeAsync(ms)
+        },
+        () => ({ freeGiB: free, totalGiB: 16 })
+      )
+      vi.spyOn(service as any, 'transcribeAudioSource').mockImplementation(
+        async (...args: any[]) => {
+          await (service as any).runWhisperPassAndRead('/tmp/' + args[2] + '.wav', args[0], 60, [])
+          return []
+        }
+      )
+      const { BrowserWindow } = await import('electron')
+      const send = vi.fn()
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+      payloads = []
+      send.mockImplementation((_channel: string, payload: unknown) => payloads.push(payload))
+      startedAt = Date.now()
+    }
+
+    function loggedEvents(message: string) {
+      return autodocLogMock.logAutodocEvent.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.message === message)
+    }
+
+    afterEach(async () => {
+      vi.useRealTimers()
+      const { BrowserWindow } = await import('electron')
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([])
+    })
+
+    it('falls back to CPU after the 60 s wait when no other AutoDoc job is active', async () => {
+      free = 1.5
+      await setup()
+      const completed = vi.fn()
+      service.onComplete(completed)
+
+      await (service as any).processJob('floor-solo')
+
+      // Only the 60 s initial wait ran before the GPU attempt gave up.
+      expect(elapsedAtDowngradeMs).toBe(60_000)
+      expect(
+        loggedEvents('Starting extended memory wait after timeout with low free memory')
+      ).toEqual([])
+      expect(
+        loggedEvents('Skipping extended memory wait: no other AutoDoc job is active')
+      ).toHaveLength(1)
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+      expect(workerClientMock.load).toHaveBeenLastCalledWith(
+        expect.objectContaining({ device: 'cpu' })
+      )
+      expect(completed).toHaveBeenCalledTimes(1)
+      // The floor is not a device loss: no restart pin, no error event.
+      expect(recoveryMock.writeDmlRestriction).not.toHaveBeenCalled()
+      expect(autodocLogMock.logAutodocFailure).not.toHaveBeenCalled()
+      const recoveries = loggedEvents(RECOVERY)
+      expect(recoveries).toHaveLength(1)
+      expect(recoveries[0].context).toEqual(
+        expect.objectContaining({
+          reason: 'gpu-memory-floor',
+          failedBackend: 'parakeet-gpu',
+          recoveryBackend: 'parakeet-cpu',
+          recoveryScope: 'recording'
+        })
+      )
+      const transcribing = payloads.filter((p) => p.status === 'transcribing')
+      expect(transcribing[0].cpuFallback).toBeUndefined()
+      expect(transcribing.at(-1).cpuFallback).toBe(true)
+      expect(payloads.find((p) => p.status === 'complete')?.cpuFallback).toBe(true)
+    })
+
+    it('uses the 1 GiB CPU minimum, not the GPU floor, for the CPU retry', async () => {
+      free = 1.5
+      await setup()
+      await (service as any).processJob('floor-cpu-minimum')
+
+      // CPU retry: 1.5 GiB clears the 1 GiB minimum, so there is no extended CPU wait.
+      expect(
+        loggedEvents('Starting extended memory wait after timeout with low free memory')
+      ).toEqual([])
+      expect(
+        loggedEvents('Proceeding with transcription pass after memory wait timeout').map(
+          (event) => event.context?.freeGiB
+        )
+      ).toEqual([1.5, 1.5])
+      expect(loggedEvents('Insufficient free memory for GPU transcription pass')).toHaveLength(1)
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the extended CPU wait and then proceeds when even the CPU minimum is not met', async () => {
+      free = 0.5
+      await setup()
+      await (service as any).processJob('floor-cpu-starved')
+
+      expect(elapsedAtDowngradeMs).toBe(60_000)
+      const extended = loggedEvents(
+        'Starting extended memory wait after timeout with low free memory'
+      )
+      expect(extended).toHaveLength(1)
+      expect(extended[0].context).toEqual(expect.objectContaining({ minFreeGiB: 1, freeGiB: 0.5 }))
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the 4-minute extended wait when another AutoDoc job is active, and stays on GPU if memory frees', async () => {
+      free = 1.5
+      await setup()
+      freeAt = (elapsedMs) => (elapsedMs >= 120_000 ? 3 : 1.5)
+      let finishOther!: () => void
+      const other = coordinator.runWindows(
+        () =>
+          new Promise<void>((resolve) => {
+            finishOther = resolve
+          })
+      )
+      await vi.waitFor(() => expect(finishOther).toBeTypeOf('function'))
+
+      await (service as any).processJob('floor-other-recovers')
+      finishOther()
+      await other
+
+      expect(
+        loggedEvents('Starting extended memory wait after timeout with low free memory')
+      ).toHaveLength(1)
+      expect(loggedEvents('Skipping extended memory wait: no other AutoDoc job is active')).toEqual(
+        []
+      )
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+      expect(loggedEvents(RECOVERY)).toEqual([])
+      expect(workerClientMock.load).toHaveBeenLastCalledWith(
+        expect.objectContaining({ device: 'dml' })
+      )
+      expect(payloads.some((p) => p.cpuFallback === true)).toBe(false)
+    })
+
+    it('falls back to CPU after the full 5 minutes when another AutoDoc job is active and memory never frees', async () => {
+      free = 1.5
+      await setup()
+      let finishOther!: () => void
+      const other = coordinator.runWindows(
+        () =>
+          new Promise<void>((resolve) => {
+            finishOther = resolve
+          })
+      )
+      await vi.waitFor(() => expect(finishOther).toBeTypeOf('function'))
+
+      await (service as any).processJob('floor-other-starved')
+      finishOther()
+      await other
+
+      // 60 s initial wait + 4 min extended wait (vi.waitFor adds a little fake-clock slack).
+      expect(elapsedAtDowngradeMs).toBeGreaterThanOrEqual(300_000)
+      expect(elapsedAtDowngradeMs).toBeLessThan(301_000)
+      expect(loggedEvents(RECOVERY).map((event) => event.context?.reason)).toEqual([
+        'gpu-memory-floor'
+      ])
+      expect(payloads.find((p) => p.status === 'complete')?.cpuFallback).toBe(true)
+    })
+
+    it('does not skip the extended wait while the sibling source GPU pass is still running', async () => {
+      free = 4
+      await setup()
+      fsMock.access.mockImplementation(async (file) => {
+        if (String(file).endsWith('mic.webm') || String(file).endsWith('system.webm')) return
+        throw new Error('ENOENT')
+      })
+      let finishSiblingPass!: (value: unknown) => void
+      workerClientMock.transcribe
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishSiblingPass = resolve
+            })
+        )
+        .mockResolvedValue({ transcription: [] })
+      // The sibling frees its memory 90 s in, after B's 60 s initial wait has ended.
+      freeAt = (elapsedMs) => {
+        if (elapsedMs < 90_000) return 1.5
+        finishSiblingPass({ transcription: [] })
+        return 3
+      }
+      vi.mocked((service as any).transcribeAudioSource).mockImplementation(
+        async (...args: any[]) => {
+          // Source A passes the gate with plenty of memory; B then finds it depleted.
+          if (args[2] === 'them') free = 1.5
+          await (service as any).runWhisperPassAndRead('/tmp/' + args[2] + '.wav', args[0], 60, [])
+          return []
+        }
+      )
+
+      await (service as any).processJob('floor-sibling')
+
+      expect(
+        loggedEvents('Starting extended memory wait after timeout with low free memory')
+      ).toHaveLength(1)
+      expect(loggedEvents('Skipping extended memory wait: no other AutoDoc job is active')).toEqual(
+        []
+      )
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+      expect(loggedEvents(RECOVERY)).toEqual([])
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
+      expect(payloads.some((p) => p.cpuFallback === true)).toBe(false)
+      expect((service as any).inFlightTranscriptionPasses).toBe(0)
+    })
+
+    it('releases the in-flight pass count when a pass fails', async () => {
+      free = 16
+      await setup()
+      workerClientMock.transcribe.mockRejectedValueOnce(new Error('unrelated ORT error'))
+      await expect(
+        (service as any).runWhisperPassAndRead('/tmp/fail.wav', 'floor-leak', 60, [])
+      ).rejects.toThrow()
+      expect((service as any).inFlightTranscriptionPasses).toBe(0)
+    })
+
+    it('tries GPU again for the next recording after a memory-floor fallback', async () => {
+      free = 1.5
+      await setup()
+      await (service as any).processJob('floor-first')
+      expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
+
+      free = 16
+      payloads.length = 0
+      await (service as any).processJob('floor-second')
+
+      expect(mockWhisper.prepareWindowsRecording).toHaveBeenLastCalledWith(false)
+      expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-gpu')
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+      expect(workerClientMock.load).toHaveBeenLastCalledWith(
+        expect.objectContaining({ device: 'dml' })
+      )
+      expect(payloads.some((p) => p.cpuFallback === true)).toBe(false)
+    })
+
+    it('reports gpu-device-lost with cpuFallback for the existing device-loss recovery', async () => {
+      free = 16
+      await setup()
+      workerClientMock.transcribe
+        .mockRejectedValueOnce(new Error('887A0006'))
+        .mockResolvedValue({ transcription: [] })
+
+      await (service as any).processJob('floor-device-loss')
+
+      expect(loggedEvents(RECOVERY).map((event) => event.context?.reason)).toEqual([
+        'gpu-device-lost'
+      ])
+      expect(payloads.find((p) => p.status === 'complete')?.cpuFallback).toBe(true)
     })
   })
 

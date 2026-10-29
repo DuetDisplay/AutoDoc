@@ -422,6 +422,8 @@ export interface TranscriptionStatusPayload {
   etaSeconds?: number | null
   recordingDurationSec?: number | null
   reprocessFailed?: boolean
+  /** True while and after this recording is transcribed on CPU after the GPU failed or lacked memory. */
+  cpuFallback?: boolean
 }
 
 export type TranscriptionStatus =
