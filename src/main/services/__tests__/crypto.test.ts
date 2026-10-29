@@ -39,6 +39,36 @@ vi.mock('electron', () => ({
   }
 }))
 
+const mockLogAutodocFailure = vi.hoisted(() => vi.fn())
+vi.mock('../autodoc-log', () => ({ logAutodocFailure: mockLogAutodocFailure }))
+
+const BLOCK = 65536
+
+// Reproduces the pre-streaming whole-buffer algorithm to prove on-disk compatibility.
+function legacyEncrypt(
+  key: Buffer,
+  plain: Buffer,
+  baseNonce: Buffer = crypto.randomBytes(12)
+): Buffer {
+  const parts: Buffer[] = [Buffer.from('ADOC', 'ascii'), Buffer.from([1]), baseNonce]
+  let blockIndex = 0
+  for (let offset = 0; offset < plain.length; offset += BLOCK) {
+    const iv = Buffer.from(baseNonce)
+    const idx = Buffer.alloc(4)
+    idx.writeUInt32BE(blockIndex, 0)
+    for (let i = 0; i < 4; i++) iv[8 + i] ^= idx[i]
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+    cipher.setAAD(idx)
+    const enc = Buffer.concat([
+      cipher.update(plain.subarray(offset, offset + BLOCK)),
+      cipher.final()
+    ])
+    parts.push(cipher.getAuthTag(), enc)
+    blockIndex++
+  }
+  return Buffer.concat(parts)
+}
+
 async function freshImport() {
   vi.resetModules()
   return await import('../crypto')
@@ -244,6 +274,68 @@ describe('crypto module', () => {
       await fsp.unlink(tmpPath).catch(() => {})
     })
 
+    it.each([
+      ['empty', 0],
+      ['1 byte', 1],
+      ['exactly one block', BLOCK],
+      ['three blocks plus remainder', BLOCK * 3 + 1234]
+    ])('round-trips %s', async (_name, size) => {
+      const { encryptFileInPlace, decryptFileToTemp } = await freshImport()
+      const filePath = path.join(tmpDir, 'sized.webm')
+      const original = crypto.randomBytes(size)
+      await fsp.writeFile(filePath, original)
+
+      await encryptFileInPlace(filePath)
+      const encSize = (await fsp.stat(filePath)).size
+      expect(encSize).toBe(17 + Math.ceil(size / BLOCK) * 16 + size)
+      const tmpPath = await decryptFileToTemp(filePath)
+      expect((await fsp.readFile(tmpPath)).equals(original)).toBe(true)
+      await fsp.unlink(tmpPath).catch(() => {})
+    })
+
+    it('decrypts files written by the previous whole-buffer algorithm', async () => {
+      const { getKey, decryptFileToTemp } = await freshImport()
+      const filePath = path.join(tmpDir, 'legacy.webm')
+      const original = crypto.randomBytes(BLOCK * 2 + 77)
+      await fsp.writeFile(filePath, legacyEncrypt(getKey(), original))
+
+      const tmpPath = await decryptFileToTemp(filePath)
+      expect((await fsp.readFile(tmpPath)).equals(original)).toBe(true)
+      await fsp.unlink(tmpPath).catch(() => {})
+    })
+
+    it('produces the same bytes as the previous algorithm for a fixed nonce', async () => {
+      const { getKey, encryptFileInPlace } = await freshImport()
+      const filePath = path.join(tmpDir, 'compat.webm')
+      const original = crypto.randomBytes(BLOCK + 5)
+      await fsp.writeFile(filePath, original)
+      await encryptFileInPlace(filePath)
+      const enc = await fsp.readFile(filePath)
+      // Re-encrypt with the legacy algorithm using the nonce from the new file's header.
+      const baseNonce = enc.subarray(5, 17)
+      const legacy = legacyEncrypt(getKey(), original, Buffer.from(baseNonce))
+      expect(enc.equals(legacy)).toBe(true)
+    })
+
+    // Writes ~2 GiB of ciphertext, so it only runs with AUTODOC_LARGE_FILE_TESTS=1.
+    it.skipIf(!process.env.AUTODOC_LARGE_FILE_TESTS)(
+      'encrypts a sparse file over 2 GiB past the 2 GiB readFile limit',
+      async () => {
+        const { encryptFileInPlace, isEncrypted } = await freshImport()
+        const filePath = path.join(tmpDir, 'huge.webm')
+        const fd = fs.openSync(filePath, 'w')
+        fs.ftruncateSync(fd, 2 ** 31 + 1024)
+        fs.closeSync(fd)
+
+        await expect(encryptFileInPlace(filePath)).resolves.toBeUndefined()
+
+        expect(await isEncrypted(filePath)).toBe(true)
+        const expectedBlocks = Math.ceil((2 ** 31 + 1024) / BLOCK)
+        expect((await fsp.stat(filePath)).size).toBe(17 + expectedBlocks * 16 + 2 ** 31 + 1024)
+      },
+      120_000
+    )
+
     it('detects tampered encrypted media', async () => {
       const { encryptFileInPlace, decryptFileToTemp } = await freshImport()
       const filePath = path.join(tmpDir, 'tampered.webm')
@@ -260,6 +352,46 @@ describe('crypto module', () => {
   })
 
   describe('migrateRecordings', () => {
+    it('keeps encrypting later meetings when one file fails, then throws once', async () => {
+      const { migrateRecordings, isEncrypted } = await freshImport()
+      mockLogAutodocFailure.mockClear()
+
+      const badDir = path.join(tmpDir, 'meeting-a')
+      const goodDir = path.join(tmpDir, 'meeting-b')
+      await fsp.mkdir(badDir, { recursive: true })
+      await fsp.mkdir(goodDir, { recursive: true })
+      // Invalid JSON makes the JSON branch fail; the media file in the same dir should still be done.
+      await fsp.writeFile(path.join(badDir, 'metadata.json'), '{not json')
+      await fsp.writeFile(path.join(badDir, 'mic.webm'), crypto.randomBytes(300))
+      await fsp.writeFile(path.join(goodDir, 'mic.webm'), crypto.randomBytes(300))
+      await fsp.writeFile(path.join(goodDir, 'speakers.json'), JSON.stringify({ a: 1 }))
+
+      await expect(migrateRecordings(tmpDir)).rejects.toThrow(/one or more meeting files/)
+
+      expect(await isEncrypted(path.join(badDir, 'mic.webm'))).toBe(true)
+      expect(await isEncrypted(path.join(goodDir, 'mic.webm'))).toBe(true)
+      expect(await isEncrypted(path.join(goodDir, 'speakers.json'))).toBe(true)
+      expect(mockLogAutodocFailure).toHaveBeenCalledTimes(1)
+      const logged = mockLogAutodocFailure.mock.calls[0][0]
+      expect(logged.area).toBe('recording')
+      expect(logged.meetingId).toBe('meeting-a')
+      expect(logged.context).toEqual({ filename: 'metadata.json' })
+    })
+
+    it('continues past a media file that fails to encrypt', async () => {
+      const { migrateRecordings, isEncrypted } = await freshImport()
+      const badDir = path.join(tmpDir, 'meeting-a')
+      const goodDir = path.join(tmpDir, 'meeting-b')
+      await fsp.mkdir(badDir, { recursive: true })
+      await fsp.mkdir(goodDir, { recursive: true })
+      // A directory named like a media file passes access() but cannot be read as a file.
+      await fsp.mkdir(path.join(badDir, 'screen.webm'))
+      await fsp.writeFile(path.join(goodDir, 'screen.webm'), crypto.randomBytes(300))
+
+      await expect(migrateRecordings(tmpDir)).rejects.toThrow()
+      expect(await isEncrypted(path.join(goodDir, 'screen.webm'))).toBe(true)
+    })
+
     it('encrypts current media and metadata files', async () => {
       const { migrateRecordings, isEncrypted } = await freshImport()
 

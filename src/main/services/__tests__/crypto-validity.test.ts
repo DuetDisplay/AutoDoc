@@ -80,7 +80,13 @@ describe('Crypto file replacement retries', () => {
     readFileMock.mockResolvedValue(Buffer.from('plain-data'))
     writeFileMock.mockResolvedValue(undefined)
     unlinkMock.mockResolvedValue(undefined)
+    const plain = Buffer.from('plain-data')
     openMock.mockResolvedValue({
+      read: vi.fn(async (buf: Buffer, off: number, len: number, pos: number) => {
+        const n = Math.min(len, Math.max(0, plain.length - pos))
+        plain.copy(buf, off, pos, pos + n)
+        return { bytesRead: n, buffer: buf }
+      }),
       write: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined)
     })
