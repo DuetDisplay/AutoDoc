@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] — 2026-10-30
+
+### Added
+
+- AutoDoc's interface is available in 27 languages. New installs choose the app
+  language at the start of onboarding, and it can be changed anytime in Settings.
+- Light and Dark appearance, with a switch in the sidebar and in Settings.
+- When you update, a one-time card lets you choose the app language and
+  appearance, and your meeting language if you haven't chosen one yet.
+- If video capture stops and a recording continues with audio only, AutoDoc
+  reminds you after five minutes and lets you stop the recording.
+- A one-time prompt invites you to star AutoDoc on GitHub.
+
+### Fixed
+
+- If the disk fills up while a recording is being processed, AutoDoc keeps the
+  recording and shows an alert with **Retry** instead of failing. Update and
+  onboarding downloads show the same alert.
+- On Windows PCs whose graphics card doesn't have enough free memory,
+  transcription uses the CPU for that recording instead of failing, and AutoDoc
+  explains why.
+- Recordings larger than 2 GB are encrypted reliably.
+- Meeting language names start with a capital letter in every app language, and
+  unavailable languages explain why they can't be chosen.
+- Banners, popovers and dialogs fit in every language and window size, with
+  clearer keyboard focus and better contrast.
+
+### Security
+
+- Updated Electron to 44.10.0, which includes Node.js security fixes.
+
 ## [1.3.2] — 2026-10-27
 
 This release updates AutoDoc’s underlying runtime and networking components with security fixes for macOS and Windows. We recommend updating to the latest version.
@@ -217,7 +248,9 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.3...v1.2.0
