@@ -8,6 +8,7 @@ export interface ErrorContext {
   tags?: Record<string, string>
   extra?: Record<string, unknown>
   diagnosticLogAttachment?: DiagnosticLogAttachment | null
+  /** Sentry grouping override; when omitted, an `error.sentryFingerprint` array is used if present. */
   fingerprint?: string[]
 }
 
@@ -43,6 +44,16 @@ export function resetSentryScopes(): void {
   }
 }
 
+function getErrorFingerprint(error: unknown): string[] | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const fingerprint = (error as { sentryFingerprint?: unknown }).sentryFingerprint
+  return Array.isArray(fingerprint) &&
+    fingerprint.length > 0 &&
+    fingerprint.every((part) => typeof part === 'string')
+    ? fingerprint
+    : undefined
+}
+
 export function captureError(error: unknown, context: ErrorContext): void {
   const currentSentry = Sentry
   if (!currentSentry) return
@@ -68,11 +79,10 @@ export function captureError(error: unknown, context: ErrorContext): void {
     } else {
       scope.setExtras({ diagnosticTrail })
     }
+    const fingerprint = context.fingerprint ?? getErrorFingerprint(error)
+    if (fingerprint) attachmentAwareScope.setFingerprint?.(fingerprint)
     if (context.diagnosticLogAttachment) {
       attachmentAwareScope.addAttachment?.(context.diagnosticLogAttachment)
-    }
-    if (context.fingerprint) {
-      attachmentAwareScope.setFingerprint?.(context.fingerprint)
     }
 
     currentSentry.captureException(error instanceof Error ? error : new Error(String(error)))

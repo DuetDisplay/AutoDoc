@@ -1,3 +1,4 @@
+import { tMain } from '../services/ui-locale'
 import { randomUUID } from 'crypto'
 import { open, rename, unlink } from 'fs/promises'
 import { basename, dirname, join } from 'path'
@@ -123,15 +124,16 @@ function saveDialogOptions(
   documentsPath: string
 ): SaveDialogOptions {
   const extension = meetingExportExtension(format)
-  const formatName = format === 'markdown' ? 'Markdown' : format === 'pdf' ? 'PDF' : 'Word Document'
+  const formatName =
+    format === 'markdown' ? 'Markdown' : format === 'pdf' ? 'PDF' : tMain('ui.wordDocument')
   return {
-    title: 'Export notes',
-    buttonLabel: 'Export',
+    title: tMain('ui.exportNotes'),
+    buttonLabel: tMain('ui.export'),
     defaultPath: join(
       documentsPath,
       createMeetingExportSuggestedFilename(snapshot.detail.title, format)
     ),
-    message: 'Choose where to save these notes.',
+    message: tMain('ui.chooseWhereToSaveTheseNotes'),
     filters: [{ name: formatName, extensions: [extension] }],
     properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent']
   }

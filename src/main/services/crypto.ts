@@ -7,6 +7,7 @@ import { Readable } from 'stream'
 import { execFileSync } from 'child_process'
 import { app, safeStorage } from 'electron'
 import { renameWithRetry } from './file-operation-retry'
+import { logAutodocFailure } from './autodoc-log'
 import { protectWindowsRecordingKey, unprotectWindowsRecordingKey } from './windows-key-protection'
 
 const STORE_KEY = 'encryption_key'
@@ -416,40 +417,62 @@ function blockAAD(blockIndex: number): Buffer {
 export async function encryptFileInPlace(plainPath: string): Promise<void> {
   const key = getKey()
   const baseNonce = crypto.randomBytes(12)
-  const plainData = await fsp.readFile(plainPath)
-
   const encPath = plainPath + '.enc'
-  const fd = await fsp.open(encPath, 'w')
+
+  // Stream the plaintext block by block; readFile throws ERR_FS_FILE_TOO_LARGE above 2 GiB.
+  const srcFd = await fsp.open(plainPath, 'r')
+  let fd: fsp.FileHandle
+  try {
+    fd = await fsp.open(encPath, 'w')
+  } catch (err) {
+    await srcFd.close().catch(() => {})
+    throw err
+  }
 
   try {
     // Write header: ADOC + version + base nonce
     const header = Buffer.concat([MAGIC, Buffer.from([CHUNKED_VERSION]), baseNonce])
     await fd.write(header)
 
-    let offset = 0
+    const block = Buffer.alloc(BLOCK_SIZE)
+    let position = 0
     let blockIndex = 0
-    while (offset < plainData.length) {
-      const end = Math.min(offset + BLOCK_SIZE, plainData.length)
-      const block = plainData.subarray(offset, end)
+    for (;;) {
+      // Fill the block fully unless EOF, so block boundaries match the previous format.
+      let filled = 0
+      while (filled < BLOCK_SIZE) {
+        const { bytesRead } = await srcFd.read(
+          block,
+          filled,
+          BLOCK_SIZE - filled,
+          position + filled
+        )
+        if (bytesRead === 0) break
+        filled += bytesRead
+      }
+      if (filled === 0) break
 
       const iv = xorNonce(baseNonce, blockIndex)
       const aad = blockAAD(blockIndex)
 
       const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
       cipher.setAAD(aad)
-      const encrypted = Buffer.concat([cipher.update(block), cipher.final()])
+      const encrypted = Buffer.concat([cipher.update(block.subarray(0, filled)), cipher.final()])
       const tag = cipher.getAuthTag()
 
       // Write: [16-byte tag][ciphertext]
       await fd.write(Buffer.concat([tag, encrypted]))
 
-      offset = end
+      position += filled
       blockIndex++
+      if (filled < BLOCK_SIZE) break
     }
 
+    await srcFd.close()
     await fd.close()
   } catch (err) {
-    await fd.close()
+    await srcFd.close().catch(() => {})
+    await fd.close().catch(() => {})
     await fsp.unlink(encPath).catch(() => {})
     throw err
   }
@@ -706,6 +729,7 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
     return
   }
   let notesMigrationFailed = false
+  let fileMigrationFailed = false
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
@@ -752,19 +776,35 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
 
       console.log(`Encrypting: ${filePath}`)
 
-      if (filename.endsWith('.json')) {
-        // Read plain JSON, encrypt it
-        const raw = await fsp.readFile(filePath, 'utf-8')
-        const data = JSON.parse(raw)
-        await encryptJSON(data, filePath)
-      } else {
-        await encryptFileInPlace(filePath)
+      try {
+        if (filename.endsWith('.json')) {
+          // Read plain JSON, encrypt it
+          const raw = await fsp.readFile(filePath, 'utf-8')
+          const data = JSON.parse(raw)
+          await encryptJSON(data, filePath)
+        } else {
+          await encryptFileInPlace(filePath)
+        }
+      } catch (err) {
+        // Finish the scan so one failing file cannot leave later meetings unencrypted.
+        // Log only the meeting id and filename, never file contents.
+        fileMigrationFailed = true
+        logAutodocFailure({
+          area: 'recording',
+          message: `Failed to encrypt ${filename} during startup migration`,
+          error: err,
+          meetingId: entry.name,
+          context: { filename }
+        })
       }
     }
   }
 
   if (notesMigrationFailed) {
     throw new Error('Could not migrate one or more encrypted meeting notes')
+  }
+  if (fileMigrationFailed) {
+    throw new Error('Could not encrypt one or more meeting files')
   }
 }
 

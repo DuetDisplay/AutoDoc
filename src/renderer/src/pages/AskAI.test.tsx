@@ -86,6 +86,34 @@ describe('AskAI', () => {
     )
   })
 
+  it('keeps IME composition and Shift+Enter in the draft until an intentional submit', async () => {
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    api.setHandler('chat:send-stream', () => new Promise(() => {}))
+    render(<AskAI />)
+    const input = screen.getByRole('textbox')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '회의 내용을 정리해 주세요' } })
+      fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+      fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+    })
+    expect(window.electronAPI.invoke).not.toHaveBeenCalledWith(
+      'chat:send-stream',
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    )
+    expect(input).toHaveValue('회의 내용을 정리해 주세요')
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+      'chat:send-stream',
+      expect.any(String),
+      '회의 내용을 정리해 주세요',
+      []
+    )
+  })
+
   it('falls back to the recovery message when the AI request fails', async () => {
     const api = installMockElectronApi({
       'ollama:check-status': true

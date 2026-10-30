@@ -1,5 +1,7 @@
+import { useT } from '../services/i18n'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { StepDots } from '../components/onboarding/StepDots'
+import { UiLanguageStep } from '../components/onboarding/UiLanguageStep'
 import { WelcomeStep } from '../components/onboarding/WelcomeStep'
 import { FeatureStep } from '../components/onboarding/FeatureStep'
 import { MicPermissionStep } from '../components/onboarding/MicPermissionStep'
@@ -24,8 +26,8 @@ import {
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
-const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 11, 7, 8, 9, 10] as const
-const WINDOWS_STEP_ORDER = [0, 1, 2, 3, 6, 11, 7, 8, 9, 10] as const
+const DARWIN_STEP_ORDER = [12, 0, 1, 2, 3, 4, 5, 6, 11, 7, 8, 9, 10] as const
+const WINDOWS_STEP_ORDER = [12, 0, 1, 2, 3, 6, 11, 7, 8, 9, 10] as const
 type NavigationMode = 'restore' | 'forward' | 'back'
 
 function getVisibleStepOrder(platform: string | null): readonly number[] {
@@ -33,6 +35,8 @@ function getVisibleStepOrder(platform: string | null): readonly number[] {
 }
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
+  const t = useT()
+
   const [platform, setPlatform] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
@@ -54,7 +58,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     ]).then(([saved, runtimeInfo, languageConfirmed]) => {
       const resolvedPlatform = runtimeInfo?.platform ?? 'darwin'
       const visibleSteps = getVisibleStepOrder(resolvedPlatform)
-      const savedStep = languageConfirmed === false && saved >= 7 && saved <= 10 ? 11 : (saved ?? 0)
+      const savedStep =
+        languageConfirmed === false && saved >= 7 && saved <= 10 ? 11 : (saved ?? 12)
       const exactIndex = visibleSteps.indexOf(savedStep)
 
       setPlatform(resolvedPlatform)
@@ -67,7 +72,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       }
 
       const migratedIndex = visibleSteps.findIndex(
-        (candidate) => candidate !== 11 && candidate > savedStep
+        (candidate) => candidate !== 11 && candidate !== 12 && candidate > savedStep
       )
       const nextIndex = migratedIndex === -1 ? visibleSteps.length - 1 : migratedIndex
       const normalizedStep = visibleSteps[nextIndex] ?? visibleSteps[0]
@@ -155,6 +160,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
 
   const renderStep = () => {
     switch (step) {
+      case 12:
+        return <UiLanguageStep onNext={next} />
       case 0:
         return <WelcomeStep onNext={next} />
       case 1:
@@ -162,8 +169,10 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           <FeatureStep
             icon="🔒"
             iconBg="bg-sage-light"
-            heading="Private by Design"
-            body="AutoDoc is fully open source and runs entirely on your machine. Your meetings are encrypted on disk and never leave your computer. No cloud. No accounts. No compromises. Built by ex-Apple engineers who believe your data is yours."
+            heading={t('ui.privateByDesign')}
+            body={t(
+              'ui.autoDocIsFullyOpenSourceAndRunsEntirelyOnYourMachineYourMeetingsAreEncrypte'
+            )}
             onNext={next}
           />
         )
@@ -172,27 +181,28 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           <FeatureStep
             icon="🎧"
             iconBg="bg-dusk-light"
-            heading="How It Works"
-            body="AutoDoc quietly records your meeting audio, transcribes it locally, and identifies who's speaking — all on your device."
+            heading={t('ui.howItWorks')}
+            body={t(
+              'ui.autoDocQuietlyRecordsYourMeetingAudioTranscribesItLocallyAndIdentifiesWhoSS'
+            )}
             features={[
               {
                 icon: '🎤',
                 iconBg: 'bg-sage-light',
-                title: 'Captures audio',
-                description:
-                  'Records mic and system audio separately for clean speaker identification'
+                title: t('ui.capturesAudio'),
+                description: t('ui.recordsMicAndSystemAudioSeparatelyForCleanSpeakerIdentification')
               },
               {
                 icon: '📝',
                 iconBg: 'bg-dusk-light',
-                title: 'Transcribes locally',
-                description: 'AutoDoc installs a one-time speech engine, then transcribes on-device'
+                title: t('ui.transcribesLocally'),
+                description: t('ui.autoDocInstallsAOneTimeSpeechEngineThenTranscribesOnDevice')
               },
               {
                 icon: '👥',
                 iconBg: 'bg-mist-light',
-                title: 'Identifies speakers',
-                description: 'Knows who\'s talking — labels "Me" vs "Them" automatically'
+                title: t('ui.identifiesSpeakers'),
+                description: t('ui.knowsWhoSTalkingLabelsMeVsThemAutomatically')
               }
             ]}
             onNext={next}
@@ -203,26 +213,26 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           <FeatureStep
             icon="📋"
             iconBg="bg-clay-light"
-            heading="Notes That Think"
-            body="AutoDoc writes a summary, topics, and key takeaways you can edit. Decisions show up when the meeting made them."
+            heading={t('ui.notesThatThink')}
+            body={t('onboarding.notesBody')}
             features={[
               {
                 icon: '✅',
-                iconBg: 'bg-[#FEF3C7]',
-                title: 'Summary',
-                description: 'A short overview of the meeting'
+                iconBg: 'bg-clay-light',
+                title: t('ui.summary'),
+                description: t('onboarding.summaryDescription')
               },
               {
                 icon: '📌',
                 iconBg: 'bg-clay-light',
-                title: 'Topics',
-                description: 'The conversation, grouped by topic'
+                title: t('onboarding.topicsTitle'),
+                description: t('onboarding.topicsDescription')
               },
               {
                 icon: '💬',
                 iconBg: 'bg-sage-light',
-                title: 'Key takeaways',
-                description: 'The points worth keeping'
+                title: t('onboarding.keyTakeawaysTitle'),
+                description: t('onboarding.keyTakeawaysDescription')
               }
             ]}
             onNext={next}
@@ -260,43 +270,47 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   if (step === null) return null
 
   return (
-    <div className="h-screen bg-bg-primary relative overflow-y-auto">
+    <div className="h-screen bg-bg-primary relative flex flex-col overflow-hidden">
       {/* macOS drag region */}
       <div
         className="fixed top-0 left-24 right-24 h-5"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
 
-      {/* Step dots (hidden on All Set screen) */}
-      {stepIndex !== null && stepIndex < totalDots && (
-        <div className="fixed top-7 left-1/2 -translate-x-1/2">
-          <StepDots total={totalDots} current={stepIndex} />
-        </div>
-      )}
+      <header className="relative h-20 shrink-0 bg-bg-primary">
+        {/* Keep navigation outside the scrolling instructions. */}
+        {stepIndex !== null && stepIndex < totalDots && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2">
+            <StepDots total={totalDots} current={stepIndex} />
+          </div>
+        )}
 
-      {stepIndex !== null && stepIndex > 0 && (
-        <button
-          type="button"
-          onClick={back}
-          className="fixed top-12 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          ← Back
-        </button>
-      )}
+        {stepIndex !== null && stepIndex > 0 && (
+          <button
+            type="button"
+            onClick={back}
+            className="absolute top-8 left-6 max-w-[calc(100%-3rem)] px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors focus-visible:outline-2 focus-visible:outline-sage"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            {t('ui.back')}
+          </button>
+        )}
+      </header>
 
-      <div className="min-h-full flex flex-col">
-        {/* Content */}
-        <div className="flex flex-1 flex-col items-center justify-start pt-20 pb-4 [@media(min-height:520px)]:justify-center">
-          <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
-            {renderStep()}
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-full flex flex-col">
+          {/* Content */}
+          <div className="flex flex-1 flex-col items-center justify-start pt-2 pb-4 [@media(min-height:520px)]:justify-center">
+            <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
+              {renderStep()}
+            </div>
+          </div>
+
+          <div className="shrink-0 px-6 pb-4">
+            <OnboardingSupportLink />
           </div>
         </div>
-
-        <div className="shrink-0 px-6 pb-4">
-          <OnboardingSupportLink />
-        </div>
-      </div>
+      </main>
     </div>
   )
 }

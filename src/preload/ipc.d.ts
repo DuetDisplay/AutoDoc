@@ -13,6 +13,7 @@ import type {
   AnalyticsSessionStartResult,
   AnalyticsState,
   AnalyticsUpgradeTransition,
+  AnalyticsUpdateDownload,
   AutoRecordMode,
   CalendarAccount,
   CalendarEvent,
@@ -57,6 +58,7 @@ import type {
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
+import type { AppearanceMode } from '../shared/appearance'
 import type {
   MeetingLanguageAvailability,
   MeetingLanguageCode,
@@ -64,6 +66,7 @@ import type {
   WindowsMeetingLanguageAvailabilityInfo,
   WindowsMultilingualEngineReadyInfo
 } from '../shared/meeting-language'
+import type { UiLanguageCode } from '../shared/ui-language'
 import type {
   E2EDetectionState,
   E2EFeedbackPromptDebugState,
@@ -77,6 +80,8 @@ export interface UpdateStatus {
   version?: string
   percent?: number
   error?: string
+  /** Set with `error` when the update failed because the disk is full. */
+  errorKind?: 'disk-full'
   installBlockedReason?: string
 }
 
@@ -107,6 +112,7 @@ export interface ChatClarificationOption {
 
 export interface IpcSendEvents {
   'recording:quit-ready': [requestId: string, error?: string]
+  'recording:audio-only-reminder': [title: string, body: string]
   'window:minimize': []
   'window:maximize': []
   'window:close': []
@@ -116,6 +122,8 @@ export interface IpcInvokeEvents {
   'app:get-version': []
   'app:get-speech-runtime-licenses': []
   'app:get-locale': []
+  'prefs:get-ui-appearance-announcement-pending': []
+  'prefs:dismiss-ui-appearance-announcement': []
   'prefs:get-meeting-language-announcement-pending': []
   'prefs:dismiss-meeting-language-announcement': []
   'prefs:get-onboarding-language-confirmed': []
@@ -133,12 +141,19 @@ export interface IpcInvokeEvents {
   'analytics:end-session': []
   'analytics:get-consent-snapshot': []
   'analytics:get-pending-upgrade': []
+  'analytics:get-pending-update-download': []
+  'analytics:acknowledge-update-download': [report: AnalyticsUpdateDownload]
+  'analytics:release-update-download': []
   'analytics:acknowledge-upgrade': [transition: AnalyticsUpgradeTransition]
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
   'support:get-availability': []
   'support:open-email': [surface: SupportEmailSurface]
   'support:copy-email': [surface: SupportEmailSurface]
+  'github-star:reserve': []
+  'github-star:confirm': [reservationId: string]
+  'github-star:cancel': [reservationId: string]
+  'github-star:open': []
   'feedback:observe-foreground': []
   'feedback:reserve-prompt': [surface: FeedbackPromptSurface]
   'feedback:confirm-prompt': [reservationId: string, surface: FeedbackPromptSurface]
@@ -195,6 +210,8 @@ export interface IpcInvokeEvents {
   'transcription:get-status': [meetingId: string]
   'transcription:get-memory-failure': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
+  'transcription:get-error-code': [meetingId: string]
+  'transcription:get-cpu-fallback': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string, options?: { reprocess: boolean }]
   'transcription:get-reprocess-failure': [meetingId: string]
@@ -255,6 +272,10 @@ export interface IpcInvokeEvents {
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-video-watermark-visible': []
   'prefs:set-video-watermark-visible': [visible: boolean]
+  'prefs:get-appearance': []
+  'prefs:set-appearance': [appearance: AppearanceMode]
+  'prefs:get-ui-language': []
+  'prefs:set-ui-language': [language: UiLanguageCode]
   'prefs:get-meeting-language': []
   'prefs:get-meeting-language-availability': []
   'prefs:set-meeting-language': [language: MeetingLanguageCode]
@@ -297,6 +318,8 @@ export interface IpcInvokeReturns {
   'app:get-version': string
   'app:get-speech-runtime-licenses': SpeechLicenseNotice[]
   'app:get-locale': string
+  'prefs:get-ui-appearance-announcement-pending': boolean
+  'prefs:dismiss-ui-appearance-announcement': void
   'prefs:get-meeting-language-announcement-pending': boolean
   'prefs:dismiss-meeting-language-announcement': void
   'prefs:get-onboarding-language-confirmed': boolean
@@ -316,12 +339,19 @@ export interface IpcInvokeReturns {
   'analytics:end-session': AnalyticsSessionEndResult | null
   'analytics:get-consent-snapshot': AnalyticsConsentSnapshot
   'analytics:get-pending-upgrade': AnalyticsUpgradeTransition | null
+  'analytics:get-pending-update-download': AnalyticsUpdateDownload | null
+  'analytics:acknowledge-update-download': boolean
+  'analytics:release-update-download': void
   'analytics:acknowledge-upgrade': boolean
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
   'support:get-availability': boolean
   'support:open-email': OpenSupportEmailResult
   'support:copy-email': CopySupportEmailResult
+  'github-star:reserve': string | null
+  'github-star:confirm': boolean
+  'github-star:cancel': void
+  'github-star:open': boolean
   'feedback:observe-foreground': void
   'feedback:reserve-prompt': FeedbackPromptReservationResponse
   'feedback:confirm-prompt': FeedbackPromptConfirmationResponse
@@ -355,6 +385,8 @@ export interface IpcInvokeReturns {
   'transcription:get-status': TranscriptionStatus
   'transcription:get-memory-failure': MemoryFailure | undefined
   'transcription:get-progress': number | undefined
+  'transcription:get-error-code': string | undefined
+  'transcription:get-cpu-fallback': boolean
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
   'transcription:get-reprocess-failure': boolean
@@ -418,6 +450,10 @@ export interface IpcInvokeReturns {
   'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-video-watermark-visible': boolean
   'prefs:set-video-watermark-visible': void
+  'prefs:get-appearance': AppearanceMode
+  'prefs:set-appearance': void
+  'prefs:get-ui-language': UiLanguageCode
+  'prefs:set-ui-language': void
   'prefs:get-meeting-language': MeetingLanguageCode
   'prefs:get-meeting-language-availability': MeetingLanguageAvailability
   'prefs:set-meeting-language': void
@@ -483,6 +519,8 @@ export interface IpcOnEvents {
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:video-watermark-visible-changed': [visible: boolean]
+  'prefs:appearance-changed': [appearance: AppearanceMode]
+  'prefs:ui-language-changed': [language: UiLanguageCode]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
   'feedback:contact-initiated': [surface: SupportEmailSurface]
   'feedback:critical-ui-changed': [suppressed: boolean]

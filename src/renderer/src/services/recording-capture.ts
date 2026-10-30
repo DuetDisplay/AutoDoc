@@ -2,6 +2,7 @@ import { useToastStore } from '../stores/toast'
 import { recordPersistentDiagnosticAction } from './diagnostic-trail'
 import {
   getMicrophoneCaptureFailureMessage,
+  getMicrophoneCaptureFailureMessageKey,
   isWindowsRenderer,
   type MicrophoneAccessErrorDetails,
   probeMicrophoneStream
@@ -786,10 +787,12 @@ async function createVideoStream(
     if (context === 'initial') {
       useToastStore.getState().showToast({
         type: 'screen',
+        messageKey: 'recording.screenPermission',
         message:
           'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
         action: {
-          label: 'Enable',
+          label: 'Open Settings',
+          labelKey: 'upcoming.openSettings',
           type: 'open-settings',
           target: 'screen'
         }
@@ -815,6 +818,7 @@ async function createCaptureStreams(
     if (context === 'initial') {
       useToastStore.getState().showToast({
         type: 'screen',
+        messageKey: 'recording.systemAudioCaptureFailed',
         message:
           'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.'
       })
@@ -885,8 +889,10 @@ function showMicrophoneCaptureFailureToast(error: MicrophoneAccessErrorDetails):
   useToastStore.getState().showToast({
     type: 'microphone',
     message: getMicrophoneCaptureFailureMessage(error, isWindowsRenderer()),
+    messageKey: getMicrophoneCaptureFailureMessageKey(error, isWindowsRenderer()),
     action: {
-      label: 'Enable',
+      label: 'Open Settings',
+      labelKey: 'upcoming.openSettings',
       type: 'open-settings',
       target: 'microphone'
     }

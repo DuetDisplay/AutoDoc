@@ -195,7 +195,7 @@ describe('MeetingExportMenu', () => {
     expect(exportTrigger).toHaveAttribute('aria-controls', dialog.id)
     expect(dialog).toHaveAttribute('aria-modal', 'false')
     expect(dialog).toHaveAccessibleDescription('Choose a file format.')
-    expect(dialog).toHaveClass('right-0', 'w-64', 'border-border', 'bg-bg-card', 'rounded-xl')
+    expect(dialog).toHaveClass('border-border', 'bg-bg-card', 'rounded-xl')
     expect(screen.queryByRole('button', { name: 'Full' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Concise' })).not.toBeInTheDocument()
     expect(screen.queryByText(/stored note|polished summary/i)).not.toBeInTheDocument()

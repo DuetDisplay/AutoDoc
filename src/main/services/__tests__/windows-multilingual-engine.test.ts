@@ -197,6 +197,7 @@ describe('resolveWindowsMultilingualEngine', () => {
       expect(plan.primary).toBeNull()
       expect(plan.availability).toBe('locked')
       expect(plan.reason).toBe(reason)
+      expect(plan.reasonCode).toBe('needs-supported-graphics-card')
     }
   })
 
@@ -226,6 +227,8 @@ describe('resolveWindowsMultilingualEngine', () => {
     expect(lowSpec.primary).toBeNull()
     expect(lowSpec.availability).toBe('locked')
     expect(lowSpec.reason).toBe('Spanish needs a supported graphics card on this PC.')
+    expect(lowSpec.reasonCode).toBe('needs-supported-graphics-card')
+    expect(normal.reasonCode).toBeUndefined()
   })
 
   it('still tries CUDA turbo when NVIDIA VRAM is unknown', () => {

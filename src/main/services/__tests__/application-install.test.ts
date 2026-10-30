@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockAccess = vi.fn()
 const mockReadFile = vi.fn()
@@ -17,6 +17,14 @@ const mockUnref = vi.fn()
 const mockLogAutodocEvent = vi.fn()
 const mockFlushLogWrites = vi.fn(async () => {})
 const mockReleaseSingleInstanceLock = vi.fn()
+
+// Installed-copy policy deliberately schedules a process-exit fallback. Keep
+// those timers inside each test instead of leaking them into a later scenario.
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => {
+  vi.clearAllTimers()
+  vi.useRealTimers()
+})
 
 type MockChildProcess = EventEmitter & { pid?: number; unref: () => void }
 

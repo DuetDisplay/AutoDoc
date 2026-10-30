@@ -36,6 +36,37 @@ vi.mock('electron-store', () => {
 import { AnalyticsStateStore } from '../analytics-state-store'
 
 describe('AnalyticsStateStore', () => {
+  it('claims one pending download across windows, persists acknowledgement and allows a later version', () => {
+    const store = new AnalyticsStateStore()
+    expect(store.recordPendingUpdateDownload('1.3.2')).toBe(true)
+    const report = store.claimPendingUpdateDownload(1)!
+    expect(report.version).toBe('1.3.2')
+    expect(store.recordPendingUpdateDownload('1.3.2')).toBe(false)
+    expect(store.claimPendingUpdateDownload(2)).toBeNull()
+    expect(store.acknowledgePendingUpdateDownload(report, 2)).toBe(false)
+    expect(store.acknowledgePendingUpdateDownload(report, 1)).toBe(true)
+    const restarted = new AnalyticsStateStore()
+    expect(restarted.claimPendingUpdateDownload(1)).toBeNull()
+    expect(restarted.recordPendingUpdateDownload('1.3.2')).toBe(false)
+    expect(restarted.recordPendingUpdateDownload('1.3.3')).toBe(true)
+    expect(restarted.claimPendingUpdateDownload(2)?.version).toBe('1.3.3')
+  })
+
+  it('retains unacknowledged downloads across restarts and replaces them when another version arrives', () => {
+    const store = new AnalyticsStateStore()
+    store.recordPendingUpdateDownload('1.3.2')
+    const report = store.claimPendingUpdateDownload(1)!
+    store.releasePendingUpdateDownload(2)
+    expect(store.claimPendingUpdateDownload(2)).toBeNull()
+    store.releasePendingUpdateDownload(1)
+    expect(store.claimPendingUpdateDownload(2)).toEqual(report)
+    const restarted = new AnalyticsStateStore()
+    expect(restarted.claimPendingUpdateDownload(3)).toEqual(report)
+    restarted.recordPendingUpdateDownload('1.3.3')
+    expect(restarted.acknowledgePendingUpdateDownload(report, 3)).toBe(false)
+    expect(restarted.claimPendingUpdateDownload(4)?.version).toBe('1.3.3')
+    expect(restarted.recordPendingUpdateDownload('invalid')).toBe(false)
+  })
   beforeEach(() => {
     electronStoreState.data = null
     vi.useFakeTimers()

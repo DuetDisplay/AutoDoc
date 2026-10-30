@@ -201,6 +201,37 @@ describe('Auto-updater validity characterization', () => {
     )
   })
 
+  it('flags disk-full updater failures with errorKind for the renderer', () => {
+    initAutoUpdater()
+    const errorHandler = on.mock.calls.find(([eventName]) => eventName === 'error')?.[1] as
+      | ((error: Error) => void)
+      | undefined
+
+    errorHandler?.(new Error('ditto: /Applications/AutoDoc.app/Contents: No space left on device'))
+
+    expect(send).toHaveBeenLastCalledWith(
+      'updater:status',
+      expect.objectContaining({
+        state: 'error',
+        errorKind: 'disk-full',
+        error: expect.stringContaining('No space left on device')
+      })
+    )
+  })
+
+  it('does not set errorKind for other updater failures', () => {
+    initAutoUpdater()
+    const errorHandler = on.mock.calls.find(([eventName]) => eventName === 'error')?.[1] as
+      | ((error: Error) => void)
+      | undefined
+
+    errorHandler?.(new Error('404 Not Found'))
+
+    const status = send.mock.calls.at(-1)?.[1] as Record<string, unknown>
+    expect(status.state).toBe('error')
+    expect(status).not.toHaveProperty('errorKind')
+  })
+
   it('keeps startup alive when updater initialization rejects the app version', () => {
     setThrowOnConfigure(true)
 
@@ -307,6 +338,34 @@ describe('Auto-updater validity characterization', () => {
       state: 'downloaded',
       version: '0.1.24'
     })
+  })
+
+  it('persists the downloaded version before notifying renderer windows', () => {
+    const recordUpdateDownload = vi.fn()
+    initAutoUpdater({ recordUpdateDownload })
+    const downloaded = on.mock.calls.find(
+      ([event]) => event === 'update-downloaded'
+    )?.[1] as (info: { version: string }) => void
+    downloaded({ version: '1.3.2' })
+    expect(recordUpdateDownload).toHaveBeenCalledWith('1.3.2')
+    expect(recordUpdateDownload.mock.invocationCallOrder[0]).toBeLessThan(
+      send.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('keeps update delivery functional when pending analytics cannot be persisted', () => {
+    const onUpdateDownloaded = vi.fn()
+    initAutoUpdater({
+      recordUpdateDownload: () => {
+        throw new Error('disk unavailable')
+      },
+      onUpdateDownloaded
+    })
+    const downloaded = on.mock.calls.find(
+      ([event]) => event === 'update-downloaded'
+    )?.[1] as (info: { version: string }) => void
+    expect(() => downloaded({ version: '1.3.2' })).not.toThrow()
+    expect(onUpdateDownloaded).toHaveBeenCalledWith({ state: 'downloaded', version: '1.3.2' })
   })
 
   it('prepares the app to fully quit before installing an update', () => {

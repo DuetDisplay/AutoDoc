@@ -184,6 +184,103 @@ describe('memory failure guidance', () => {
     expect(screen.queryByText('Not enough memory')).not.toBeInTheDocument()
   })
 
+  it('shows a disk-full callout for a failed transcription and retries it', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'failed')
+    api.setHandler('transcription:get-error-code', 'disk-full')
+    api.setHandler('segmentation:get-status', 'pending')
+    api.setHandler('transcription:retry', () =>
+      api.setHandler('transcription:get-status', 'queued')
+    )
+    await renderMeetingDetail()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Not enough disk space. Free up space and try again.'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Retry transcription', exact: true }))
+    expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows the disk-full callout for failed notes and retries notes', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'complete')
+    api.setHandler('segmentation:get-status', 'failed')
+    api.setHandler('segmentation:get-error-code', 'disk-full')
+    api.setHandler('segmentation:retry', () => api.setHandler('segmentation:get-status', 'queued'))
+    await renderMeetingDetail()
+    expect(screen.getByRole('alert')).toHaveTextContent('Not enough disk space.')
+    await userEvent.click(screen.getByRole('button', { name: 'Retry notes', exact: true }))
+    expect(api.invoke).toHaveBeenCalledWith('segmentation:retry', 'test-123')
+  })
+
+  it('does not show the disk-full callout for other transcription error codes', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'failed')
+    api.setHandler('transcription:get-error-code', 'unknown')
+    api.setHandler('segmentation:get-status', 'pending')
+    await renderMeetingDetail()
+    expect(screen.queryByText(/Not enough disk space/)).not.toBeInTheDocument()
+  })
+
+  it('lets the memory callout win over disk-full', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'failed')
+    api.setHandler('transcription:get-error-code', 'disk-full')
+    api.setHandler('transcription:get-memory-failure', {})
+    api.setHandler('segmentation:get-status', 'pending')
+    await renderMeetingDetail()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent('free RAM')
+    expect(screen.queryByText(/Not enough disk space/)).not.toBeInTheDocument()
+  })
+
+  it('shows the CPU line only while transcribing on CPU, with an accessible info popup', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'transcribing')
+    api.setHandler('transcription:get-cpu-fallback', true)
+    await renderMeetingDetail()
+    expect(screen.getByText('Using CPU for this recording')).toBeInTheDocument()
+    const info = screen.getByRole('button', { name: 'Why is this taking longer?' })
+    expect(screen.getByText('This transcription will take longer than usual.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    info.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(screen.getByRole('dialog', { name: 'Why is this taking longer?' })).toHaveTextContent(
+      'switched to the main processor'
+    )
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(info).toHaveFocus()
+    await userEvent.click(info)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await userEvent.click(document.body)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    act(() =>
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'complete',
+        cpuFallback: true
+      })
+    )
+    expect(screen.queryByText('Using CPU for this recording')).not.toBeInTheDocument()
+  })
+
+  it('shows the CPU line from a live status event and hides it without cpuFallback', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'transcribing')
+    await renderMeetingDetail()
+    expect(screen.queryByText('Using CPU for this recording')).not.toBeInTheDocument()
+    act(() =>
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'transcribing',
+        cpuFallback: true
+      })
+    )
+    expect(screen.getByText('Using CPU for this recording')).toBeInTheDocument()
+  })
+
   it('preserves the generic failure UI for failures without memory evidence', async () => {
     const api = window.electronAPI as unknown as MockElectronAPI
     api.setHandler('transcription:get-status', 'failed')
@@ -397,9 +494,11 @@ describe('MeetingDetail', () => {
     await user.click(screen.getByText('Transcript'))
     const video = document.querySelector('video')
     expect(video).toBeInTheDocument()
-    expect(video).toHaveAttribute('controls')
+    expect(video).not.toHaveAttribute('controls')
     expect(video).not.toHaveAttribute('controlsList')
-    expect(screen.queryByRole('button', { name: /full screen/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enter full screen' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Play' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Seek' })).toBeInTheDocument()
     const watermark = screen.getByText(/Meeting notes by/)
     expect(watermark).toHaveTextContent('Meeting notes by AutoDoc')
     expect(watermark.closest('[aria-hidden="true"]')).toHaveClass('pointer-events-none')
@@ -1233,6 +1332,7 @@ describe('MeetingDetail', () => {
       act(() =>
         api.emit('segmentation:status-changed', { meetingId: 'test-123', status: 'queued' })
       )
+      expect(screen.queryByText('Notes couldn’t finish')).not.toBeInTheDocument()
       expect(screen.queryByText('No notes were generated')).not.toBeInTheDocument()
       expect(screen.getByText('Queued for notes')).toBeInTheDocument()
     }

@@ -50,6 +50,14 @@ export class LocalProcessingCoordinator {
     }
   }
 
+  /**
+   * True when a Windows job other than the caller's own is running. The caller
+   * must be inside runWindows, whose promise is already counted in windowsActive.
+   */
+  hasOtherActiveWindowsWork(): boolean {
+    return this.windowsActive.size > 1
+  }
+
   async runExclusive<T>(
     kind: LocalProcessingKind,
     meetingId: string,

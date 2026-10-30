@@ -1,8 +1,12 @@
+import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { NOTES_WRITER_PROGRESS_END, SEGMENT_LABELS } from '../../../shared/constants'
+import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
+import type { MessageKey } from '../../../shared/i18n'
+import { useI18n, useT } from '../services/i18n'
+import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
 import type {
   SegmentCategory,
   Segment,
@@ -21,6 +25,8 @@ import type {
 import { notesFailureKindFromCode, notesUserCopy } from '../../../shared/notes-user-copy'
 import type { MemoryFailure } from '../../../shared/memory-failure'
 import { MemoryFailureCallout } from '../components/MemoryFailureCallout'
+import { DiskFullCallout } from '../components/DiskFullCallout'
+import { CpuFallbackNotice } from '../components/CpuFallbackNotice'
 import { TranscriptView } from '../components/TranscriptView'
 import { NotesV2Document } from '../components/NotesV2Document'
 import { useMeetingSpan } from '../hooks/useMeetingSpan'
@@ -31,6 +37,7 @@ import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
 import { MeetingExportMenu } from '../components/MeetingExportMenu'
+import { MediaPlaybackControls } from '../components/MediaPlaybackControls'
 import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
@@ -77,16 +84,6 @@ function segmentsWriteQueueFor(
   return created
 }
 
-function formatDuration(seconds: number): string {
-  const mins = Math.ceil(seconds / 60)
-  if (mins >= 60) {
-    const h = Math.floor(mins / 60)
-    const m = mins % 60
-    return m > 0 ? `${h}h ${m}m` : `${h}h`
-  }
-  return `${mins}m`
-}
-
 function mergeProgress(
   status: TranscriptionStatus,
   current: number | undefined,
@@ -128,16 +125,17 @@ function NotesGeneratingPlaceholder({
   status: SegmentationStatus
   progress?: number
 }) {
+  const t = useT()
   const label =
     status === 'downloading-model'
-      ? 'Setting up the local AI model...'
+      ? t('meeting.settingUpModel')
       : status === 'queued'
-        ? 'Queued for notes...'
+        ? t('meeting.queuedForNotes')
         : progress == null
-          ? 'Preparing notes...'
+          ? t('meeting.preparingNotes')
           : progress >= NOTES_WRITER_PROGRESS_END
-            ? 'Shaping notes...'
-            : 'Generating notes...'
+            ? t('meeting.shapingNotes')
+            : t('meeting.generatingNotes')
 
   return (
     <div
@@ -156,8 +154,7 @@ function NotesGeneratingPlaceholder({
         )}
       </div>
       <p className="mt-1 pl-[18px] text-[11.5px] leading-relaxed text-ink-faint">
-        AutoDoc is writing structured notes from the transcript, right on this device. This can take
-        a few minutes for longer meetings.
+        {t('meeting.writingNotes')}
       </p>
       {status === 'segmenting' && progress != null && (
         <div className="mt-3 ml-[18px] h-1 overflow-hidden rounded-full bg-bg-accent">
@@ -203,16 +200,20 @@ function EditableText({
   value,
   onSave,
   className,
+  truncate = false,
   as: Tag = 'span'
 }: {
   value: string
   onSave: (newValue: string) => void
   className?: string
+  truncate?: boolean
   as?: 'span' | 'div'
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const textRef = useRef<HTMLElement>(null)
+  const restoreFocusRef = useRef(false)
 
   useEffect(() => {
     setDraft(value)
@@ -225,6 +226,9 @@ function EditableText({
       // Auto-resize
       inputRef.current.style.height = 'auto'
       inputRef.current.style.height = inputRef.current.scrollHeight + 'px'
+    } else if (!editing && restoreFocusRef.current) {
+      restoreFocusRef.current = false
+      textRef.current?.focus({ preventScroll: true })
     }
   }, [editing])
 
@@ -239,11 +243,15 @@ function EditableText({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      restoreFocusRef.current = true
       inputRef.current?.blur()
     }
     if (e.key === 'Escape') {
+      e.preventDefault()
+      restoreFocusRef.current = true
       setDraft(value)
       setEditing(false)
     }
@@ -269,8 +277,20 @@ function EditableText({
 
   return (
     <Tag
+      ref={(element) => {
+        textRef.current = element
+      }}
+      role="button"
+      tabIndex={0}
+      title={value}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setEditing(true)
+        }
+      }}
       onClick={() => setEditing(true)}
-      className={`${className} cursor-text hover:bg-bg-accent/60 rounded px-0.5 -mx-0.5 transition-colors`}
+      className={`${className} ${truncate ? 'line-clamp-2' : ''} cursor-text hover:bg-bg-accent/60 rounded px-0.5 -mx-0.5 transition-colors focus-visible:outline-2 focus-visible:outline-sage`}
     >
       {value}
     </Tag>
@@ -278,7 +298,24 @@ function EditableText({
 }
 
 export function MeetingDetail() {
+  const { t, language } = useI18n()
   const { id } = useParams<{ id: string }>()
+  const titleLanguageRef = useRef(language)
+  useEffect(() => {
+    if (titleLanguageRef.current === language) return
+    titleLanguageRef.current = language
+    let cancelled = false
+    if (id)
+      void window.electronAPI
+        .invoke('recording:get-detail', id)
+        .then((next) => {
+          if (!cancelled) setDetail(next)
+        })
+        .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id, language])
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const initialTab = (searchParams.get('tab') as Tab) || 'notes'
@@ -289,6 +326,8 @@ export function MeetingDetail() {
   const [reprocessFailed, setReprocessFailed] = useState(false)
   const [transcriptionMemoryFailure, setTranscriptionMemoryFailure] = useState<MemoryFailure>()
   const [segmentationMemoryFailure, setSegmentationMemoryFailure] = useState<MemoryFailure>()
+  const [transcriptionErrorCode, setTranscriptionErrorCode] = useState<string | undefined>()
+  const [transcriptionCpuFallback, setTranscriptionCpuFallback] = useState(false)
   const transcriptionEventRevisionRef = useRef(0)
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [transcriptionBackendLabel, setTranscriptionBackendLabel] = useState<string | undefined>()
@@ -323,6 +362,7 @@ export function MeetingDetail() {
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const transcriptTopRef = useRef<HTMLDivElement | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  const videoContainerRef = useRef<HTMLDivElement | null>(null)
   const videoWatermarkRef = useRef<HTMLDivElement | null>(null)
   /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
   const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
@@ -788,8 +828,8 @@ export function MeetingDetail() {
         meetingId: id,
         category,
         topic: null,
-        title: 'New item',
-        content: 'Add details here...',
+        title: t('ui.newItem'),
+        content: t('ui.addDetailsHere'),
         assignee: null,
         deadline: null,
         sourceStartMs: 0,
@@ -801,7 +841,7 @@ export function MeetingDetail() {
       }
       saveSegments(updated)
     },
-    [segments, id, saveSegments]
+    [segments, id, saveSegments, t]
   )
 
   useEffect(() => {
@@ -815,8 +855,10 @@ export function MeetingDetail() {
     setTranscriptionMemoryFailure(undefined)
     setSegmentationMemoryFailure(undefined)
 
-    const refreshDetail = () =>
-      window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
+    const refreshDetail = () => {
+      const requestedLanguage = titleLanguageRef.current
+      return window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
+        if (cancelled || requestedLanguage !== titleLanguageRef.current) return
         console.info('[meeting-detail] refreshDetail resolved', {
           at: new Date().toISOString(),
           meetingId: id,
@@ -828,6 +870,7 @@ export function MeetingDetail() {
           setVideoRetryPending(false)
         }
       })
+    }
     const refreshMedia = () => window.electronAPI.invoke('recording:get-media', id).then(setMedia)
 
     refreshDetail()
@@ -840,7 +883,9 @@ export function MeetingDetail() {
       window.electronAPI.invoke('segmentation:get-error-code', id),
       window.electronAPI.invoke('segmentation:get-activity', id),
       window.electronAPI.invoke('transcription:get-memory-failure', id),
-      window.electronAPI.invoke('segmentation:get-memory-failure', id)
+      window.electronAPI.invoke('segmentation:get-memory-failure', id),
+      window.electronAPI.invoke('transcription:get-error-code', id),
+      window.electronAPI.invoke('transcription:get-cpu-fallback', id)
     ]).then(
       ([
         status,
@@ -850,7 +895,9 @@ export function MeetingDetail() {
         nextSegmentationErrorCode,
         nextSegmentationActivity,
         nextTranscriptionMemoryFailure,
-        nextSegmentationMemoryFailure
+        nextSegmentationMemoryFailure,
+        nextTranscriptionErrorCode,
+        nextTranscriptionCpuFallback
       ]) => {
         if (cancelled) return
 
@@ -860,6 +907,8 @@ export function MeetingDetail() {
           setTranscriptionMemoryFailure(
             status === 'failed' ? nextTranscriptionMemoryFailure : undefined
           )
+          setTranscriptionErrorCode(status === 'failed' ? nextTranscriptionErrorCode : undefined)
+          setTranscriptionCpuFallback(nextTranscriptionCpuFallback === true)
         }
         if (segmentationEventRevisionRef.current === initialSegmentationRevision) {
           setSegmentationMemoryFailure(
@@ -869,8 +918,8 @@ export function MeetingDetail() {
           setSegmentationProgress(nextSegmentationProgress)
           setSegmentationErrorCode(
             nextSegmentationStatus === 'failed' ||
-            nextSegmentationStatus === 'complete' ||
-            nextSegmentationStatus === 'no-notes'
+              nextSegmentationStatus === 'complete' ||
+              nextSegmentationStatus === 'no-notes'
               ? nextSegmentationErrorCode
               : undefined
           )
@@ -919,6 +968,8 @@ export function MeetingDetail() {
         setTranscriptionMemoryFailure(
           payload.status === 'failed' ? payload.memoryFailure : undefined
         )
+        setTranscriptionErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
+        setTranscriptionCpuFallback(payload.cpuFallback === true)
         setTranscriptionStatus(payload.status)
         if (isWindowsRenderer()) setReprocessFailed(payload.reprocessFailed === true)
         setTranscriptionProgress((current) =>
@@ -941,7 +992,9 @@ export function MeetingDetail() {
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
         setSegmentationErrorCode(
-          payload.status === 'failed' || payload.status === 'complete' || payload.status === 'no-notes'
+          payload.status === 'failed' ||
+            payload.status === 'complete' ||
+            payload.status === 'no-notes'
             ? payload.errorCode
             : undefined
         )
@@ -1098,12 +1151,28 @@ export function MeetingDetail() {
       }
     />
   ) : null
+  const showTranscriptionDiskFull =
+    !showMemoryCallout && transcriptionStatus === 'failed' && transcriptionErrorCode === 'disk-full'
+  const showNotesDiskFull =
+    !showMemoryCallout && segmentationStatus === 'failed' && segmentationErrorCode === 'disk-full'
+  const showDiskFullCallout = showTranscriptionDiskFull || showNotesDiskFull
+  const diskFullCallout = showDiskFullCallout ? (
+    <DiskFullCallout
+      stage={showTranscriptionDiskFull ? 'transcription' : 'notes'}
+      onRetry={showTranscriptionDiskFull ? handleReprocessTranscript : handleReprocessNotes}
+    />
+  ) : null
+  const showCpuFallbackNotice =
+    transcriptionCpuFallback &&
+    ['queued', 'downloading', 'transcribing', 'diarizing'].includes(transcriptionStatus)
   const failCopy = notesUserCopy(
     notesFailureKindFromCode(
       segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
         ? 'unknown'
-        : segmentationErrorCode ?? (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined)
-    )
+        : (segmentationErrorCode ??
+            (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined))
+    ),
+    language
   )
 
   const notesWriteQueuesRef = useRef<Map<string, NotesWriteQueue>>(new Map())
@@ -1362,10 +1431,10 @@ export function MeetingDetail() {
   const notesActionsDisabled =
     detail?.isFinalizing === true || notesGenerationInFlight || !hasNotesContent
   const notesActionsDisabledReason = detail?.isFinalizing
-    ? 'Notes are available after this recording finishes.'
+    ? t('meeting.exportDisabledAfterRecording')
     : notesGenerationInFlight
-      ? 'Notes are available when generation finishes.'
-      : 'There aren’t any notes to copy or export.'
+      ? t('meeting.exportDisabledGenerating')
+      : t('meeting.exportDisabledEmpty')
 
   const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
     const groups: { topic: string | null; items: Segment[] }[] = []
@@ -1407,18 +1476,18 @@ export function MeetingDetail() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-4">
-        <div className="flex-1 min-w-0">
+      <div className="px-6 py-4 border-b border-border flex flex-wrap items-start justify-between gap-4 min-w-0">
+        <div className="flex-[1_1_14rem] min-w-0 max-w-full">
           <div className="flex items-baseline gap-1.5 text-[12px]">
             <button
               onClick={() => navigate('/recordings')}
               className="text-ink-faint hover:text-ink transition-colors shrink-0"
             >
-              AI Notes
+              {t('recordings.title')}
             </button>
             <span className="text-ink-faint shrink-0">/</span>
             <EditableText
-              value={detail?.title ?? 'Meeting'}
+              value={detail?.title ?? t('common.loading')}
               onSave={(newTitle) => {
                 if (!id) return
                 const meetingId = id
@@ -1434,13 +1503,14 @@ export function MeetingDetail() {
                   'meeting title'
                 )
               }}
+              truncate
               className="text-ink font-semibold flex-1 min-w-0"
             />
           </div>
           {detail && (
-            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
+            <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
               <span>
-                {new Date(detail.date).toLocaleDateString('en-US', {
+                {new Date(detail.date).toLocaleDateString(dateLocaleForUiLanguage(language), {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
@@ -1450,14 +1520,16 @@ export function MeetingDetail() {
               </span>
               {detail.durationSeconds != null && (
                 <>
-                  <span className="text-border">|</span>
-                  <span>{formatDuration(detail.durationSeconds)}</span>
+                  <span aria-hidden="true" className="text-border">
+                    |
+                  </span>
+                  <span>{formatUiDuration(language, detail.durationSeconds)}</span>
                 </>
               )}
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
           <TranscriptionBadge
             status={transcriptionStatus}
             hasMemoryFailure={transcriptionMemoryFailure != null}
@@ -1475,28 +1547,34 @@ export function MeetingDetail() {
         </div>
       </div>
 
+      {showCpuFallbackNotice && <CpuFallbackNotice />}
+
       {/* Tabs */}
       {isWindowsRenderer() && reprocessFailed && (
         <p
           role="status"
           className="mb-3 rounded-lg border border-border-subtle px-3 py-2 text-sm text-ink-muted"
         >
-          Reprocessing failed. Your previous transcript and notes are still available.
+          {t('meeting.reprocessFailed')}
         </p>
       )}
-      <div className="flex items-end justify-between gap-4 border-b border-border px-6">
-        <div className="flex">
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border px-6">
+        <div className="flex max-w-full flex-wrap">
           {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-3.5 py-2.5 text-[11.5px] font-semibold transition-colors ${
+              className={`shrink-0 px-3.5 py-2.5 text-[11.5px] font-semibold [hyphens:none] transition-colors ${
                 activeTab === tab
                   ? 'text-ink border-b-2 border-ink -mb-px'
                   : 'text-ink-faint hover:text-ink-muted'
               }`}
             >
-              {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
+              {tab === 'notes'
+                ? t('meeting.notes')
+                : tab === 'transcript'
+                  ? t('meeting.transcript')
+                  : t('meeting.settings')}
             </button>
           ))}
         </div>
@@ -1514,7 +1592,7 @@ export function MeetingDetail() {
       <div ref={contentScrollRef} className="flex-1 overflow-y-auto p-6" data-content-scroll>
         {detail?.isFinalizing && (
           <div className="mb-4 rounded-xl border border-border bg-bg-card px-4 py-3 text-[12px] text-ink-muted">
-            Wrapping up this recording. It should finish appearing in a moment.
+            {t('meeting.wrappingUp')}
           </div>
         )}
         {activeTab === 'notes' ? (
@@ -1524,11 +1602,11 @@ export function MeetingDetail() {
               segmentationActivity?.activity === 'waiting-for-local-ai' && (
                 <div
                   role="status"
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-snug text-amber-900"
+                  className="flex items-center gap-2 rounded-lg border border-clay/30 bg-clay-light px-3 py-2 text-[11.5px] leading-snug text-clay-dark"
                 >
                   <svg
                     aria-hidden="true"
-                    className="h-3.5 w-3.5 shrink-0 text-amber-700"
+                    className="h-3.5 w-3.5 shrink-0 text-clay-dark"
                     viewBox="0 0 20 20"
                     fill="none"
                     stroke="currentColor"
@@ -1538,53 +1616,58 @@ export function MeetingDetail() {
                     <path d="M10 6.5v3.9l2.6 1.5" />
                   </svg>
                   <p>
-                    <span className="font-semibold">Notes are taking longer than usual.</span>{' '}
-                    AutoDoc is still waiting for the local AI model to respond.
+                    <span className="font-semibold">{t('meeting.notesSlowTitle')}</span>{' '}
+                    {t('meeting.notesSlowBody')}
                   </p>
                 </div>
               )}
             {memoryCallout}
-            {!showMemoryCallout && (showHardFailCallout || layoutDegraded) && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
-                    <svg
-                      aria-hidden="true"
-                      className="h-4 w-4"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    >
-                      <path d="M5.75 2.75h5.5l3 3v9.5a2 2 0 0 1-2 2h-6.5a2 2 0 0 1-2-2V4.75a2 2 0 0 1 2-2Z" />
-                      <path d="M11.25 2.75v3h3M9 8.5v3.25M9 14h.01" />
-                    </svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-[13px] font-semibold text-ink">
-                      {layoutDegraded ? notesUserCopy('layout').title : failCopy.title}
-                    </h3>
-                    <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
-                      {layoutDegraded ? notesUserCopy('layout').body : failCopy.body}
-                    </p>
-                    <div className="flex items-center gap-2 mt-3">
-                      <button
-                        onClick={handleReprocessNotes}
-                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
+            {diskFullCallout}
+            {!showMemoryCallout &&
+              !showDiskFullCallout &&
+              (showHardFailCallout || layoutDegraded) && (
+                <div className="rounded-xl border border-clay/30 bg-clay-light px-4 py-3.5">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-clay/30 bg-bg-card text-clay-dark">
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
                       >
-                        {segmentationErrorCode === 'scan_or_persist' ? 'Regenerate notes' : 'Try again'}
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('transcript')}
-                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
-                      >
-                        View transcript
-                      </button>
+                        <path d="M5.75 2.75h5.5l3 3v9.5a2 2 0 0 1-2 2h-6.5a2 2 0 0 1-2-2V4.75a2 2 0 0 1 2-2Z" />
+                        <path d="M11.25 2.75v3h3M9 8.5v3.25M9 14h.01" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-[13px] font-semibold text-ink">
+                        {layoutDegraded ? notesUserCopy('layout', language).title : failCopy.title}
+                      </h3>
+                      <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
+                        {layoutDegraded ? notesUserCopy('layout', language).body : failCopy.body}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <button
+                          onClick={handleReprocessNotes}
+                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+                        >
+                          {segmentationErrorCode === 'scan_or_persist'
+                            ? t('meeting.regenerateNotes')
+                            : t('meeting.tryAgain')}
+                        </button>
+                        <button
+                          onClick={() => setActiveTab('transcript')}
+                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
+                        >
+                          {t('meeting.viewTranscript')}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
             {notesV2 && segmentationStatus === 'complete' && !layoutDegraded ? (
               <>
                 <NotesV2Document
@@ -1612,12 +1695,12 @@ export function MeetingDetail() {
                 <div className="bg-bg-card border border-border rounded-xl px-5 py-8 text-center">
                   <p className="text-[12.5px] font-medium text-ink-muted">
                     {segmentationStatus === 'pending'
-                      ? 'Notes will appear here once the transcript is ready.'
-                      : 'No notes for this meeting yet.'}
+                      ? t('meeting.notesWhenReady')
+                      : t('meeting.noNotesYet')}
                   </p>
                   {segmentationStatus !== 'pending' && (
                     <p className="mt-1 text-[11.5px] text-ink-faint">
-                      You can generate them from Settings → Notes → Reprocess.
+                      {t('meeting.generateFromSettings')}
                     </p>
                   )}
                 </div>
@@ -1632,7 +1715,7 @@ export function MeetingDetail() {
                       <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-ink" />
                         <span className="text-[11px] font-bold text-ink tracking-[0.03em] uppercase">
-                          {SEGMENT_LABELS[category]}
+                          {t(`segment.${category}` as MessageKey)}
                         </span>
                         {items.length > 0 && (
                           <span className="text-[10px] text-ink-faint ml-1">({items.length})</span>
@@ -1643,21 +1726,21 @@ export function MeetingDetail() {
                           onClick={() => addSegment(category)}
                           className="text-[11px] text-ink-faint hover:text-sage transition-colors"
                         >
-                          + Add
+                          {t('meeting.add')}
                         </button>
                       )}
                     </div>
                     {items.length === 0 ? (
                       <p className="text-[12px] text-ink-muted leading-relaxed">
                         {segmentationStatus === 'segmenting'
-                          ? 'Analyzing transcript...'
+                          ? t('meeting.analyzingTranscript')
                           : segmentationStatus === 'no-notes'
-                            ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
+                            ? t('meeting.noStructuredNotes')
                             : segmentationStatus === 'failed'
                               ? segmentationErrorCode === 'ollama-insufficient-memory'
-                                ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
-                                : 'Segmentation failed. Try retrying above.'
-                              : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
+                                ? t('meeting.ollamaMemory')
+                                : t('meeting.segmentationFailed')
+                              : t('ui.noItemsYet')}
                       </p>
                     ) : (
                       <div className="flex flex-col gap-3">
@@ -1693,18 +1776,24 @@ export function MeetingDetail() {
                                           item.sourceStartMs > 0 && (
                                             <button
                                               onClick={() => seekToSegment(item.sourceStartMs)}
-                                              className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
-                                              title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
+                                              aria-label={t('ui.jumpToTime', {
+                                                time: formatTimestamp(item.sourceStartMs)
+                                              })}
+                                              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage rounded text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
+                                              title={t('ui.jumpToTime', {
+                                                time: formatTimestamp(item.sourceStartMs)
+                                              })}
                                             >
                                               ▶ {formatTimestamp(item.sourceStartMs)}
                                             </button>
                                           )}
                                         <button
                                           onClick={() => deleteSegment(category, globalIndex)}
-                                          className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
-                                          title="Delete"
+                                          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage rounded text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                                          aria-label={t('common.delete')}
+                                          title={t('common.delete')}
                                         >
-                                          &times;
+                                          ×
                                         </button>
                                       </div>
                                     </div>
@@ -1720,12 +1809,14 @@ export function MeetingDetail() {
                                       <div className="flex gap-3 mt-0.5">
                                         {item.assignee && (
                                           <span className="text-[11px] text-ink-faint">
-                                            Owner: {item.assignee}
+                                            {t('ui.owner3')}
+                                            {item.assignee}
                                           </span>
                                         )}
                                         {item.deadline && (
                                           <span className="text-[11px] text-ink-faint">
-                                            Due: {item.deadline}
+                                            {t('ui.due')}
+                                            {item.deadline}
                                           </span>
                                         )}
                                       </div>
@@ -1746,62 +1837,63 @@ export function MeetingDetail() {
           <div className="flex flex-col gap-4">
             {(detail?.videoStatus === 'processing' || videoRetryPending) && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted animate-pulse">Finishing up your video…</p>
+                <p className="text-[13px] text-ink-muted">{t('ui.finishingUpYourVideo')}</p>
                 <p className="text-[11.5px] text-ink-faint mt-1">
-                  Your transcript and notes are ready to use.
+                  {t('ui.yourTranscriptAndNotesAreReadyToUse')}
                 </p>
               </div>
             )}
             {detail?.videoStatus === 'failed' && !videoRetryPending && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted">Video processing failed</p>
+                <p className="text-[13px] text-ink-muted">{t('ui.videoProcessingFailed')}</p>
                 <button
                   onClick={handleRetryVideo}
                   className="mt-3 text-[11.5px] font-semibold text-sage hover:text-ink transition-colors"
                 >
-                  Retry
+                  {t('ui.retry')}
                 </button>
               </div>
             )}
             {media?.hasVideo && media.mediaBaseUrl && (
-              <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
-                <div className="relative">
+              <div
+                ref={videoContainerRef}
+                data-video-player
+                className="bg-bg-card border border-border rounded-xl overflow-hidden"
+              >
+                <div data-video-viewport className="relative">
                   <video
                     ref={mediaRef as React.RefObject<HTMLVideoElement>}
-                    controls
+                    aria-label={t('media.video')}
                     className="block w-full"
                     src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
                     onError={reportRendererMediaError('video')}
                   />
                   {videoWatermarkVisible && <VideoWatermarkOverlay ref={videoWatermarkRef} />}
                 </div>
-                <div className="flex justify-end px-3 py-1.5 border-t border-border">
-                  <button
-                    onClick={cyclePlaybackRate}
-                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors"
-                  >
-                    {playbackRate}x
-                  </button>
-                </div>
+                <MediaPlaybackControls
+                  mediaRef={mediaRef}
+                  sourceKey={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
+                  playbackRate={playbackRate}
+                  onCyclePlaybackRate={cyclePlaybackRate}
+                  fullscreenTarget={videoContainerRef}
+                />
               </div>
             )}
             {media?.hasAudio && !media?.hasVideo && media.mediaBaseUrl && (
-              <div className="bg-bg-card border border-border rounded-xl p-4">
-                <div className="flex items-center gap-3">
-                  <audio
-                    ref={mediaRef as React.RefObject<HTMLAudioElement>}
-                    controls
-                    className="flex-1"
-                    src={`${media.mediaBaseUrl}/media/${id}/${media?.audioFile ?? 'audio.webm'}`}
-                    onError={reportRendererMediaError('audio')}
-                  />
-                  <button
-                    onClick={cyclePlaybackRate}
-                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors shrink-0"
-                  >
-                    {playbackRate}x
-                  </button>
-                </div>
+              <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
+                <audio
+                  ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                  aria-label={t('media.audio')}
+                  className="hidden"
+                  src={`${media.mediaBaseUrl}/media/${id}/${media.audioFile ?? 'audio.webm'}`}
+                  onError={reportRendererMediaError('audio')}
+                />
+                <MediaPlaybackControls
+                  mediaRef={mediaRef}
+                  sourceKey={`${media.mediaBaseUrl}/media/${id}/${media.audioFile ?? 'audio.webm'}`}
+                  playbackRate={playbackRate}
+                  onCyclePlaybackRate={cyclePlaybackRate}
+                />
               </div>
             )}
             {detail?.videoCaptureEndedEarly && <VideoCaptureWarning variant="saved" />}
@@ -1814,6 +1906,8 @@ export function MeetingDetail() {
             )}
             {showTranscriptionMemoryFailure ? (
               memoryCallout
+            ) : showTranscriptionDiskFull ? (
+              diskFullCallout
             ) : (
               <TranscriptView
                 segments={transcript}
@@ -1830,17 +1924,19 @@ export function MeetingDetail() {
             {/* Reprocess section */}
             <div className="bg-bg-card border border-border rounded-xl p-5">
               <h3 className="text-[12px] font-bold text-ink tracking-[0.03em] uppercase mb-1">
-                Reprocess
+                {t('meeting.reprocess')}
               </h3>
               <p className="text-[11.5px] text-ink-muted mb-4">
-                Re-run transcription or note generation from the original audio.
+                {t('ui.reRunTranscriptionOrNoteGenerationFromTheOriginalAudio')}
               </p>
               <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[12.5px] font-semibold text-ink">Transcript</div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
+                    <div className="text-[12.5px] font-semibold text-ink">
+                      {t('meeting.transcript')}
+                    </div>
                     <div className="text-[11px] text-ink-faint">
-                      Re-transcribe audio and regenerate notes from the new transcript
+                      {t('meeting.reprocessTranscriptHint')}
                     </div>
                   </div>
                   <button
@@ -1851,21 +1947,21 @@ export function MeetingDetail() {
                       transcriptionStatus === 'downloading' ||
                       transcriptionStatus === 'diarizing'
                     }
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="i18n-btn shrink-0 px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
-                      ? 'Processing...'
+                      ? t('meeting.processing')
                       : transcriptionStatus === 'queued' || transcriptionStatus === 'downloading'
-                        ? 'Queued...'
-                        : 'Reprocess'}
+                        ? t('meeting.queued')
+                        : t('meeting.reprocess')}
                   </button>
                 </div>
                 <div className="border-t border-border" />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[12.5px] font-semibold text-ink">Notes</div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
+                    <div className="text-[12.5px] font-semibold text-ink">{t('meeting.notes')}</div>
                     <div className="text-[11px] text-ink-faint">
-                      Regenerate AI notes from the existing transcript
+                      {t('meeting.reprocessNotesHint')}
                     </div>
                   </div>
                   <button
@@ -1876,14 +1972,14 @@ export function MeetingDetail() {
                       segmentationStatus === 'queued' ||
                       segmentationStatus === 'downloading-model'
                     }
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="i18n-btn shrink-0 px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {segmentationStatus === 'segmenting'
-                      ? 'Processing...'
+                      ? t('meeting.processing')
                       : segmentationStatus === 'queued' ||
                           segmentationStatus === 'downloading-model'
-                        ? 'Queued...'
-                        : 'Reprocess'}
+                        ? t('meeting.queued')
+                        : t('meeting.reprocess')}
                   </button>
                 </div>
               </div>
@@ -1892,36 +1988,38 @@ export function MeetingDetail() {
             {/* Danger zone */}
             <div className="bg-bg-card border border-clay/20 rounded-xl p-5">
               <h3 className="text-[12px] font-bold text-clay tracking-[0.03em] uppercase mb-1">
-                Danger Zone
+                {t('meeting.dangerZone')}
               </h3>
-              <p className="text-[11.5px] text-ink-muted mb-4">This action cannot be undone.</p>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-[12.5px] font-semibold text-ink">Delete recording</div>
+              <p className="text-[11.5px] text-ink-muted mb-4">{t('meeting.cannotUndo')}</p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-[1_1_12rem]">
+                  <div className="text-[12.5px] font-semibold text-ink">
+                    {t('meeting.deleteRecording')}
+                  </div>
                   <div className="text-[11px] text-ink-faint">
-                    Permanently remove all audio, video, transcript, and notes
+                    {t('meeting.deleteRecordingHint')}
                   </div>
                 </div>
                 {!showDeleteConfirm ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay hover:bg-clay/20 transition-colors"
+                    className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark hover:bg-clay-light transition-colors"
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 ) : (
-                  <div className="flex items-center gap-2">
+                  <div className="flex max-w-full flex-wrap items-center gap-2">
                     <button
                       onClick={() => setShowDeleteConfirm(false)}
                       className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg text-ink-faint hover:text-ink transition-colors"
                     >
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                     <button
                       onClick={handleDelete}
-                      className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-white hover:bg-clay/90 transition-colors"
+                      className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-on-brand hover:bg-clay/90 transition-colors"
                     >
-                      Confirm Delete
+                      {t('meeting.confirmDelete')}
                     </button>
                   </div>
                 )}

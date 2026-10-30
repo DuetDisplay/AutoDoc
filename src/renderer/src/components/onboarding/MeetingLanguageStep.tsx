@@ -1,3 +1,6 @@
+import type { MessageKey } from '../../../../shared/i18n'
+import { useT } from '../../services/i18n'
+import { isUiLanguageCode } from '../../../../shared/ui-language'
 import { useEffect, useState } from 'react'
 import {
   defaultMeetingLanguageForLocale,
@@ -12,30 +15,35 @@ import { formatMeetingLanguageFirstUseDownload } from '../../services/format-byt
 import { useOnlineStatus } from '../../hooks/useOnlineStatus'
 
 export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
+  const t = useT()
+
   const online = useOnlineStatus()
   const [availability, setAvailability] = useState<MeetingLanguageAvailability | null>(null)
   const [language, setLanguage] = useState<MeetingLanguageCode>('en')
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<MessageKey | null>(null)
 
   const load = async () => {
     setError(null)
     try {
-      const [available, saved, confirmed, locale] = await Promise.all([
+      const [available, saved, confirmed, locale, uiLanguage] = await Promise.all([
         loadMeetingLanguageAvailability(),
         window.electronAPI.invoke('prefs:get-meeting-language'),
         window.electronAPI.invoke('prefs:get-onboarding-language-confirmed'),
-        window.electronAPI.invoke('app:get-locale')
+        window.electronAPI.invoke('app:get-locale'),
+        window.electronAPI.invoke('prefs:get-ui-language')
       ])
       const previous = normalizeMeetingLanguage(saved)
       setLanguage(
         confirmed && isMeetingLanguageAvailable(previous, available)
           ? previous
-          : defaultMeetingLanguageForLocale(locale || navigator.language, available)
+          : isUiLanguageCode(uiLanguage) && isMeetingLanguageAvailable(uiLanguage, available)
+            ? uiLanguage
+            : defaultMeetingLanguageForLocale(locale || navigator.language, available)
       )
       setAvailability(available)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load meeting languages.')
+    } catch {
+      setError('ui.couldNotLoadMeetingLanguages')
     }
   }
 
@@ -50,8 +58,8 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
       await window.electronAPI.invoke('prefs:set-meeting-language', language)
       await window.electronAPI.invoke('prefs:confirm-onboarding-language')
       onNext()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save the meeting language.')
+    } catch {
+      setError('settings.saveMeetingLanguageFailed')
     } finally {
       setSaving(false)
     }
@@ -63,11 +71,10 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="text-center">
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
-        Choose your meeting language
+        {t('onboarding.chooseMeetingLanguage')}
       </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        Choose the language spoken in your meetings. This sets the speech model we download next.
-        You can change it later in Settings.
+        {t('ui.chooseTheLanguageSpokenInYourMeetingsThisSetsTheSpeechModelWeDownloadNextYo')}
       </p>
       {availability && (
         <div className="flex justify-center mb-5">
@@ -84,29 +91,29 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
       {availability?.restricted && (
         <p className="text-[12px] text-ink-muted mb-5">
           {navigator.userAgent.includes('Windows')
-            ? 'Languages other than English need larger AI models than this PC has the memory and processing power to run.'
-            : 'Languages other than English need larger AI models than this Mac’s 8 GB of memory can run.'}
+            ? t('ui.languagesOtherThanEnglishNeedLargerAIModelsThanThisPCHasTheMemoryAndProcess')
+            : t('ui.languagesOtherThanEnglishNeedLargerAIModelsThanThisMacS8GBOfMemoryCanRun')}
         </p>
       )}
       {error && (
         <p role="alert" className="text-[13px] text-clay-dark mb-5">
-          {error}
+          {t(error)}
         </p>
       )}
       {!availability && error ? (
         <button
           onClick={() => void load()}
-          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold"
+          className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold"
         >
-          Retry
+          {t('ui.retry')}
         </button>
       ) : (
         <button
           onClick={() => void continueSetup()}
           disabled={!availability || saving}
-          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
+          className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
         >
-          {saving ? 'Saving…' : availability ? 'Continue' : 'Loading languages…'}
+          {saving ? t('ui.saving') : availability ? t('ui.continue') : t('ui.loadingLanguages')}
         </button>
       )}
     </div>

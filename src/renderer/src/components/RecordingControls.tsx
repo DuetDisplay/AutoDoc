@@ -1,4 +1,6 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
+import { createPortal } from 'react-dom'
+import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
@@ -12,9 +14,7 @@ import {
   findActiveCalendarEvent
 } from '../services/window-detection'
 import { getSavedSourcePreference } from '../services/recording-source-preferences'
-
-const SCREEN_RECORDING_PERMISSION_MESSAGE =
-  'AutoDoc needs Screen Recording access. If you just enabled it, fully quit and reopen AutoDoc, then press Record again.'
+import { useT } from '../services/i18n'
 
 function isUsableImageDataUrl(value: string | null | undefined): value is string {
   if (!value?.startsWith('data:image/')) return false
@@ -106,15 +106,19 @@ export function RecordingControls({
   onStopRecording,
   onFetchSources
 }: RecordingControlsProps): ReactElement {
+  const t = useT()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const pickerTitleId = useId()
   const [loading, setLoading] = useState(false)
   const events = useCalendarStore((state) => state.events)
   const {
     isOpen: showPicker,
-    title,
-    subtitle,
+    titleKey,
+    subtitleKey,
     sources,
     detectedId,
-    suggestionLabel,
+    suggestionLabelKey,
     selectionContext: pickerSelectionContext,
     trigger,
     scoredSourceIds,
@@ -123,6 +127,41 @@ export function RecordingControls({
     openPicker,
     closePicker
   } = useRecordingPickerStore()
+  const placement = useAnchoredPopover(showPicker, triggerRef, 320, 384)
+  const cancelPickerRef = useRef<() => void>(closePicker)
+  useEffect(() => {
+    if (!showPicker) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        cancelPickerRef.current()
+        triggerRef.current?.focus()
+      } else if (event.key === 'Tab') {
+        const buttons =
+          pickerRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
+        if (!buttons?.length) return
+        const first = buttons[0],
+          last = buttons[buttons.length - 1]
+        if (
+          (event.shiftKey && document.activeElement === first) ||
+          (!event.shiftKey && document.activeElement === last)
+        ) {
+          event.preventDefault()
+          ;(event.shiftKey ? last : first).focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      closePicker()
+    }
+  }, [showPicker, closePicker])
+  useEffect(() => {
+    if (showPicker && placement.visibility !== 'hidden')
+      pickerRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+  }, [showPicker, placement.visibility])
   const orderedSources = useMemo(() => {
     if (!detectedId) return sources
 
@@ -152,18 +191,18 @@ export function RecordingControls({
       )
 
       openPicker({
-        title: 'Select a window to record',
+        titleKey: 'recording.selectWindowToRecord',
         selectionContext,
-        subtitle:
+        subtitleKey:
           selection.source && selection.confidence === 'high'
-            ? 'AutoDoc highlighted the most likely meeting window.'
+            ? 'recording.highlightedWindow'
             : null,
         sources: fetchedSources,
         detectedId: selection.source?.id ?? null,
-        suggestionLabel: selection.source
+        suggestionLabelKey: selection.source
           ? selection.confidence === 'high'
-            ? 'Detected meeting'
-            : 'Suggested window'
+            ? 'recording.detectedMeeting'
+            : 'recording.suggestedWindow'
           : null,
         scoredSourceIds: selection.candidateSourceIds,
         diagnosticTrigger: 'manual'
@@ -179,9 +218,11 @@ export function RecordingControls({
       console.warn('Failed to list recording sources:', err)
       useToastStore.getState().showToast({
         type: 'screen',
-        message: SCREEN_RECORDING_PERMISSION_MESSAGE,
+        message: t('recording.screenPermission'),
+        messageKey: 'recording.screenPermission',
         action: {
-          label: 'Open Settings',
+          label: t('upcoming.openSettings'),
+          labelKey: 'upcoming.openSettings',
           type: 'open-settings',
           target: 'screen'
         }
@@ -200,6 +241,7 @@ export function RecordingControls({
     })
     closePicker()
   }
+  cancelPickerRef.current = handleCancelPicker
 
   const handleSourceSelect = (source: RecordingSource): void => {
     const scoredIndex = scoredSourceIds.indexOf(source.id)
@@ -230,9 +272,9 @@ export function RecordingControls({
     return (
       <button
         onClick={onStopRecording}
-        className="text-[11px] font-medium text-white bg-status-recording px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity"
+        className="i18n-btn text-[11px] font-medium text-on-brand bg-status-recording px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity"
       >
-        Stop Recording
+        {t('recording.stopRecording')}
       </button>
     )
   }
@@ -240,43 +282,65 @@ export function RecordingControls({
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
+        aria-haspopup="dialog"
+        aria-expanded={showPicker}
         onClick={handleRecordClick}
         disabled={loading}
-        className="text-[11px] font-medium text-white bg-sage px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+        className="i18n-btn text-[11px] font-medium text-on-brand bg-sage px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
       >
-        {loading ? 'Loading...' : 'Record'}
+        {loading ? t('common.loading') : t('recording.record')}
       </button>
 
-      {showPicker && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
-          <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
-            <p className="text-[11px] font-medium text-ink-muted mb-1">{title}</p>
-            {subtitle && <p className="text-[10px] text-ink-faint mb-2">{subtitle}</p>}
-            <div className="flex flex-col gap-1.5">
-              {orderedSources.map((source) => (
-                <button
-                  key={source.id}
-                  onClick={() => handleSourceSelect(source)}
-                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 transition-colors text-left ${
-                    source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
-                  }`}
-                >
-                  <SourcePreview source={source} />
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <span className="text-[12px] text-ink truncate">{source.name}</span>
-                    {source.id === detectedId && suggestionLabel && (
-                      <span className="text-[10px] text-status-connected font-medium">
-                        {suggestionLabel}
+      {showPicker &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
+            <div
+              ref={pickerRef}
+              role="dialog"
+              aria-labelledby={pickerTitleId}
+              style={placement}
+              className="fixed z-50 bg-bg-card border border-border rounded-xl shadow-lg p-3 overflow-y-auto"
+            >
+              <p
+                id={pickerTitleId}
+                className="text-[11px] font-medium text-ink-muted mb-1 text-pretty [overflow-wrap:anywhere]"
+              >
+                {t(titleKey)}
+              </p>
+              {subtitleKey && (
+                <p className="text-[10px] text-ink-faint mb-2 text-pretty [overflow-wrap:anywhere]">
+                  {t(subtitleKey)}
+                </p>
+              )}
+              <div className="flex flex-col gap-1.5">
+                {orderedSources.map((source) => (
+                  <button
+                    key={source.id}
+                    onClick={() => handleSourceSelect(source)}
+                    className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage transition-colors text-left ${
+                      source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
+                    }`}
+                  >
+                    <SourcePreview source={source} />
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <span className="i18n-ellipsis text-[12px] text-ink" title={source.name}>
+                        {source.name}
                       </span>
-                    )}
-                  </div>
-                </button>
-              ))}
+                      {source.id === detectedId && suggestionLabelKey && (
+                        <span className="text-[10px] text-status-connected font-medium text-pretty [overflow-wrap:anywhere]">
+                          {t(suggestionLabelKey)}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>,
+          document.body
+        )}
     </div>
   )
 }

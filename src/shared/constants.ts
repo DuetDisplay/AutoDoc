@@ -44,14 +44,14 @@ export const NOTES_WRITER_PROGRESS_END = 70
 export const NOTES_SCAN_PROGRESS_END = 99
 
 export const SPEAKER_COLORS: { border: string; bg: string }[] = [
-  { border: '#5B8C6A', bg: '#f6faf7' }, // Me — sage green
-  { border: '#C4956A', bg: '#fdf8f4' }, // Speaker 1 — amber
-  { border: '#7A8FB5', bg: '#f4f6fa' }, // Speaker 2 — slate blue
-  { border: '#B57A8F', bg: '#faf4f6' }, // Speaker 3 — dusty rose
-  { border: '#6A9E9E', bg: '#f4fafa' }, // Speaker 4 — teal
-  { border: '#8F7AB5', bg: '#f6f4fa' }, // Speaker 5 — plum
-  { border: '#A89460', bg: '#faf8f4' }, // Speaker 6 — ochre
-  { border: '#7A8A7A', bg: '#f4f6f4' } // Speaker 7 — slate
+  { border: 'var(--speaker-0-border)', bg: 'var(--speaker-0-bg)' },
+  { border: 'var(--speaker-1-border)', bg: 'var(--speaker-1-bg)' },
+  { border: 'var(--speaker-2-border)', bg: 'var(--speaker-2-bg)' },
+  { border: 'var(--speaker-3-border)', bg: 'var(--speaker-3-bg)' },
+  { border: 'var(--speaker-4-border)', bg: 'var(--speaker-4-bg)' },
+  { border: 'var(--speaker-5-border)', bg: 'var(--speaker-5-bg)' },
+  { border: 'var(--speaker-6-border)', bg: 'var(--speaker-6-bg)' },
+  { border: 'var(--speaker-7-border)', bg: 'var(--speaker-7-bg)' }
 ]
 
 export const MEETING_APP_PATTERNS = [
@@ -76,3 +76,5 @@ export const BROWSER_PATTERNS = [
 
 export const VIDEO_MIME_TYPE = 'video/webm;codecs=vp9'
 export const AUDIO_MIME_TYPE = 'audio/webm;codecs=opus'
+
+export const AUTODOC_GITHUB_URL = 'https://github.com/DuetDisplay/AutoDoc'

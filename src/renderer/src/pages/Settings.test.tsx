@@ -1,3 +1,4 @@
+import { translate } from '../../../shared/i18n'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +7,9 @@ import type {
   WindowsMeetingLanguageAvailabilityInfo
 } from '../../../shared/meeting-language'
 import { Settings } from './Settings'
+import { I18nProvider } from '../services/i18n'
+import { ThemeProvider } from '../services/theme'
+import * as analytics from '../services/analytics'
 import {
   createCalendarAccount,
   createRuntimeInfo,
@@ -18,6 +22,30 @@ import {
 describe('Settings', () => {
   beforeEach(() => {
     resetRendererStores()
+  })
+
+  it('never reports completed downloads when Settings mounts or downloaded status is repeated', async () => {
+    const track = vi.spyOn(analytics, 'trackEvent')
+    const api = installMockElectronApi({
+      'app:get-version': '1.3.1',
+      'updater:get-status': createUpdateStatus({ state: 'downloaded', version: '1.3.2' }),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'calendar:get-accounts': []
+    })
+    try {
+      for (let count = 0; count < 3; count += 1) {
+        const view = render(<Settings />)
+        await waitFor(() => expect(api.invoke).toHaveBeenCalledWith('updater:get-status'))
+        await act(async () => api.emit('updater:status', { state: 'downloaded', version: '1.3.2' }))
+        view.unmount()
+      }
+      expect(
+        track.mock.calls.filter(([event]) => event === 'update_download_completed')
+      ).toHaveLength(0)
+    } finally {
+      track.mockRestore()
+    }
   })
 
   it('disconnects a calendar and persists that disconnected state after reload', async () => {
@@ -134,6 +162,30 @@ describe('Settings', () => {
     expect(
       screen.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
     ).toBeChecked()
+  })
+
+  it.each([
+    [{ state: 'error' as const, errorKind: 'disk-full' as const }, 'Try again'],
+    [{ state: 'error' as const }, 'Update Failed. Retry']
+  ])('shows the right update failure text for %j', async (status, expected) => {
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(status),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+    render(<Settings />)
+    expect(await screen.findByRole('button', { name: expected })).toBeInTheDocument()
+    if (status.errorKind) {
+      expect(screen.queryByRole('button', { name: 'Update Failed. Retry' })).not.toBeInTheDocument()
+      expect(screen.getByText('Not enough space to install the update')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('updater:check')
+    } else {
+      expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+    }
   })
 
   it('shows the video watermark by default and persists the playback preference', async () => {
@@ -440,9 +492,51 @@ describe('Settings', () => {
     await user.click(screen.getByRole('button', { name: /remove downloaded ai components/i }))
 
     expect(await screen.findByText(/downloaded ai components removed/i)).toBeInTheDocument()
-    expect(screen.getByText('0 B')).toBeInTheDocument()
+    expect(screen.getByText('0 byte')).toBeInTheDocument()
 
     confirmSpy.mockRestore()
+  })
+
+  it('localizes a storage failure and updates it when the app language changes', async () => {
+    const api = installMockElectronApi({
+      'app:get-version': '1.3.0',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-ui-language': 'en',
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'app:clear-downloaded-components': () => {
+        throw new Error('Synthetic backend permission failure')
+      }
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    try {
+      render(
+        <I18nProvider>
+          <Settings />
+        </I18nProvider>
+      )
+      await user.click(
+        await screen.findByRole('button', { name: /remove downloaded ai components/i })
+      )
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        translate('en', 'settings.removeDownloadsFailed')
+      )
+      expect(screen.queryByText('Synthetic backend permission failure')).not.toBeInTheDocument()
+      act(() => api.emit('prefs:ui-language-changed', 'fr'))
+      await waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          translate('fr', 'settings.removeDownloadsFailed')
+        )
+      )
+    } finally {
+      confirm.mockRestore()
+      window.localStorage.removeItem('autodoc-ui-language')
+    }
   })
 
   it('starts a full local reset from settings after confirmation', async () => {
@@ -697,7 +791,9 @@ describe('Settings Windows meeting languages', () => {
     render(<Settings />)
 
     await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
-    const spanish = await screen.findByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = await screen.findByRole('option', {
+      name: new RegExp('Spanish\\s+This language isn.t available on this PC.')
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     await user.click(spanish)
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
@@ -810,17 +906,21 @@ describe('Settings Windows meeting languages', () => {
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      "You're offline. Connect to the internet to download the German speech model (about 5.6 GB). Your meeting language is still English."
+      'You’re offline. Connect to the internet to download the German speech model (about 5.6 GB). Your meeting language is still English.'
     )
     expect(state.meetingLanguage).toBe('en')
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
   })
 
-  it('keeps the previous language when the first-use download fails', async () => {
+  it.each([
+    'Disk is full.',
+    'There is not enough space on the disk.',
+    'EDQUOT: disk quota exceeded'
+  ])('keeps the previous language when the first-use download fails: %s', async (message) => {
     const user = userEvent.setup()
     const { state, api } = installWindowsSettingsApi({
       languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) },
-      ensure: () => Promise.reject(new Error('Disk is full.'))
+      ensure: () => Promise.reject(new Error(message))
     })
     render(<Settings />)
 
@@ -829,7 +929,9 @@ describe('Settings Windows meeting languages', () => {
       await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
     )
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Disk is full.')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Not enough disk space. Free up space and try again.'
+    )
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
     expect(state.meetingLanguage).toBe('en')
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
@@ -926,13 +1028,17 @@ describe('Settings Windows meeting languages', () => {
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'es')
     })
-    expect(await screen.findByRole('alert')).toHaveTextContent(reason)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to save the meeting language.'
+    )
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
     expect(state.meetingLanguage).toBe('en')
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'es')
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
-    const spanish = await screen.findByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = await screen.findByRole('option', {
+      name: new RegExp('Spanish\\s+This language isn.t available on this PC.')
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
   })
 
@@ -966,5 +1072,62 @@ describe('Settings Windows meeting languages', () => {
     ).toBeInTheDocument()
     expect(state.meetingLanguage).toBe('es')
     expect(api.invoke).toHaveBeenCalledWith('prefs:set-meeting-language', 'es')
+  })
+
+  it('persists appearance and offers to switch the app language after a meeting language change', async () => {
+    const state = {
+      meetingLanguage: 'en',
+      appearance: 'auto',
+      uiLanguage: 'en'
+    }
+
+    const api = installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-meeting-language': () => state.meetingLanguage,
+      'prefs:set-meeting-language': (language: string) => {
+        state.meetingLanguage = language
+      },
+      'prefs:get-appearance': () => state.appearance,
+      'prefs:set-appearance': (appearance: string) => {
+        state.appearance = appearance
+      },
+      'prefs:get-ui-language': () => state.uiLanguage,
+      'prefs:set-ui-language': (language: string) => {
+        state.uiLanguage = language
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    const user = userEvent.setup()
+    render(
+      <ThemeProvider>
+        <I18nProvider>
+          <Settings />
+        </I18nProvider>
+      </ThemeProvider>
+    )
+
+    expect(await screen.findByRole('button', { name: 'Light', pressed: true })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Auto', exact: true })).not.toBeInTheDocument()
+    const dark = await screen.findByRole('button', { name: 'Dark' })
+    await user.click(dark)
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('prefs:set-appearance', 'dark')
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(screen.getByRole('option', { name: 'Korean' }))
+
+    expect(await screen.findByText('Also use 한국어 for the app?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use 한국어' }))
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('prefs:set-ui-language', 'ko')
+    })
   })
 })

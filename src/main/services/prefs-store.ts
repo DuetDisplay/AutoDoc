@@ -1,15 +1,27 @@
 import Store from 'electron-store'
 import { app } from 'electron'
 import {
+  DEFAULT_APPEARANCE,
+  normalizeAppearance,
+  type AppearanceMode
+} from '../../shared/appearance'
+import {
   DEFAULT_MEETING_LANGUAGE,
   normalizeMeetingLanguage,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
+import {
+  defaultUiLanguageForLocale,
+  normalizeUiLanguage,
+  type UiLanguageCode
+} from '../../shared/ui-language'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 
 interface PrefsSchema {
+  uiAppearanceAnnouncementInitialized?: boolean
+  uiAppearanceAnnouncementPending?: boolean
   onboardingComplete: boolean
   onboardingLanguageConfirmed: boolean
   meetingLanguageAnnouncementDismissed: boolean
@@ -21,6 +33,8 @@ interface PrefsSchema {
   diagnosticLogUploadConsent: boolean
   videoWatermarkVisible: boolean
   meetingLanguage: MeetingLanguageCode
+  appearance: AppearanceMode
+  uiLanguage?: UiLanguageCode
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
   notesEngineUpgradeEligible: boolean
@@ -28,13 +42,13 @@ interface PrefsSchema {
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
-  return new Store<PrefsSchema>({
+  const store = new Store<PrefsSchema>({
     name: 'autodoc-prefs',
     defaults: {
       onboardingComplete: false,
       onboardingLanguageConfirmed: false,
       meetingLanguageAnnouncementDismissed: false,
-      onboardingStep: 0,
+      onboardingStep: 12,
       onboardingMicSettingsOpened: false,
       onboardingScreenSettingsOpened: false,
       launchAtLogin: true,
@@ -42,12 +56,18 @@ function createPrefsStore(): Store<PrefsSchema> {
       diagnosticLogUploadConsent: false,
       videoWatermarkVisible: true,
       meetingLanguage: DEFAULT_MEETING_LANGUAGE,
+      appearance: DEFAULT_APPEARANCE,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
       notesEngineUpgradeEligible: false,
       notesEngineReadyDismissed: false
     }
   })
+  // Retire saved Auto values once, before any window reads the preference.
+  const savedAppearance = store.get('appearance')
+  const appearance = normalizeAppearance(savedAppearance)
+  if (savedAppearance !== appearance) store.set('appearance', appearance)
+  return store
 }
 
 export function readInitialAnalyticsConsent(): boolean | null {
@@ -58,12 +78,34 @@ export function readInitialDiagnosticLogUploadConsent(): boolean {
   return createPrefsStore().get('diagnosticLogUploadConsent')
 }
 
+export function readInitialAppearance(): AppearanceMode {
+  return normalizeAppearance(createPrefsStore().get('appearance'))
+}
+
+function initializeUiPreferences(store: Store<PrefsSchema>): void {
+  // Do not supply a store default for uiLanguage: has() must distinguish a saved English choice.
+  if (!store.has('uiLanguage') && !store.get('onboardingComplete')) {
+    store.set('uiLanguage', defaultUiLanguageForLocale(app.getLocale()))
+  }
+  if (!store.has('uiAppearanceAnnouncementInitialized')) {
+    store.set('uiAppearanceAnnouncementPending', store.get('onboardingComplete'))
+    store.set('uiAppearanceAnnouncementInitialized', true)
+  }
+}
+
+export function readInitialUiLanguage(): UiLanguageCode {
+  const store = createPrefsStore()
+  initializeUiPreferences(store)
+  return normalizeUiLanguage(store.get('uiLanguage'))
+}
+
 export class PrefsStore {
   private store: Store<PrefsSchema>
   private previousMeetingLanguage: MeetingLanguageCode | null = null
 
   constructor() {
     this.store = createPrefsStore()
+    initializeUiPreferences(this.store)
 
     // Sync the current preference to the OS on startup
     this.applyLaunchAtLogin()
@@ -76,6 +118,7 @@ export class PrefsStore {
   setOnboardingComplete(): void {
     this.store.set('onboardingComplete', true)
     this.dismissMeetingLanguageAnnouncement()
+    this.dismissUiAppearanceAnnouncement()
     this.store.set('onboardingStep', 0)
     this.store.set('onboardingMicSettingsOpened', false)
     this.store.set('onboardingScreenSettingsOpened', false)
@@ -101,6 +144,14 @@ export class PrefsStore {
 
   dismissMeetingLanguageAnnouncement(): void {
     this.store.set('meetingLanguageAnnouncementDismissed', true)
+  }
+
+  isUiAppearanceAnnouncementPending(): boolean {
+    return this.isOnboardingComplete() && this.store.get('uiAppearanceAnnouncementPending') === true
+  }
+
+  dismissUiAppearanceAnnouncement(): void {
+    this.store.set('uiAppearanceAnnouncementPending', false)
   }
 
   getOnboardingStep(): number {
@@ -163,6 +214,22 @@ export class PrefsStore {
 
   getMeetingLanguage(): MeetingLanguageCode {
     return normalizeMeetingLanguage(this.store.get('meetingLanguage'))
+  }
+
+  getAppearance(): AppearanceMode {
+    return normalizeAppearance(this.store.get('appearance'))
+  }
+
+  setAppearance(appearance: unknown): void {
+    this.store.set('appearance', normalizeAppearance(appearance))
+  }
+
+  getUiLanguage(): UiLanguageCode {
+    return normalizeUiLanguage(this.store.get('uiLanguage'))
+  }
+
+  setUiLanguage(language: unknown): void {
+    this.store.set('uiLanguage', normalizeUiLanguage(language))
   }
 
   setMeetingLanguage(language: unknown): void {

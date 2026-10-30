@@ -296,6 +296,35 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 
+  it('fingerprints an Ollama exit before ready so it does not group with ffmpeg failures', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-exit-fingerprint-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      mockServeOrTaskkill(spawnMock, () => serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const startPromise = manager.start({ forceRespawn: true })
+      const captured = startPromise.then(
+        () => null,
+        (err: Error & { sentryFingerprint?: string[] }) => err
+      )
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.exitCode = 2
+      serveProc.emit('exit', 2, null)
+
+      const error = await captured
+      expect(error?.message).toContain('Ollama exited with code 2')
+      expect(error?.sentryFingerprint).toEqual(['ollama-server-exited', '2'])
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   describe('starting serve grace', () => {
     async function startReadyManager(): Promise<{
       manager: InstanceType<LoadedOllamaManager['OllamaManager']>

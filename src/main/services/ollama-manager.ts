@@ -21,6 +21,7 @@ import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
+import { withSentryFingerprint } from './sentry-fingerprint'
 import {
   createOllamaModelLoadFailedError,
   isOllamaModelLoadFailureText
@@ -1426,7 +1427,12 @@ export class OllamaManager extends EventEmitter {
           this.readyServeProcess = null
         }
         finish(() => {
-          reject(new Error(`Failed to start Ollama: ${err.message}`))
+          reject(
+            withSentryFingerprint(new Error(`Failed to start Ollama: ${err.message}`), [
+              'ollama-server-exited',
+              'spawn-failed'
+            ])
+          )
         })
       })
 
@@ -1470,6 +1476,11 @@ export class OllamaManager extends EventEmitter {
         }
         const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
+        // Group exits by code in one Sentry issue, apart from ffmpeg and model-extract failures.
+        const exitFingerprint = [
+          'ollama-server-exited',
+          code !== null ? String(code) : `signal-${signal}`
+        ]
         if (intentionalKillReason != null) {
           // The app killed this serve itself (Windows taskkill always exits with code 1), so it
           // is not a crash and must not reach the AUTODOC-8 failure stream.
@@ -1487,7 +1498,7 @@ export class OllamaManager extends EventEmitter {
               ...exitContext,
               stderrTail: sanitizedStderrTail || null
             },
-            fingerprint: ['ollama-server-exited', String(code)]
+            fingerprint: exitFingerprint
           })
         } else {
           logAutodocEvent({
@@ -1500,7 +1511,10 @@ export class OllamaManager extends EventEmitter {
         if (!settled) {
           finish(() => {
             const message = `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
-            reject(modelLoadFailed ? createOllamaModelLoadFailedError(message) : new Error(message))
+            const error = modelLoadFailed
+              ? createOllamaModelLoadFailedError(message)
+              : new Error(message)
+            reject(withSentryFingerprint(error, exitFingerprint))
           })
         }
       })

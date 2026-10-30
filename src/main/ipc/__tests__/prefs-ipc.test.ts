@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+vi.mock('../../services/application-menu', () => ({ refreshApplicationMenu: vi.fn() }))
+
+const preferenceFixture = vi.hoisted(() => ({
+  saved: {} as Record<string, unknown>,
+  locale: 'en-US'
+}))
 
 vi.mock('electron', () => ({
-  app: { setLoginItemSettings: vi.fn() },
-  BrowserWindow: { getAllWindows: vi.fn(() => []) },
-  ipcMain: { handle: vi.fn() }
+  app: { setLoginItemSettings: vi.fn(), getLocale: () => preferenceFixture.locale },
+  BrowserWindow: { getAllWindows: vi.fn(() => []), prototype: { setBackgroundColor: vi.fn() } },
+  ipcMain: { handle: vi.fn() },
+  nativeTheme: {
+    themeSource: 'system',
+    shouldUseDarkColors: false,
+    on: vi.fn()
+  }
 }))
 
 const { getWindowsMeetingLanguageAvailability } = vi.hoisted(() => ({
@@ -28,8 +39,12 @@ vi.mock('../../services/mac-processing-profile', async (importOriginal) => {
 vi.mock('electron-store', () => {
   return {
     default: vi.fn().mockImplementation((opts?: { defaults?: Record<string, unknown> }) => {
-      const data: Record<string, unknown> = { ...(opts?.defaults ?? {}) }
+      const data: Record<string, unknown> = {
+        ...(opts?.defaults ?? {}),
+        ...preferenceFixture.saved
+      }
       return {
+        has: vi.fn((key: string) => key in data),
         get: vi.fn((key: string, defaultValue?: unknown) => {
           return key in data ? data[key] : defaultValue
         }),
@@ -56,6 +71,8 @@ describe('PrefsStore', () => {
   let store: PrefsStore
 
   beforeEach(() => {
+    preferenceFixture.saved = {}
+    preferenceFixture.locale = 'en-US'
     store = new PrefsStore()
     getWindowsMeetingLanguageAvailability.mockReset()
     getWindowsMeetingLanguageAvailability.mockResolvedValue({
@@ -66,6 +83,95 @@ describe('PrefsStore', () => {
       needsSelfTest: false
     })
   })
+
+  it.each([
+    ['es-ES', 'es'],
+    ['de-DE', 'de'],
+    ['ja-JP', 'ja'],
+    ['th-TH', 'en'],
+    ['zh-TW', 'en'],
+    ['zh-Hant', 'en'],
+    ['zh-CN', 'zh-Hans']
+  ])('seeds fresh UI language for %s before rendering', (locale, language) => {
+    preferenceFixture.locale = locale
+    const fresh = new PrefsStore()
+    expect(fresh.getUiLanguage()).toBe(language)
+    expect(fresh.getOnboardingStep()).toBe(12)
+    expect(fresh.isUiAppearanceAnnouncementPending()).toBe(false)
+  })
+
+  it.each(['en', 'de'])('preserves explicitly saved %s even during onboarding', (language) => {
+    preferenceFixture.locale = 'ja-JP'
+    preferenceFixture.saved = { uiLanguage: language, onboardingStep: 7 }
+    const resumed = new PrefsStore()
+    expect(resumed.getUiLanguage()).toBe(language)
+    expect(resumed.getOnboardingStep()).toBe(7)
+  })
+
+  it('keeps upgrade language and initializes the new announcement exactly once', () => {
+    preferenceFixture.locale = 'es-ES'
+    preferenceFixture.saved = { onboardingComplete: true, uiLanguage: 'en' }
+    const upgraded = new PrefsStore()
+    expect(upgraded.getUiLanguage()).toBe('en')
+    expect(upgraded.isUiAppearanceAnnouncementPending()).toBe(true)
+    upgraded.dismissUiAppearanceAnnouncement()
+    expect(upgraded.isUiAppearanceAnnouncementPending()).toBe(false)
+    preferenceFixture.saved = {
+      onboardingComplete: true,
+      uiAppearanceAnnouncementInitialized: true,
+      uiAppearanceAnnouncementPending: false
+    }
+    expect(new PrefsStore().isUiAppearanceAnnouncementPending()).toBe(false)
+  })
+
+  it('never queues the upgrade popup for a newly completed onboarding', () => {
+    store.setOnboardingComplete()
+    expect(store.isUiAppearanceAnnouncementPending()).toBe(false)
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
+  })
+
+  it.each([
+    {
+      history: 'never chose or dismissed meeting language',
+      confirmed: false,
+      dismissed: false,
+      meetingPending: true
+    },
+    {
+      history: 'confirmed meeting language',
+      confirmed: true,
+      dismissed: false,
+      meetingPending: false
+    },
+    {
+      history: 'dismissed the 1.3.0 language announcement',
+      confirmed: false,
+      dismissed: true,
+      meetingPending: false
+    },
+    {
+      history: 'confirmed and dismissed meeting language',
+      confirmed: true,
+      dismissed: true,
+      meetingPending: false
+    }
+  ])(
+    'preserves upgrade eligibility for users who $history',
+    ({ confirmed, dismissed, meetingPending }) => {
+      // These are the persisted fields from before the app-language/appearance update.
+      preferenceFixture.saved = {
+        onboardingComplete: true,
+        onboardingLanguageConfirmed: confirmed,
+        meetingLanguageAnnouncementDismissed: dismissed,
+        meetingLanguage: 'en',
+        uiLanguage: 'en'
+      }
+      const upgraded = new PrefsStore()
+      expect(upgraded.isMeetingLanguageAnnouncementPending()).toBe(meetingPending)
+      expect(upgraded.isUiAppearanceAnnouncementPending()).toBe(true)
+      expect(upgraded.getMeetingLanguage()).toBe('en')
+    }
+  )
 
   it('shows the language announcement only for existing users and remembers dismissal', () => {
     expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
@@ -437,7 +543,7 @@ describe('PrefsStore', () => {
 
     const send = vi.fn()
     vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
-      { webContents: { send } }
+      { webContents: { send }, setBackgroundColor: vi.fn() }
     ] as unknown as ReturnType<typeof BrowserWindow.getAllWindows>)
     const handler = registration[1] as unknown as (event: unknown, visible: boolean) => void
 
@@ -445,6 +551,41 @@ describe('PrefsStore', () => {
 
     expect(store.getVideoWatermarkVisible()).toBe(false)
     expect(send).toHaveBeenCalledWith('prefs:video-watermark-visible-changed', false)
+  })
+
+  it('broadcasts appearance and app language changes', () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+      { webContents: { send }, setBackgroundColor: vi.fn() }
+    ] as unknown as ReturnType<typeof BrowserWindow.getAllWindows>)
+    registerPrefsIpc(store)
+    const appearanceRegistration = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.findLast(([channel]) => channel === 'prefs:set-appearance')
+    const languageRegistration = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.findLast(([channel]) => channel === 'prefs:set-ui-language')
+    if (!appearanceRegistration || !languageRegistration) {
+      throw new Error('Expected appearance and app language handlers to be registered')
+    }
+
+    const setAppearance = appearanceRegistration[1] as unknown as (
+      event: unknown,
+      appearance: string
+    ) => void
+    const setUiLanguage = languageRegistration[1] as unknown as (
+      event: unknown,
+      language: string
+    ) => void
+
+    expect(() => setAppearance({}, 'auto')).toThrow('This appearance setting is not supported.')
+    setAppearance({}, 'dark')
+    setUiLanguage({}, 'ko')
+
+    expect(store.getAppearance()).toBe('dark')
+    expect(store.getUiLanguage()).toBe('ko')
+    expect(send).toHaveBeenCalledWith('prefs:appearance-changed', 'dark')
+    expect(send).toHaveBeenCalledWith('prefs:ui-language-changed', 'ko')
   })
 
   it('persists the low-memory Mac processing banner dismissal flag', () => {

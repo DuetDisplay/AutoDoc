@@ -37,6 +37,32 @@ beforeEach(() => {
 })
 
 describe('MeetingLanguageStep', () => {
+  it('prefers the chosen app language over the OS language when available', async () => {
+    const invoke = vi.mocked(window.electronAPI.invoke).getMockImplementation()!
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel, ...args) => {
+      if (channel === 'prefs:get-ui-language') return Promise.resolve('de')
+      return invoke(channel, ...args)
+    })
+    render(<MeetingLanguageStep onNext={vi.fn()} />)
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
+  })
+
+  it('preserves a confirmed meeting language over the app language', async () => {
+    saved = 'fr'
+    const invoke = vi.mocked(window.electronAPI.invoke).getMockImplementation()!
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel, ...args) => {
+      if (channel === 'prefs:get-ui-language') return Promise.resolve('de')
+      if (channel === 'prefs:get-onboarding-language-confirmed') return Promise.resolve(true)
+      return invoke(channel, ...args)
+    })
+    render(<MeetingLanguageStep onNext={vi.fn()} />)
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: French' })
+    ).toBeInTheDocument()
+  })
+
   it('defaults to the available OS language and persists the same preference Settings reads', async () => {
     const next = vi.fn()
     const view = render(<MeetingLanguageStep onNext={next} />)
@@ -65,7 +91,9 @@ describe('MeetingLanguageStep', () => {
     render(<MeetingLanguageStep onNext={next} />)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Needs 16 GB')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to save the meeting language.'
+    )
     expect(next).not.toHaveBeenCalled()
     expect(saved).toBe('en')
   })
@@ -81,6 +109,7 @@ describe('MeetingLanguageStep', () => {
           es: {
             availability: 'locked',
             reason,
+            reasonCode: 'needs-supported-graphics-card',
             firstUseDownloadBytes: 5_583_216_230
           },
           de: {
@@ -100,7 +129,9 @@ describe('MeetingLanguageStep', () => {
     ).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Meeting language: English' }))
 
-    const spanish = screen.getByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = screen.getByRole('option', {
+      name: `Spanish ${reason}`
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     expect(
       screen.getByRole('option', {

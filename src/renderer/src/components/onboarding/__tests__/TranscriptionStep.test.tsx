@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { TranscriptionStep } from '../TranscriptionStep'
+import { I18nProvider } from '../../../services/i18n'
+import { applyDocumentLanguage } from '../../../services/document-language'
+import { translate } from '../../../../../shared/i18n'
+import type { WhisperSetupStatus } from '../../../../../shared/types'
 
 describe('TranscriptionStep', () => {
   beforeEach(() => {
@@ -52,8 +56,10 @@ describe('TranscriptionStep', () => {
     render(<TranscriptionStep onNext={vi.fn()} />)
 
     expect(await screen.findByText('Optimized for this Mac')).toBeInTheDocument()
-    expect(screen.getByText(/this Mac has limited memory/i)).toBeInTheDocument()
-    expect(screen.getByText(/process mic and system audio one at a time/i)).toBeInTheDocument()
+    expect(screen.getByText(/this computer has limited memory/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/process microphone and system audio one at a time/i)
+    ).toBeInTheDocument()
   })
 
   it('sets expectations when a low-memory Windows profile is selected', async () => {
@@ -75,8 +81,10 @@ describe('TranscriptionStep', () => {
     render(<TranscriptionStep onNext={vi.fn()} />)
 
     expect(await screen.findByText('Optimized for this PC')).toBeInTheDocument()
-    expect(screen.getByText(/this PC has limited memory/i)).toBeInTheDocument()
-    expect(screen.getByText(/process mic and system audio one at a time/i)).toBeInTheDocument()
+    expect(screen.getByText(/this computer has limited memory/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/process microphone and system audio one at a time/i)
+    ).toBeInTheDocument()
   })
 
   it('starts transcription setup when onboarding reaches the step', async () => {
@@ -294,6 +302,79 @@ describe('TranscriptionStep', () => {
     }
   }, 10000)
 
+  it('says the disk is full when setup fails for lack of space', async () => {
+    vi.useFakeTimers()
+    let progress: ((status: Record<string, unknown>) => Promise<void>) | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      return Promise.resolve({})
+    })
+    const full = { phase: 'error', percent: 0, error: 'ENOSPC', errorKind: 'disk-full' }
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await act(async () => {
+          await progress?.(full)
+          await vi.advanceTimersByTimeAsync(1500)
+        })
+      }
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent('Not enough space to set up transcription')
+      expect(alert).toHaveTextContent('Your computer is almost out of disk space.')
+      expect(screen.queryByText("You're offline")).not.toBeInTheDocument()
+      expect(screen.queryByText('Still finishing transcription setup')).not.toBeInTheDocument()
+      vi.mocked(window.electronAPI.invoke).mockClear()
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+        await Promise.resolve()
+      })
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
+
+  it('shows the disk-full alert at once, and other errors still show the retry card', async () => {
+    vi.useFakeTimers()
+    let progress: ((status: Record<string, unknown>) => Promise<void>) | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      return Promise.resolve({})
+    })
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await progress?.({ phase: 'error', percent: 0, error: 'ENOSPC', errorKind: 'disk-full' })
+      })
+      expect(screen.queryByText('Still finishing transcription setup')).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      await act(async () => {
+        await progress?.({ phase: 'error', percent: 0, error: 'boom' })
+      })
+      expect(screen.getByText('Still finishing transcription setup')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
+
   it('says the machine is offline when the download cannot reach the server', async () => {
     vi.useFakeTimers()
     let progress:
@@ -399,7 +480,8 @@ describe('TranscriptionStep', () => {
       if (channel === 'whisper:get-windows-meeting-language-availability') {
         return Promise.resolve({
           availability: 'locked',
-          reason: 'This PC cannot run Spanish transcription.',
+          reason: 'Spanish needs a supported graphics card on this PC.',
+          reasonCode: 'needs-supported-graphics-card',
           engineId: null,
           firstUseDownloadBytes: 0
         })
@@ -428,7 +510,7 @@ describe('TranscriptionStep', () => {
         screen.getByRole('heading', { name: "This language isn't available on this PC" })
       ).toBeInTheDocument()
       expect(
-        screen.getAllByText('This PC cannot run Spanish transcription.').length
+        screen.getAllByText('Spanish needs a supported graphics card on this PC.').length
       ).toBeGreaterThan(0)
       expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 
@@ -597,5 +679,70 @@ describe('TranscriptionStep', () => {
       'whisper:get-windows-meeting-language-availability',
       expect.anything()
     )
+  })
+})
+
+describe('TranscriptionStep locked language reason', () => {
+  async function renderLocked(
+    availability: Record<string, unknown>,
+    options: { uiLanguage?: 'de' } = {}
+  ) {
+    let progress: ((status: WhisperSetupStatus) => Promise<void>) | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-ui-language') return Promise.resolve(options.uiLanguage ?? 'en')
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({ engineId: null, firstUseDownloadBytes: 0, ...availability })
+      }
+      return Promise.resolve({})
+    })
+    await act(async () => {
+      render(
+        <I18nProvider>
+          <TranscriptionStep onNext={vi.fn()} onChooseLanguage={vi.fn()} />
+        </I18nProvider>
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await progress?.({ phase: 'error', percent: 0, error: 'whisper-turbo-cuda self-test failed' })
+    })
+  }
+
+  afterEach(() => {
+    applyDocumentLanguage('en')
+  })
+
+  it('shows the generic text when the lock has no reason code', async () => {
+    await renderLocked({
+      availability: 'locked',
+      reason: 'Spanish needs a supported graphics card on this PC.'
+    })
+    expect(
+      await screen.findAllByText("This language isn't available on this PC.")
+    ).not.toHaveLength(0)
+    expect(screen.queryByText(/graphics card/i)).not.toBeInTheDocument()
+  })
+
+  it('localizes the reason with the localized language name', async () => {
+    applyDocumentLanguage('de')
+    await renderLocked(
+      {
+        availability: 'locked',
+        reason: 'Spanish needs a supported graphics card on this PC.',
+        reasonCode: 'needs-supported-graphics-card'
+      },
+      { uiLanguage: 'de' }
+    )
+    const localized = translate('de', 'picker.reasonNeedsGraphicsCard', { language: 'Spanisch' })
+    expect(await screen.findAllByText(localized)).not.toHaveLength(0)
+    expect(screen.queryByText(/needs a supported graphics card/i)).not.toBeInTheDocument()
   })
 })

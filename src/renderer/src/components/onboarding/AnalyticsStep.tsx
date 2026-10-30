@@ -1,3 +1,4 @@
+import { useT } from '../../services/i18n'
 import { useState } from 'react'
 
 interface Props {
@@ -11,6 +12,8 @@ export function AnalyticsStep({
   onDiagnosticLogUploadConsentedChange,
   onNext
 }: Props) {
+  const t = useT()
+
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -33,13 +36,11 @@ export function AnalyticsStep({
       </div>
 
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
-        Help us make AutoDoc better
+        {t('ui.helpUsMakeAutoDocBetter')}
       </h2>
 
       <p className="text-[14px] text-ink-muted leading-relaxed mb-4">
-        You can optionally share anonymous product health so we can fix crashes and improve AutoDoc.
-        We never receive your meeting content, titles, transcripts, or recordings, and we never
-        train on them. You can change this later in Settings.
+        {t('ui.youCanOptionallyShareAnonymousProductHealthSoWeCanFixCrashesAndImproveAutoD')}
       </p>
 
       {/* What we track disclosure */}
@@ -60,7 +61,7 @@ export function AnalyticsStep({
         >
           <polyline points="9 18 15 12 9 6" />
         </svg>
-        What exactly do we track?
+        {t('ui.whatExactlyDoWeTrack')}
       </button>
 
       {expanded && (
@@ -68,50 +69,38 @@ export function AnalyticsStep({
           <div className="space-y-2">
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span>
-                <strong className="text-ink">Feature usage</strong> — anonymous feature, setup, and
-                recording workflow events
-              </span>
+              <span>{t('ui.featureUsageAnonymousFeatureSetupAndRecordingWorkflowEvents')}</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-sage font-bold mt-[1px]">✓</span>
+              <span>{t('ui.onboardingWhichStepsYouCompleteOrSkip')}</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-sage font-bold mt-[1px]">✓</span>
+              <span>{t('ui.crashReportsStackTracesWhenSomethingGoesWrong')}</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
               <span>
-                <strong className="text-ink">Onboarding</strong> — which steps you complete or skip
+                {t('ui.optionalDiagnosticLogsTechnicalAppLogsOnlyIfYouExplicitlyAllowThem')}
               </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span>
-                <strong className="text-ink">Crash reports</strong> — stack traces when something
-                goes wrong
-              </span>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span>
-                <strong className="text-ink">Optional diagnostic logs</strong> — technical app logs
-                only if you explicitly allow them
-              </span>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span>
-                <strong className="text-ink">App version & OS</strong> — helps us prioritize
-                platform fixes
-              </span>
+              <span>{t('ui.appVersionAndOSHelpsUsPrioritizePlatformFixes')}</span>
             </div>
             <div className="border-t border-border-subtle mt-3 pt-3 space-y-2">
               <div className="flex items-start gap-2">
-                <span className="text-red-400 font-bold mt-[1px]">✗</span>
-                <span>Meeting content, meeting titles, transcripts, or calendar data</span>
+                <span className="text-clay font-bold mt-[1px]">✗</span>
+                <span>{t('ui.meetingContentMeetingTitlesTranscriptsOrCalendarData')}</span>
               </div>
               <div className="flex items-start gap-2">
-                <span className="text-red-400 font-bold mt-[1px]">✗</span>
-                <span>Names, emails, or any personal information</span>
+                <span className="text-clay font-bold mt-[1px]">✗</span>
+                <span>{t('ui.namesEmailsOrAnyPersonalInformation')}</span>
               </div>
               <div className="flex items-start gap-2">
-                <span className="text-red-400 font-bold mt-[1px]">✗</span>
-                <span>Audio, video, or screen recordings</span>
+                <span className="text-clay font-bold mt-[1px]">✗</span>
+                <span>{t('ui.audioVideoOrScreenRecordings')}</span>
               </div>
             </div>
           </div>
@@ -124,25 +113,25 @@ export function AnalyticsStep({
           checked={diagnosticLogUploadConsented}
           onChange={(event) => onDiagnosticLogUploadConsentedChange(event.target.checked)}
           className="mt-0.5 h-4 w-4 rounded border-border-subtle text-sage focus:ring-sage"
-          aria-label="Also share anonymous logs if something breaks"
+          aria-label={t('ui.alsoShareAnonymousLogsIfSomethingBreaks')}
         />
         <span className="text-[12px] text-ink-muted leading-relaxed">
-          Also share anonymous logs if something breaks
+          {t('ui.alsoShareAnonymousLogsIfSomethingBreaks')}
         </span>
       </label>
 
       <div className="flex flex-col gap-2">
         <button
           onClick={() => onNext(true, diagnosticLogUploadConsented)}
-          className="w-full px-6 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn w-full px-6 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Share anonymous product health
+          {t('ui.shareAnonymousProductHealth')}
         </button>
         <button
           onClick={() => onNext(false, false)}
           className="w-full px-6 py-2.5 text-ink-muted text-[13px] font-medium hover:text-ink transition-colors"
         >
-          Not now
+          {t('ui.notNow')}
         </button>
       </div>
     </div>

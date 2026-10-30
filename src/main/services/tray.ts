@@ -1,6 +1,8 @@
 import { Tray, Menu, nativeImage, app, shell } from 'electron'
 import { join } from 'path'
 import type { CalendarEvent } from '../../shared/types'
+import { tMain, getMainUiLanguage } from './ui-locale'
+import { dateLocaleForUiLanguage } from '../../shared/ui-language'
 
 let tray: Tray | null = null
 let cachedEventsRef: () => CalendarEvent[] = () => []
@@ -57,7 +59,10 @@ function loadTrayNativeImage(): ReturnType<typeof nativeImage.createEmpty> {
 
 function formatTime(ms: number): string {
   const d = new Date(ms)
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  return d.toLocaleTimeString(dateLocaleForUiLanguage(getMainUiLanguage()), {
+    hour: 'numeric',
+    minute: '2-digit'
+  })
 }
 
 function getUpcomingEvents(): CalendarEvent[] {
@@ -78,7 +83,7 @@ function buildMenu(): Menu {
 
   if (getIsRecordingRef()) {
     template.push({
-      label: 'Stop recording notes',
+      label: tMain('tray.stopRecording'),
       click: () => {
         stopRecordingFn()
       }
@@ -87,13 +92,13 @@ function buildMenu(): Menu {
   }
 
   if (events.length > 0) {
-    template.push({ label: 'Upcoming Meetings', enabled: false })
+    template.push({ label: tMain('tray.upcomingMeetings'), enabled: false })
     template.push({ type: 'separator' })
 
     for (const event of events) {
       const now = Date.now()
       const isNow = event.startTime <= now && event.endTime > now
-      const timeLabel = isNow ? 'Now' : formatTime(event.startTime)
+      const timeLabel = isNow ? tMain('tray.now') : formatTime(event.startTime)
 
       template.push({
         label: `${timeLabel}  ${event.title}`,
@@ -106,17 +111,17 @@ function buildMenu(): Menu {
       })
     }
   } else {
-    template.push({ label: 'No upcoming meetings today', enabled: false })
+    template.push({ label: tMain('tray.noUpcoming'), enabled: false })
   }
 
   template.push({ type: 'separator' })
   template.push({
-    label: `Open ${appName}`,
+    label: tMain('tray.openApp', { app: appName }),
     click: showWindowFn
   })
   template.push({ type: 'separator' })
   template.push({
-    label: `Quit ${appName}`,
+    label: tMain('tray.quitApp', { app: appName }),
     click: () => {
       app.quit()
     }
@@ -187,7 +192,7 @@ export function refreshTray(): void {
   if (isDarwin) {
     const recording = getIsRecordingRef()
     const appName = app.getName()
-    tray.setToolTip(recording ? `${appName} — recording` : appName)
+    tray.setToolTip(recording ? tMain('tray.recordingTooltip', { app: appName }) : appName)
   } else {
     tray.setContextMenu(buildMenu())
   }

@@ -4,7 +4,8 @@ import {
   getMeetingAsrRoute,
   getMeetingLanguageDefinition,
   normalizeMeetingLanguage,
-  type MeetingLanguageCode
+  type MeetingLanguageCode,
+  type MeetingLanguageReasonCode
 } from '../../shared/meeting-language'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
@@ -66,6 +67,7 @@ export interface WindowsMultilingualReadinessHost {
 export interface WindowsMeetingLanguageAvailabilityResult {
   availability: WindowsMultilingualAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
   engineId: WindowsMultilingualEngineId | null
   firstUseDownloadBytes: number
   needsSelfTest: boolean
@@ -75,6 +77,7 @@ export interface WindowsMultilingualEngineReadyResult {
   engineId: WindowsMultilingualEngineId | null
   availability: WindowsMultilingualAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
   fallbackFrom?: WindowsMultilingualEngineId
   fallbackReason?: string | null
   selfTest: WindowsMultilingualSelfTestOutcome | null
@@ -138,6 +141,7 @@ export async function getWindowsMeetingLanguageAvailability(
     return {
       availability: 'locked',
       reason: context.plan.reason,
+      reasonCode: context.plan.reasonCode ?? null,
       engineId: null,
       firstUseDownloadBytes: 0,
       needsSelfTest: false
@@ -177,7 +181,7 @@ export async function ensureWindowsMultilingualEngineReady(
   }
 
   if (context.plan.availability === 'locked' || !context.plan.primary) {
-    return emptyReadyResult(context.plan, 'locked', context.plan.reason)
+    return emptyReadyResult(context.plan, 'locked', context.plan.reason, context.plan.reasonCode)
   }
 
   const skip = new Set(resolved.skipEngines ?? [])
@@ -605,12 +609,14 @@ function nextFallbackEngine(
 function emptyReadyResult(
   plan: WindowsMultilingualEnginePlan,
   availability: WindowsMultilingualAvailability,
-  reason: string | null = null
+  reason: string | null = null,
+  reasonCode: MeetingLanguageReasonCode | null = null
 ): WindowsMultilingualEngineReadyResult {
   return {
     engineId: null,
     availability,
     reason,
+    reasonCode,
     selfTest: null,
     pythonPath: null,
     modelPath: null,

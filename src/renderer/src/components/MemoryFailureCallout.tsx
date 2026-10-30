@@ -1,3 +1,4 @@
+import { useI18n } from '../services/i18n'
 import { memoryFailureDetails, type MemoryFailure } from '../../../shared/memory-failure'
 
 export function MemoryFailureCallout({
@@ -11,11 +12,13 @@ export function MemoryFailureCallout({
   onRetry: () => void
   onViewTranscript?: () => void
 }) {
-  const details = memoryFailureDetails(failure)
+  const { t, language } = useI18n()
+
+  const details = memoryFailureDetails(failure, language)
   return (
-    <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+    <div role="alert" className="rounded-xl border border-clay/30 bg-clay-light px-4 py-3.5">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-clay/30 bg-bg-card text-clay-dark">
           <svg
             aria-hidden="true"
             className="h-4 w-4"
@@ -29,26 +32,26 @@ export function MemoryFailureCallout({
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-[13px] font-semibold text-ink">Not enough available memory</h3>
+          <h3 className="text-[13px] font-semibold text-ink">{t('ui.notEnoughAvailableMemory')}</h3>
           <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
-            Your computer doesn’t have enough free RAM to{' '}
-            {stage === 'transcription' ? 'finish transcription' : 'generate notes'}. Close other
-            apps, then retry.
+            {stage === 'transcription'
+              ? t('ui.yourComputerDoesnTHaveEnoughFreeRAMToFinishTranscriptionCloseOtherAppsThenR')
+              : t('ui.yourComputerDoesnTHaveEnoughFreeRAMToGenerateNotesCloseOtherAppsThenRetry')}
           </p>
           {details && <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">{details}</p>}
-          <div className="flex items-center gap-2 mt-3">
+          <div className="flex flex-wrap items-center gap-2 mt-3">
             <button
               onClick={onRetry}
-              className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
+              className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
             >
-              {stage === 'transcription' ? 'Retry transcription' : 'Retry notes'}
+              {stage === 'transcription' ? t('ui.retryTranscription') : t('ui.retryNotes')}
             </button>
             {onViewTranscript && (
               <button
                 onClick={onViewTranscript}
                 className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
               >
-                View transcript
+                {t('meeting.viewTranscript')}
               </button>
             )}
           </div>

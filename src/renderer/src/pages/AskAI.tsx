@@ -12,6 +12,7 @@ import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { ChatClarificationOption } from '../../../preload/ipc'
+import { useT } from '../services/i18n'
 
 let fallbackRequestIdCounter = 0
 const FIRST_TOKEN_TIMEOUT_MS = 45_000
@@ -26,6 +27,7 @@ function createChatRequestId(): string {
 }
 
 export function AskAI(): ReactElement {
+  const t = useT()
   const {
     messages,
     draftInput,
@@ -40,7 +42,7 @@ export function AskAI(): ReactElement {
   const [loading, setLoading] = useState(false)
   const [ollamaReady, setOllamaReady] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeStreamCleanupRef = useRef<(() => void) | null>(null)
   const activeRequestIdRef = useRef<string | null>(null)
   const activeAssistantMessageIdRef = useRef<string | null>(null)
@@ -99,12 +101,7 @@ export function AskAI(): ReactElement {
 
   const markActiveRequestTimedOut = (requestId: string, messageId: string): void => {
     if (activeRequestIdRef.current !== requestId) return
-    updateMessage(
-      messageId,
-      'Sorry, this is taking longer than expected. Please try again.',
-      undefined,
-      'timed_out'
-    )
+    updateMessage(messageId, t('askAi.timeout'), undefined, 'timed_out')
     trackEvent('chat_response_failed', { failure_code: 'timed_out' })
     finishActiveRequest()
   }
@@ -124,7 +121,12 @@ export function AskAI(): ReactElement {
     activeRequestIdRef.current = requestId
     activeAssistantMessageIdRef.current = assistantMessageId
     const history = messages
-      .filter((message) => message.content.trim().length > 0 && message.status !== 'timed_out')
+      .filter(
+        (message) =>
+          message.content.trim().length > 0 &&
+          message.status !== 'timed_out' &&
+          message.status !== 'failed'
+      )
       .slice(-8)
       .map((message) => ({ role: message.role, content: message.content }))
     addMessage({ role: 'user', content: params.displayQuestion })
@@ -170,12 +172,7 @@ export function AskAI(): ReactElement {
       window.electronAPI.on('chat:error', (payload) => {
         if (payload.requestId !== requestId) return
         if (activeRequestIdRef.current !== requestId) return
-        updateMessage(
-          assistantMessageId,
-          'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
-          undefined,
-          'failed'
-        )
+        updateMessage(assistantMessageId, t('askAi.failed'), undefined, 'failed')
         console.error('Chat failed:', payload.error)
         trackEvent('chat_response_failed', { failure_code: 'stream_error' })
         finishActiveRequest()
@@ -215,12 +212,7 @@ export function AskAI(): ReactElement {
       }
     } catch (err) {
       if (activeRequestIdRef.current !== requestId) return
-      updateMessage(
-        assistantMessageId,
-        'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
-        undefined,
-        'failed'
-      )
+      updateMessage(assistantMessageId, t('askAi.failed'), undefined, 'failed')
       console.error('Chat failed:', err)
       trackEvent('chat_response_failed', { failure_code: 'invoke_failed' })
       finishActiveRequest()
@@ -259,6 +251,7 @@ export function AskAI(): ReactElement {
   }
 
   const handleKeyDown = (e: KeyboardEvent): void => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -285,7 +278,7 @@ export function AskAI(): ReactElement {
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title="Ask AI"
+        title={t('askAi.title')}
         action={
           <button
             type="button"
@@ -293,7 +286,7 @@ export function AskAI(): ReactElement {
             disabled={messages.length === 0 && !draftInput.trim()}
             className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-40"
           >
-            New chat
+            {t('askAi.newChat')}
           </button>
         }
       />
@@ -316,14 +309,11 @@ export function AskAI(): ReactElement {
                 />
               </svg>
             </div>
-            <p className="text-ink-muted text-[13px] text-center max-w-xs">
-              Ask questions about your meetings. I&apos;ll use your recent transcripts and notes to
-              answer.
+            <p className="text-ink-muted text-[13px] text-center max-w-xs text-pretty">
+              {t('askAi.emptyHint')}
             </p>
             {ollamaReady === false && (
-              <p className="text-clay text-[11px] mt-1">
-                Local AI is reconnecting in the background. Try again in a few seconds.
-              </p>
+              <p className="text-clay text-[11px] mt-1 text-pretty">{t('askAi.reconnecting')}</p>
             )}
           </div>
         )}
@@ -336,9 +326,9 @@ export function AskAI(): ReactElement {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
+                  className={`min-w-0 max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed [overflow-wrap:anywhere] ${
                     msg.role === 'user'
-                      ? 'bg-sage text-white rounded-br-md'
+                      ? 'bg-sage text-on-brand rounded-br-md'
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
                   }`}
                 >
@@ -361,16 +351,24 @@ export function AskAI(): ReactElement {
                     </div>
                   ) : msg.role === 'assistant' ? (
                     <div className="space-y-3">
-                      <div className="whitespace-pre-wrap">{renderNoteMarkup(msg.content)}</div>
+                      <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {renderNoteMarkup(
+                          msg.status === 'failed'
+                            ? t('askAi.failed')
+                            : msg.status === 'timed_out'
+                              ? t('askAi.timeout')
+                              : msg.content
+                        )}
+                      </div>
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
-                        <div className="grid gap-2">
+                        <div className="grid min-w-0 grid-cols-1 gap-2">
                           {msg.clarificationOptions.map((option) => (
                             <button
                               key={option.meetingId}
                               type="button"
                               disabled={loading}
                               onClick={() => handleClarificationSelect(msg, option)}
-                              className="text-left rounded-lg border border-border bg-bg px-3 py-2 hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-60"
+                              className="min-w-0 max-w-full text-left rounded-lg border border-border bg-bg px-3 py-2 [overflow-wrap:anywhere] hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-60"
                             >
                               <span className="block text-[13px] font-medium text-ink">
                                 {option.title}
@@ -379,7 +377,10 @@ export function AskAI(): ReactElement {
                                 {option.subtitle}
                               </span>
                               {option.notePreview && (
-                                <span className="mt-1 block text-[11px] text-ink-muted line-clamp-2">
+                                <span
+                                  title={option.notePreview}
+                                  className="mt-1 block text-[11px] text-ink-muted line-clamp-2"
+                                >
                                   {option.notePreview}
                                 </span>
                               )}
@@ -399,36 +400,37 @@ export function AskAI(): ReactElement {
       </div>
 
       <div className="px-6 py-4 border-t border-border">
-        <div className="flex gap-2 max-w-2xl mx-auto">
-          <input
+        <div className="flex flex-wrap items-end justify-end gap-2 max-w-2xl mx-auto">
+          <textarea
             ref={inputRef}
-            type="text"
+            rows={1}
             value={draftInput}
             onChange={(e) => setDraftInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question about your meetings..."
+            aria-label={t('askAi.placeholder')}
+            placeholder={t('askAi.placeholder')}
             disabled={loading}
-            className="flex-1 px-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors disabled:opacity-50"
+            className="flex-[1_1_14rem] min-w-0 max-w-full min-h-[44px] max-h-40 resize-none [field-sizing:content] px-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
             autoFocus
           />
           {loading ? (
             <button
               type="button"
               onClick={handleStop}
-              aria-label="Stop generating"
-              className="px-4 py-2.5 bg-clay text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+              aria-label={t('askAi.stopGenerating')}
+              className="i18n-btn px-4 py-2.5 bg-clay text-on-brand rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
             >
-              <span className="w-2.5 h-2.5 rounded-[2px] bg-white" />
-              Stop
+              <span className="w-2.5 h-2.5 rounded-[2px] bg-on-brand" />
+              {t('askAi.stop')}
             </button>
           ) : (
             <button
               type="button"
               onClick={handleSend}
               disabled={!draftInput.trim()}
-              className="px-4 py-2.5 bg-sage text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
+              className="i18n-btn px-4 py-2.5 bg-sage text-on-brand rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
             >
-              Send
+              {t('askAi.send')}
             </button>
           )}
         </div>

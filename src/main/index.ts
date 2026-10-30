@@ -1,4 +1,12 @@
 import {
+  GithubStarPromptService,
+  createGithubStarPromptStore,
+  isSuccessfulStarMeeting
+} from './services/github-star-prompt'
+import { registerGithubStarIpc } from './ipc/github-star-ipc'
+import { hasMeetingExportNotes } from './services/meeting-export'
+import { loadMeetingExportSnapshot } from './services/meeting-export-sources'
+import {
   app,
   BrowserWindow,
   ipcMain,
@@ -59,8 +67,13 @@ import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import {
   PrefsStore,
   readInitialAnalyticsConsent,
+  readInitialAppearance,
+  readInitialUiLanguage,
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
+import { windowBackgroundForAppearance } from './services/appearance-runtime'
+import { tMain, setMainUiLanguage } from './services/ui-locale'
+import { refreshApplicationMenu } from './services/application-menu'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import {
   bindMeetingLanguagePreferenceStore,
@@ -163,10 +176,11 @@ import { getResetLocalDataTargets } from './services/reset-local-data'
 import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
-import { getScopedTestUserDataDir } from './services/test-runtime'
+import { getScopedTestUserDataDir, isScopedTestRuntime } from './services/test-runtime'
 import {
   onNotificationActivationSuppressionChange,
-  shouldSuppressNotificationActivation
+  shouldSuppressNotificationActivation,
+  showNotificationWindow
 } from './notification-window'
 import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
@@ -318,10 +332,7 @@ const safeQuit = new SafeQuitCoordinator({
       message: 'Could not finish recording before quit',
       error
     })
-    dialog.showErrorBox(
-      'AutoDoc is still saving your recording',
-      'AutoDoc stayed open to protect your recording. Wait for it to finish, then quit again.'
-    )
+    dialog.showErrorBox(tMain('quit.savingTitle'), tMain('quit.savingBody'))
   }
 })
 let mainSentry: MainSentryRuntimeModule | null = null
@@ -529,7 +540,7 @@ function createWindow(): void {
     show: false,
     title: APP_NAME,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    backgroundColor: '#FAFAF7',
+    backgroundColor: windowBackgroundForAppearance(readInitialAppearance()),
     icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -572,6 +583,8 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  setMainUiLanguage(readInitialUiLanguage())
+  refreshApplicationMenu()
   if (!(await warnIfUnsupportedMacOS())) return
 
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
@@ -725,8 +738,8 @@ app.whenReady().then(async () => {
     }
 
     const notification = new Notification({
-      title: 'AutoDoc update ready',
-      body: 'Restart to install.'
+      title: tMain('update.readyTitle'),
+      body: tMain('update.readyBody')
     })
     notification.on('click', openSettingsFromUpdateNotification)
     notification.show()
@@ -735,6 +748,9 @@ app.whenReady().then(async () => {
   // Auto-updater
   if (!isE2E && !__AUTODOC_QA_BUILD__) {
     initAutoUpdater({
+      recordUpdateDownload: (version) => {
+        analyticsStateStore.recordPendingUpdateDownload(version)
+      },
       getInstallBlockReason: () => getUpdateInstallBlockReason(),
       onInstallFailed: () => {
         cancelIdleUpdateInstall()
@@ -749,6 +765,23 @@ app.whenReady().then(async () => {
       onUpdateDownloaded: notifyUpdateReadyIfHidden
     })
   }
+  // Reminder that a recording kept running audio-only; opening AutoDoc shows the in-app banner.
+  // Uses the app's own notification window like notes-ready and meeting detection, because
+  // native toasts don't appear reliably on Windows (e.g. unregistered dev builds).
+  ipcMain.on('recording:audio-only-reminder', (event, title: unknown, body: unknown) => {
+    if (event.sender !== getMainWindow()?.webContents) return
+    if (typeof title !== 'string' || typeof body !== 'string') return
+    showNotificationWindow({
+      title: title.slice(0, 200),
+      body: body.slice(0, 500),
+      primaryActionLabel: tMain('ui.openAutoDoc'),
+      kind: 'audio-only-reminder',
+      onPrimaryAction: () => {
+        focusMainWindow()
+      },
+      onDismiss: () => {}
+    })
+  })
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {
     if (!isE2E && !__AUTODOC_QA_BUILD__) {
@@ -1603,7 +1636,9 @@ app.whenReady().then(async () => {
       }
     })()
   }
+  let githubStarPromptService: GithubStarPromptService | null = null
   segmentationService.onComplete((meetingId) => {
+    void githubStarPromptService?.recordCompletedMeeting(meetingId)
     const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
     void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, { allowRepeat })
       .catch((err) => {
@@ -1947,7 +1982,8 @@ app.whenReady().then(async () => {
 
   const {
     recoverInterruptedRecordings: recoverInterruptedRecordingsImpl,
-    hasPostProcessingWork
+    hasPostProcessingWork,
+    clearDiskFullHold
   } = registerRecordingIpc(
     recordingService,
     transcriptionService,
@@ -2050,6 +2086,31 @@ app.whenReady().then(async () => {
     }
   }
 
+  const isPromptBusy = (): boolean => {
+    const mainWindow = getMainWindow()
+    const updateState = getUpdateStatus().state
+    const updateBusy =
+      updateState === 'checking' ||
+      updateState === 'available' ||
+      updateState === 'downloading' ||
+      updateState === 'downloaded' ||
+      updateState === 'installing'
+
+    return (
+      !mainWindow ||
+      mainWindow.isDestroyed() ||
+      !mainWindow.isVisible() ||
+      mainWindow.isMinimized() ||
+      !mainWindow.isFocused() ||
+      recordingService.getState().isRecording ||
+      hasPostProcessingWork() ||
+      transcriptionService.hasActiveOrQueuedWork() ||
+      segmentationService.hasActiveOrQueuedWork() ||
+      shouldSuppressNotificationActivation() ||
+      updateBusy
+    )
+  }
+
   const feedbackPromptStore = new FeedbackPromptStore()
   const feedbackPromptService = new FeedbackPromptService({
     store: feedbackPromptStore,
@@ -2058,31 +2119,36 @@ app.whenReady().then(async () => {
       return Number.isFinite(baseline) ? baseline : null
     },
     isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
-    isBusy: () => {
-      const mainWindow = getMainWindow()
-      const updateState = getUpdateStatus().state
-      const updateBusy =
-        updateState === 'checking' ||
-        updateState === 'available' ||
-        updateState === 'downloading' ||
-        updateState === 'downloaded' ||
-        updateState === 'installing'
-
-      return (
-        !mainWindow ||
-        mainWindow.isDestroyed() ||
-        !mainWindow.isVisible() ||
-        mainWindow.isMinimized() ||
-        !mainWindow.isFocused() ||
-        recordingService.getState().isRecording ||
-        hasPostProcessingWork() ||
-        transcriptionService.hasActiveOrQueuedWork() ||
-        segmentationService.hasActiveOrQueuedWork() ||
-        shouldSuppressNotificationActivation() ||
-        updateBusy
-      )
-    },
+    isBusy: isPromptBusy,
+    isOtherPromptSuppressed: () => githubStarPromptService?.blocksFeedback() ?? false,
     isSupportAvailable: () => getSupportEmail() !== null
+  })
+
+  githubStarPromptService = new GithubStarPromptService({
+    store: createGithubStarPromptStore(Date.now()),
+    isBusy: isPromptBusy,
+    isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
+    feedbackTakesPriority: async () =>
+      (await feedbackPromptService.wasShownThisSessionOrToday()) ||
+      (await feedbackPromptService.getEligibility()).eligible,
+    isGoodMeeting: async (meetingId) => {
+      try {
+        const metadata = await readMetadata(
+          join(recordingService.getRecordingsBaseDir(), meetingId)
+        )
+        return isSuccessfulStarMeeting(
+          metadata,
+          await transcriptionService.getStatus(meetingId),
+          await segmentationService.getStatus(meetingId),
+          hasMeetingExportNotes(
+            await loadMeetingExportSnapshot(recordingService.getRecordingsBaseDir(), meetingId)
+          ),
+          await segmentationService.getErrorCode(meetingId)
+        )
+      } catch {
+        return false
+      }
+    }
   })
 
   const qualifyingFocusMs =
@@ -2119,6 +2185,7 @@ app.whenReady().then(async () => {
     isTrustedSender: isTrustedMainWindowSender
   })
 
+  registerGithubStarIpc(githubStarPromptService, isTrustedMainWindowSender)
   registerFeedbackPromptIpc(feedbackPromptService, {
     isTrustedSender: isTrustedMainWindowSender,
     observeForeground: () => feedbackSessionTracker.observeActive()
@@ -2198,7 +2265,12 @@ app.whenReady().then(async () => {
     })
   }
 
-  registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
+  registerTranscriptionIpc(transcriptionService, (meetingId) => {
+    // A manual retry means the user freed space (or wants another attempt), so lift the
+    // disk-full hold that stops automatic recovery from re-running this meeting's post-processing.
+    clearDiskFullHold(meetingId)
+    markReprocessNotificationPending(meetingId)
+  })
   registerLlmIpc(
     segmentationService,
     managedOllamaManager,
@@ -2207,6 +2279,7 @@ app.whenReady().then(async () => {
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
     (meetingId) => {
+      clearDiskFullHold(meetingId)
       // A manual notes retry is an explicit user action; allow one fresh attempt.
       ollamaRuntimeRecovery.clearModelLoadLatch()
       markReprocessNotificationPending(meetingId)
@@ -2274,7 +2347,7 @@ app.whenReady().then(async () => {
   }
 
   cleanupTempFiles().catch(() => {})
-  if (!__AUTODOC_QA_BUILD__) {
+  if (!__AUTODOC_QA_BUILD__ && !isScopedTestRuntime()) {
     try {
       await migrateDataDir()
     } catch (err) {

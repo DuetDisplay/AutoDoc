@@ -123,6 +123,8 @@ interface WindowsTranscriptionAttempt {
   deviceFailure: boolean
   cpuRecoveryPinned: boolean
   deviceError?: string
+  /** The GPU memory gate refused this attempt; the recording is retried on CPU. */
+  memoryGateFailure: boolean
 }
 
 interface SystemMemorySnapshot {
@@ -181,6 +183,12 @@ export class TranscriptionService {
   private windowsAttempt: WindowsTranscriptionAttempt | null = null
   private windowsRecordingGpuEligible = false
   private windowsWorkerShutdown: Promise<Error | null> | null = null
+  /** Recording currently transcribed on CPU by per-recording recovery (surfaced as cpuFallback). */
+  private windowsCpuFallbackMeetingId: string | null = null
+  /** Sources transcribing now, including between chunk passes (see runAsBusySource). */
+  private sourcesInProgress = 0
+  /** Passes currently inside the Windows memory gate; they are not about to free memory. */
+  private sourcesWaitingAtGate = 0
   private windowsMultilingualReady: WindowsMultilingualEngineReadyResult | null = null
 
   constructor(
@@ -421,6 +429,7 @@ export class TranscriptionService {
       this.processing = false
       this.enqueueSource.delete(meetingId)
       this.jobIdentity.delete(meetingId)
+      this.windowsCpuFallbackMeetingId = null
       this.processNext()
     }
   }
@@ -434,6 +443,7 @@ export class TranscriptionService {
 
   private async processWindowsJob(meetingId: string): Promise<void> {
     this.windowsAttempt = null
+    this.windowsCpuFallbackMeetingId = null
     if (
       this.enqueueSource.get(meetingId) !== 'reprocess' &&
       (await this.hasUsableTranscript(meetingId))
@@ -474,12 +484,15 @@ export class TranscriptionService {
       } catch (error) {
         // Decide once all sources settle, never once per microphone/system source.
         const attempt = this.windowsAttempt as WindowsTranscriptionAttempt | null
-        if (
-          !attempt?.deviceFailure ||
-          !attempt.cpuRecoveryPinned ||
-          attempt.backend !== 'parakeet-gpu' ||
-          cpuRecoveryUsed
-        ) {
+        // Device loss needs its restart pin; the memory floor is retried without one.
+        const recoveryReason = attempt?.deviceFailure
+          ? attempt.cpuRecoveryPinned
+            ? 'gpu-device-lost'
+            : null
+          : attempt?.memoryGateFailure
+            ? 'gpu-memory-floor'
+            : null
+        if (!attempt || !recoveryReason || attempt.backend !== 'parakeet-gpu' || cpuRecoveryUsed) {
           throw error
         }
         this.windowsRecordingGpuEligible = false
@@ -488,11 +501,13 @@ export class TranscriptionService {
         this.windowsWorkerShutdown = null
         if (!this.whisperManager.downgradeParakeetGpuToCpuForSession?.()) throw error
         cpuRecoveryUsed = true
+        this.windowsCpuFallbackMeetingId = meetingId
         logAutodocEvent({
           area: 'transcription',
           message: 'Automatically recovering transcription attempt',
           meetingId,
           context: {
+            reason: recoveryReason,
             failedBackend: attempt.backend,
             deviceError: attempt.deviceError,
             failedProcessingProfile: attempt.processingProfile,
@@ -643,7 +658,8 @@ export class TranscriptionService {
           modelName: this.whisperManager.getModelName(),
           processingProfile: await this.getProcessingProfileLogContext(),
           deviceFailure: false,
-          cpuRecoveryPinned: false
+          cpuRecoveryPinned: false,
+          memoryGateFailure: false
         }
       }
 
@@ -1016,14 +1032,16 @@ export class TranscriptionService {
         processingProfile
       }
     })
-    const whisperOutput = await this.transcribeWithFallback(
-      tempAudioWav,
-      meetingId,
-      audioDuration,
-      tempPrefix,
-      tempFiles,
-      progressRange,
-      concurrentSources
+    const whisperOutput = await this.runAsBusySource(() =>
+      this.transcribeWithFallback(
+        tempAudioWav,
+        meetingId,
+        audioDuration,
+        tempPrefix,
+        tempFiles,
+        progressRange,
+        concurrentSources
+      )
     )
     console.log(
       `[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
@@ -1051,6 +1069,20 @@ export class TranscriptionService {
     }))
 
     return stitch ? this.stitchAdjacentTranscriptFragments(transcripts) : transcripts
+  }
+
+  /**
+   * Marks a source busy from the start to the end of its speech run (all chunk
+   * passes, success or failure), so the memory gate can tell a sibling that is
+   * between chunks from one that is done.
+   */
+  private async runAsBusySource<T>(run: () => Promise<T>): Promise<T> {
+    this.sourcesInProgress += 1
+    try {
+      return await run()
+    } finally {
+      this.sourcesInProgress -= 1
+    }
   }
 
   private async diarizeTranscriptsForSource(
@@ -2008,7 +2040,12 @@ export class TranscriptionService {
     const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
     tempFiles.push(jsonPath)
     if (process.platform === 'win32') {
-      await this.waitForWindowsTranscriptionMemory(meetingId)
+      this.sourcesWaitingAtGate += 1
+      try {
+        await this.waitForWindowsTranscriptionMemory(meetingId)
+      } finally {
+        this.sourcesWaitingAtGate -= 1
+      }
     }
     await this.runWhisperPass(
       audioWavPath,
@@ -3164,8 +3201,14 @@ export class TranscriptionService {
     })
 
     const profile = await this.getEffectiveWindowsProcessingProfileForJob()
-    const isCpuTierProfile = profile?.id === 'win-low-spec' || profile?.id === 'win-cpu-normal'
-    const isGpuProfile = profile?.id === 'win-gpu'
+    // After a per-recording CPU downgrade the profile may still read win-gpu;
+    // the backend running this pass decides which floor applies.
+    const onCpuBackend = this.whisperManager.getTranscriptionBackend().endsWith('-cpu')
+    const isCpuTierProfile =
+      profile?.id === 'win-low-spec' ||
+      profile?.id === 'win-cpu-normal' ||
+      (profile?.id === 'win-gpu' && onCpuBackend)
+    const isGpuProfile = profile?.id === 'win-gpu' && !onCpuBackend
     const minFreeGiB = isGpuProfile
       ? WINDOWS_MEMORY_GATE_GPU_MIN_FREE_GIB
       : WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB
@@ -3177,42 +3220,68 @@ export class TranscriptionService {
       return
     }
 
-    logAutodocEvent({
-      area: 'transcription',
-      message: 'Starting extended memory wait after timeout with low free memory',
-      meetingId,
-      context: {
-        freeGiB: freeAfterTimeoutGiB,
-        requiredGiB,
-        minFreeGiB,
-        maxExtraWaitMs: WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
-      }
-    })
+    // Only another AutoDoc job (notes, another transcription) or a busy sibling
+    // source in this job can free memory for us soon. Otherwise the GPU pass
+    // falls straight to the CPU recovery. The caller is in both counters, so
+    // it cancels out; siblings waiting at the gate are not about to free anything.
+    const skipExtendedWait =
+      isGpuProfile &&
+      this.localProcessingCoordinator != null &&
+      !this.localProcessingCoordinator.hasOtherActiveWindowsWork() &&
+      this.sourcesInProgress - this.sourcesWaitingAtGate <= 0
 
-    const extendedStartedAt = Date.now()
-    while (Date.now() - extendedStartedAt < WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS) {
-      await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
-      const freeGiB = readFreeGiB()
-      if (freeGiB == null || freeGiB >= minFreeGiB) {
-        return
+    if (skipExtendedWait) {
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'Skipping extended memory wait: no other AutoDoc job is active',
+        meetingId,
+        context: { freeGiB: freeAfterTimeoutGiB, requiredGiB, minFreeGiB }
+      })
+    } else {
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'Starting extended memory wait after timeout with low free memory',
+        meetingId,
+        context: {
+          freeGiB: freeAfterTimeoutGiB,
+          requiredGiB,
+          minFreeGiB,
+          maxExtraWaitMs: WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
+        }
+      })
+
+      const extendedStartedAt = Date.now()
+      while (Date.now() - extendedStartedAt < WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS) {
+        await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
+        const freeGiB = readFreeGiB()
+        if (freeGiB == null || freeGiB >= minFreeGiB) {
+          return
+        }
       }
     }
 
-    const freeAfterExtendedWaitGiB = readFreeGiB()
+    const freeAfterExtendedWaitGiB = skipExtendedWait ? freeAfterTimeoutGiB : readFreeGiB()
     if (isGpuProfile && freeAfterExtendedWaitGiB != null && freeAfterExtendedWaitGiB < minFreeGiB) {
+      const waitedMs =
+        WINDOWS_MEMORY_GATE_MAX_WAIT_MS +
+        (skipExtendedWait ? 0 : WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS)
       logAutodocEvent({
         area: 'transcription',
-        message: 'Insufficient free memory for GPU transcription pass after extended wait',
+        message: `Insufficient free memory for GPU transcription pass${skipExtendedWait ? '' : ' after extended wait'}`,
         meetingId,
         context: {
           freeGiB: freeAfterExtendedWaitGiB,
           requiredGiB,
           minFreeGiB,
-          waitedMs: WINDOWS_MEMORY_GATE_MAX_WAIT_MS + WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
+          waitedMs
         }
       })
+      // Parakeet GPU retries this recording on CPU (see processWindowsJob); the floor stays.
+      if (this.windowsAttempt?.backend === 'parakeet-gpu') {
+        this.windowsAttempt.memoryGateFailure = true
+      }
       throw new Error(
-        `Insufficient free memory for GPU transcription pass (${freeAfterExtendedWaitGiB} GiB free, floor ${minFreeGiB} GiB) after extended wait`
+        `Insufficient free memory for GPU transcription pass (${freeAfterExtendedWaitGiB} GiB free, floor ${minFreeGiB} GiB)${skipExtendedWait ? '' : ' after extended wait'}`
       )
     }
   }
@@ -3368,6 +3437,17 @@ export class TranscriptionService {
     return typeof error?.error === 'string' ? memoryFailureFromError(error.error) : undefined
   }
 
+  async getErrorCode(meetingId: string): Promise<string | undefined> {
+    const error = await this.readErrorFile(
+      join(this.recordingsBaseDir, meetingId, 'transcript.error')
+    )
+    return typeof error?.error === 'string' ? classifyError(error.error) : undefined
+  }
+
+  getCpuFallback(meetingId: string): boolean {
+    return this.windowsCpuFallbackMeetingId === meetingId
+  }
+
   private async readErrorFile(
     errorPath: string
   ): Promise<{ error: string; retries: number } | null> {
@@ -3440,6 +3520,7 @@ export class TranscriptionService {
       errorCode,
       memoryFailure: status === 'failed' ? extras?.memoryFailure : undefined,
       reprocessFailed: extras?.reprocessFailed,
+      cpuFallback: this.windowsCpuFallbackMeetingId === meetingId ? true : undefined,
       backendLabel:
         status === 'transcribing'
           ? this.whisperManager.getTranscriptionBackendLabel?.()

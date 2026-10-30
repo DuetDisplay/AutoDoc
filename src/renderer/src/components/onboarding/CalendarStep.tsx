@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useCalendarConnect } from '../../hooks/useCalendarConnect'
+import { useT } from '../../services/i18n'
 
 export function CalendarStep({ onNext }: { onNext: () => void }) {
+  const t = useT()
   const [connected, setConnected] = useState(false)
 
   const {
@@ -11,9 +13,10 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
   } = useCalendarConnect({
     onConnected: () => setConnected(true),
     formatError: (provider) =>
-      `We couldn't connect ${
-        provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'
-      }. Check the permission prompt and try again, or skip for now.`
+      t('upcoming.connectFailed', {
+        provider:
+          provider === 'google' ? t('upcoming.googleCalendar') : t('upcoming.microsoftOutlook')
+      })
   })
   const connecting = connectingProvider !== null
 
@@ -26,23 +29,24 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="text-center">
       <span className="inline-block px-2.5 py-1 bg-mist-light text-ink-muted rounded-md text-[11px] font-semibold uppercase tracking-wider mb-4">
-        OPTIONAL
+        {t('ui.oPTIONAL')}
       </span>
       <div className="w-16 h-16 rounded-2xl bg-sage-light flex items-center justify-center text-[28px] mx-auto mb-5">
         📅
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Connect Calendar</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        {t('ui.connectCalendar')}
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        Connect your calendar to automatically name recordings after meetings and suggest speaker
-        names from attendee lists.
+        {t('ui.connectYourCalendarToAutomaticallyNameRecordingsAfterMeetingsAndSuggestSpea')}
       </p>
 
       {connected ? (
         <button
           onClick={onNext}
-          className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn px-8 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Continue →
+          {t('onboarding.continue')}
         </button>
       ) : (
         <>
@@ -50,7 +54,7 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
             <button
               onClick={() => handleConnect('google')}
               disabled={connecting}
-              className="flex items-center justify-center gap-2.5 px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors disabled:opacity-50 w-64"
+              className="i18n-btn flex items-center justify-center gap-2.5 px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors disabled:opacity-50 w-full max-w-72"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                 <path
@@ -70,12 +74,12 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
                   fill="#EA4335"
                 />
               </svg>
-              {connecting ? 'Connecting...' : 'Connect Google Calendar'}
+              {connecting ? t('settings.connecting') : t('upcoming.connectGoogle')}
             </button>
             <button
               onClick={() => handleConnect('microsoft')}
               disabled={connecting}
-              className="flex items-center justify-center gap-2.5 px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors disabled:opacity-50 w-64"
+              className="i18n-btn flex items-center justify-center gap-2.5 px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors disabled:opacity-50 w-full max-w-72"
             >
               <svg width="18" height="18" viewBox="0 0 23 23" fill="none">
                 <rect x="1" y="1" width="10" height="10" fill="#F25022" />
@@ -83,7 +87,7 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
                 <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
                 <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
               </svg>
-              {connecting ? 'Connecting...' : 'Connect Microsoft Outlook'}
+              {connecting ? t('settings.connecting') : t('upcoming.connectMicrosoft')}
             </button>
           </div>
           {connectError && (
@@ -98,7 +102,7 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
             onClick={onNext}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
-            Skip for now
+            {t('onboarding.skipForNow')}
           </button>
         </>
       )}

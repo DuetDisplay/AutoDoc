@@ -1,36 +1,38 @@
+import { useT } from '../services/i18n'
+import type { MessageKey } from '../../../shared/i18n'
 import { useState, useEffect } from 'react'
 import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
 import type { SegmentationStatus, OllamaSetupStatus } from '../../../shared/types'
 import { getOllamaSetupLabel } from '../services/setup-status-labels'
 
-const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: string }> = {
+const STATUS_CONFIG: Record<SegmentationStatus, { label: MessageKey; className: string }> = {
   pending: {
-    label: 'Awaiting notes',
+    label: 'ui.awaitingNotes',
     className: 'text-ink-faint bg-bg-accent'
   },
   queued: {
-    label: 'Queued for notes',
+    label: 'ui.queuedForNotes',
     className: 'text-ink-faint bg-bg-accent'
   },
   'downloading-model': {
-    label: 'Setting up Ollama and notes model...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse'
-  },
-  segmenting: {
-    label: 'Generating notes...',
+    label: 'ui.settingUpOllamaAndNotesModel',
     className: 'text-ink-muted bg-bg-accent'
   },
+  segmenting: {
+    label: 'meeting.generatingNotes',
+    className: 'text-ink-secondary bg-bg-accent'
+  },
   'no-notes': {
-    label: 'No notes generated',
-    className: 'text-amber-800 bg-amber-50'
+    label: 'ui.noNotesGenerated',
+    className: 'text-clay-dark bg-clay-light'
   },
   complete: {
-    label: 'Notes ready',
-    className: 'text-green-700 bg-green-50'
+    label: 'ui.notesReady',
+    className: 'text-sage-dark bg-sage-light'
   },
   failed: {
-    label: 'Notes failed — Retry',
-    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100'
+    label: 'ui.notesFailedRetry',
+    className: 'text-clay-dark bg-clay-light'
   }
 }
 
@@ -49,6 +51,7 @@ export function SegmentationBadge({
   hasMemoryFailure,
   onRetry
 }: SegmentationBadgeProps) {
+  const t = useT()
   const config = STATUS_CONFIG[status]
   const [ollamaProgress, setOllamaProgress] = useState<OllamaSetupStatus | null>(null)
 
@@ -64,18 +67,18 @@ export function SegmentationBadge({
   const activeOllamaProgress = status === 'downloading-model' ? ollamaProgress : null
   const isInsufficientMemory =
     status === 'failed' && (hasMemoryFailure ?? errorCode === 'ollama-insufficient-memory')
-  let label = isInsufficientMemory ? 'Not enough memory' : config.label
-  if (status === 'failed' && errorCode === 'llm-empty-output') label = 'No notes found — Retry'
+  let label = isInsufficientMemory ? t('ui.notEnoughMemory') : t(config.label)
+  if (status === 'failed' && errorCode === 'llm-empty-output') label = t('ui.noNotesFoundRetry')
   if (status === 'segmenting' && progress == null) {
-    label = 'Preparing notes...'
+    label = t('meeting.preparingNotes')
   } else if (status === 'segmenting' && progress != null) {
     label =
       progress >= NOTES_WRITER_PROGRESS_END
-        ? `Shaping notes... ${progress}%`
-        : `Generating notes... ${progress}%`
+        ? t('ui.shapingNotesPercent', { percent: progress })
+        : t('ui.generatingNotesPercent', { percent: progress })
   }
   if (activeOllamaProgress) {
-    label = getOllamaSetupLabel(activeOllamaProgress) ?? label
+    label = getOllamaSetupLabel(activeOllamaProgress, t) ?? label
   }
 
   const showProgress = status === 'segmenting' && progress != null
@@ -83,7 +86,7 @@ export function SegmentationBadge({
 
   return (
     <span
-      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${status === 'segmenting' && !showProgress ? 'animate-pulse' : ''} ${isInsufficientMemory ? 'cursor-default hover:bg-red-50' : ''}`}
+      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${isInsufficientMemory ? 'cursor-default' : canRetry ? 'cursor-pointer hover:bg-bg-card' : ''}`}
       onClick={canRetry ? onRetry : undefined}
     >
       {showProgress && (

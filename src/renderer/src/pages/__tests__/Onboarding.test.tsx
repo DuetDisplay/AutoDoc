@@ -19,7 +19,7 @@ beforeEach(() => {
 })
 
 describe('Onboarding', () => {
-  it('renders welcome screen first', async () => {
+  it('resumes a saved welcome screen', async () => {
     render(<Onboarding onComplete={vi.fn()} />)
     expect(await screen.findByText(/your meetings talk/i)).toBeInTheDocument()
     expect(screen.getByText('Get Started →')).toBeInTheDocument()
@@ -39,6 +39,11 @@ describe('Onboarding', () => {
     expect(screen.getByText('How It Works')).toBeInTheDocument()
     await userEvent.click(screen.getByText('Next →'))
     expect(screen.getByText('Notes That Think')).toBeInTheDocument()
+    expect(screen.getByText(/writes a summary, topics, and key takeaways/)).toBeInTheDocument()
+    for (const title of ['Summary', 'Topics', 'Key takeaways']) {
+      expect(screen.getByText(title)).toBeInTheDocument()
+    }
+    expect(screen.queryByText('Action Items')).not.toBeInTheDocument()
   })
 
   it('goes back to the previous onboarding screen and persists the previous step', async () => {
@@ -112,7 +117,7 @@ describe('Onboarding', () => {
     await screen.findByText(/your meetings talk/i)
     await waitFor(() => {
       const dots = document.querySelectorAll('[data-testid="step-dot"]')
-      expect(dots.length).toBe(11)
+      expect(dots.length).toBe(12)
     })
   })
 
@@ -254,7 +259,7 @@ describe('Onboarding', () => {
 
     await waitFor(() => {
       const dots = document.querySelectorAll('[data-testid="step-dot"]')
-      expect(dots.length).toBe(9)
+      expect(dots.length).toBe(10)
     })
   })
 

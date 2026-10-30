@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useToastStore } from '../stores/toast'
 import { Upcoming } from './Upcoming'
 import { hasCurrentOrImminentMeeting } from '../services/feedback-prompt-safety'
@@ -11,10 +11,20 @@ import {
   installMockElectronApi,
   resetRendererStores
 } from '../test/fixtures'
+import { I18nProvider } from '../services/i18n'
+import { applyDocumentLanguage } from '../services/document-language'
+import { translate } from '../../../shared/i18n'
+import { UI_LANGUAGE_CODES } from '../../../shared/ui-language'
+import { en } from '../../../shared/i18n/messages/en'
 
 describe('Upcoming', () => {
   beforeEach(() => {
     resetRendererStores()
+    applyDocumentLanguage('en')
+  })
+
+  afterEach(() => {
+    applyDocumentLanguage('en')
   })
 
   it('connects a calendar and renders synced upcoming meetings', async () => {
@@ -47,6 +57,25 @@ describe('Upcoming', () => {
     expect(await screen.findByText('Roadmap Sync')).toBeInTheDocument()
     expect(screen.getByText(/Google Meet/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sync/i })).toBeInTheDocument()
+  })
+
+  it('uses theme tokens so calendar connect labels stay readable in dark mode', async () => {
+    installMockElectronApi({
+      'calendar:get-accounts': () => [],
+      'calendar:get-events': () => []
+    })
+
+    render(
+      <MemoryRouter>
+        <Upcoming />
+      </MemoryRouter>
+    )
+
+    const google = await screen.findByRole('button', { name: /connect google calendar/i })
+    const outlook = screen.getByRole('button', { name: /connect microsoft outlook/i })
+    expect(google).toHaveClass('bg-ink', 'text-on-ink', 'inline-flex')
+    expect(outlook).toHaveClass('bg-ink', 'text-on-ink', 'inline-flex')
+    expect(google.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/)
   })
 
   it('shows a recoverable error when calendar connection fails', async () => {
@@ -155,7 +184,7 @@ describe('Upcoming', () => {
     )
     const user = userEvent.setup()
     await user.click((await screen.findAllByRole('button', { name: 'Enable auto-record' }))[0])
-    await user.click(screen.getByRole('button', { name: /All in series/ }))
+    await user.click(screen.getByRole('menuitem', { name: /All in series/ }))
     expect(screen.getAllByText('Auto-record: Off')).toHaveLength(2)
     await act(async () => {
       api.emit(
@@ -172,4 +201,38 @@ describe('Upcoming', () => {
     )
     expect(screen.getAllByText('Auto-record: Series')).toHaveLength(2)
   })
+
+  it.each(UI_LANGUAGE_CODES.filter((code) => code !== 'en'))(
+    'wires Upcoming chrome through i18n for %s',
+    async (language) => {
+      applyDocumentLanguage(language)
+      installMockElectronApi({
+        'calendar:get-accounts': () => [],
+        'calendar:get-events': () => [],
+        'prefs:get-ui-language': () => language
+      })
+
+      render(
+        <I18nProvider>
+          <MemoryRouter>
+            <Upcoming />
+          </MemoryRouter>
+        </I18nProvider>
+      )
+
+      expect(
+        await screen.findByRole('heading', { name: translate(language, 'upcoming.title') })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: translate(language, 'upcoming.connectGoogle') })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: translate(language, 'upcoming.connectMicrosoft') })
+      ).toBeInTheDocument()
+      expect(screen.getByText(translate(language, 'upcoming.connectPrompt'))).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: en['upcoming.connectGoogle'] })
+      ).not.toBeInTheDocument()
+    }
+  )
 })

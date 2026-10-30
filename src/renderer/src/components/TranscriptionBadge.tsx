@@ -1,36 +1,38 @@
+import { useT } from '../services/i18n'
+import type { MessageKey } from '../../../shared/i18n'
 import { useEffect, useRef, useState } from 'react'
 import type { TranscriptionStatus, TranscriptionStatusPayload } from '../../../shared/types'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
 import { formatTranscriptionStatusText } from '../services/transcription-status-labels'
 
-const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: string }> = {
+const STATUS_CONFIG: Record<TranscriptionStatus, { label: MessageKey; className: string }> = {
   pending: {
-    label: 'Awaiting transcription',
+    label: 'ui.awaitingTranscription',
     className: 'text-ink-faint bg-bg-accent'
   },
   queued: {
-    label: 'Awaiting transcription',
+    label: 'ui.awaitingTranscription',
     className: 'text-ink-faint bg-bg-accent'
   },
   downloading: {
-    label: 'Downloading model...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse'
-  },
-  transcribing: {
-    label: 'Transcribing...',
+    label: 'ui.downloadingModel',
     className: 'text-ink-muted bg-bg-accent'
   },
+  transcribing: {
+    label: 'ui.transcribing',
+    className: 'text-ink-secondary bg-bg-accent'
+  },
   diarizing: {
-    label: 'Identifying speakers...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse'
+    label: 'ui.identifyingSpeakers',
+    className: 'text-ink-muted bg-bg-accent'
   },
   complete: {
-    label: 'Transcribed',
-    className: 'text-green-700 bg-green-50'
+    label: 'ui.transcribed',
+    className: 'text-sage-dark bg-sage-light'
   },
   failed: {
-    label: 'Failed — Retry',
-    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100'
+    label: 'ui.failedRetry',
+    className: 'text-clay-dark bg-clay-light'
   }
 }
 
@@ -48,6 +50,7 @@ export function TranscriptionBadge({
   onRetry,
   hasMemoryFailure
 }: TranscriptionBadgeProps) {
+  const t = useT()
   const config = STATUS_CONFIG[status]
   const isMemoryFailure = status === 'failed' && hasMemoryFailure
   const [retryPending, setRetryPending] = useState(false)
@@ -74,20 +77,23 @@ export function TranscriptionBadge({
 
   const showProgress = status === 'transcribing' && progress != null
   const activeSetupStatus = status === 'downloading' ? setupStatus : null
-  const setupLabel = getWhisperSetupLabel(activeSetupStatus)
+  const setupLabel = getWhisperSetupLabel(activeSetupStatus, t)
   const transcribingLabel =
     status === 'transcribing'
-      ? formatTranscriptionStatusText({
-          status,
-          progress
-        } satisfies Pick<TranscriptionStatusPayload, 'status' | 'progress'>)
+      ? formatTranscriptionStatusText(
+          {
+            status,
+            progress
+          } satisfies Pick<TranscriptionStatusPayload, 'status' | 'progress'>,
+          t
+        )
       : null
 
   const Tag = status === 'failed' && !isMemoryFailure && onRetry ? 'button' : 'span'
   return (
     <Tag
       {...(Tag === 'button' ? { type: 'button' as const, disabled: retryPending } : {})}
-      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${isMemoryFailure ? 'cursor-default hover:bg-red-50' : ''}`}
+      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${isMemoryFailure ? 'cursor-default' : ''}`}
       onClick={
         Tag === 'button'
           ? () => {
@@ -110,9 +116,11 @@ export function TranscriptionBadge({
       )}
       <span className="relative">
         {isMemoryFailure
-          ? 'Not enough memory'
+          ? t('ui.notEnoughMemory')
           : (transcribingLabel ??
-            (showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label)))}
+            (showProgress
+              ? t('ui.transcribingPercent', { percent: progress })
+              : (setupLabel ?? t(config.label))))}
       </span>
     </Tag>
   )

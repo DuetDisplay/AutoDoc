@@ -81,6 +81,7 @@ export interface FeedbackPromptServiceOptions {
   isOnboardingComplete: () => MaybePromise<boolean>
   isBusy: () => MaybePromise<boolean>
   isSupportAvailable: () => MaybePromise<boolean>
+  isOtherPromptSuppressed?: () => boolean
   createReservationId?: () => string
   reservationTtlMs?: number
 }
@@ -177,6 +178,7 @@ export class FeedbackPromptService {
   private readonly reservationTtlMs: number
   private activeReservation: FeedbackPromptReservation | null = null
   private activeImpression: FeedbackPromptImpression | null = null
+  private shownThisSession = false
   private operationQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: FeedbackPromptServiceOptions) {
@@ -222,6 +224,14 @@ export class FeedbackPromptService {
       recorded: state !== null && recorded,
       stateAvailable: state !== null
     }
+  }
+
+  async wasShownThisSessionOrToday(now = this.now()): Promise<boolean> {
+    const state = await this.store.readState()
+    if (!state || this.shownThisSession) return true
+    return [state.initialPromptShownAt, state.reminderPromptShownAt].some(
+      (at) => at !== null && toLocalDateKey(at) === toLocalDateKey(now)
+    )
   }
 
   async getEligibility(now = this.now()): Promise<FeedbackPromptEligibility> {
@@ -327,6 +337,7 @@ export class FeedbackPromptService {
         return { ...eligibility, confirmed: false, impressionId: null }
       }
 
+      this.shownThisSession = true
       this.activeImpression = {
         id: reservation.id,
         surface: reservation.surface,
@@ -482,7 +493,12 @@ export class FeedbackPromptService {
           this.options.isSupportAvailable()
         ]
       )
-      return { eligibilityBaselineAt, onboardingComplete, busy, supportAvailable }
+      return {
+        eligibilityBaselineAt,
+        onboardingComplete,
+        busy: busy || Boolean(this.options.isOtherPromptSuppressed?.()),
+        supportAvailable
+      }
     } catch {
       return null
     }

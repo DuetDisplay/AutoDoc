@@ -36,11 +36,15 @@ export function classifyError(rawError: string): string {
   ) {
     return 'whisper-crash'
   }
+  // Disk-full wins over ffmpeg: ffmpeg reports "No space left on device" in its own error text.
+  if (error.includes('enospc') || error.includes('no space')) {
+    return 'disk-full'
+  }
   if (error.includes('ffmpeg')) {
     return 'ffmpeg-error'
   }
-  if (error.includes('enospc') || error.includes('no space')) {
-    return 'disk-full'
+  if (error.includes('insufficient free memory for')) {
+    return 'insufficient-memory'
   }
   if (
     error.includes('ollama') &&

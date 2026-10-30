@@ -14,6 +14,7 @@ import {
   spawnFfmpegWithStallDetection
 } from '../recording-ipc'
 import { matchCalendarEvent, readMetadata } from '../../services/calendar-matcher'
+import { renameWithRetry, replaceFileWithRetry } from '../../services/file-operation-retry'
 import { decryptFileToTemp, encryptJSON, isEncrypted } from '../../services/crypto'
 import type { CalendarEvent, MeetingMetadata } from '../../../shared/types'
 
@@ -32,7 +33,9 @@ const {
   logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn(),
   captureMessage: vi.fn(),
-  spawnBehavior: { current: 'success' as 'success' | 'stall' | 'fail' }
+  spawnBehavior: {
+    current: 'success' as 'success' | 'stall' | 'fail' | 'disk-full' | 'disk-full-mux'
+  }
 }))
 
 class MockFfmpegProcess extends EventEmitter {
@@ -68,7 +71,28 @@ function completeSuccessfulFfmpegProcess(proc: MockFfmpegProcess, args: readonly
 vi.mock('child_process', () => ({
   spawn: vi.fn((_command: unknown, args: readonly unknown[] = []) => {
     const proc = new MockFfmpegProcess()
-    if (spawnBehavior.current === 'success') {
+    const lastArg = args.at(-1)
+    const outputName = typeof lastArg === 'string' ? path.basename(lastArg) : ''
+    const diskFullHere =
+      spawnBehavior.current === 'disk-full' ||
+      (spawnBehavior.current === 'disk-full-mux' && outputName !== 'merged-audio-tmp.webm')
+    if (diskFullHere) {
+      // A full disk leaves a partial output behind and ffmpeg exits 228.
+      setTimeout(() => {
+        if (
+          typeof lastArg === 'string' &&
+          path.isAbsolute(lastArg) &&
+          existsSync(path.dirname(lastArg))
+        ) {
+          writeFileSync(lastArg, Buffer.from('partial'))
+        }
+        proc.stderr.emit(
+          'data',
+          Buffer.from('av_interleaved_write_frame(): No space left on device')
+        )
+        proc.emit('close', 228)
+      }, 0)
+    } else if (spawnBehavior.current === 'success' || spawnBehavior.current === 'disk-full-mux') {
       completeSuccessfulFfmpegProcess(proc, args)
     } else if (spawnBehavior.current === 'fail') {
       setTimeout(() => {
@@ -107,6 +131,15 @@ vi.mock('../../services/autodoc-log', () => ({
 vi.mock('../../services/sentry-reporter', () => ({
   captureMessage
 }))
+
+vi.mock('../../services/file-operation-retry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/file-operation-retry')>()
+  return {
+    ...actual,
+    renameWithRetry: vi.fn(actual.renameWithRetry),
+    replaceFileWithRetry: vi.fn(actual.replaceFileWithRetry)
+  }
+})
 
 vi.mock('../../services/tray', () => ({
   refreshTray: vi.fn()
@@ -1936,3 +1969,390 @@ describe('recording calendar attachment diagnostics', () => {
     expect(everything).not.toContain('Testing Autodoc')
   })
 })
+
+describe.runIf(process.platform !== 'win32')(
+  'disk-full handling during Mac post-processing',
+  () => {
+    const enospc = (): Error =>
+      Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
+
+    beforeEach(() => {
+      vi.clearAllMocks()
+      spawnBehavior.current = 'success'
+      vi.mocked(matchCalendarEvent).mockReturnValue(null)
+      vi.mocked(encryptJSON).mockReset()
+      delete process.env.AUTODOC_E2E
+    })
+
+    async function setupMeeting(
+      files: Record<string, string>,
+      metadataOverrides: Partial<MeetingMetadata> = {}
+    ): Promise<{ baseDir: string; meetingId: string; meetingDir: string }> {
+      const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-disk-full-'))
+      const meetingId = 'meeting-disk-full'
+      const meetingDir = path.join(baseDir, meetingId)
+      await fsp.mkdir(meetingDir)
+      for (const [name, contents] of Object.entries(files)) {
+        await fsp.writeFile(path.join(meetingDir, name), contents)
+      }
+      vi.mocked(readMetadata).mockImplementation(async (dir) =>
+        path.basename(dir) === meetingId
+          ? {
+              sourceName: 'Entire screen',
+              startedAt: Date.now() - 30_000,
+              stoppedAt: Date.now() - 1_000,
+              durationSeconds: 29,
+              isFinalizing: true,
+              ...metadataOverrides
+            }
+          : null
+      )
+      return { baseDir, meetingId, meetingDir }
+    }
+
+    function registerForRecovery(baseDir: string) {
+      const enqueue = vi.fn()
+      const recording = registerRecordingIpc(
+        {
+          getState: () => ({ isRecording: false, meetingId: null }),
+          getRecordingsBaseDir: () => baseDir
+        } as any,
+        { enqueue } as any,
+        {
+          ensureFfmpeg: vi.fn().mockResolvedValue(undefined),
+          getFfmpegPath: () => '/mock/ffmpeg'
+        } as any,
+        { isConnected: () => false } as any
+      )
+      return { recording, enqueue }
+    }
+
+    it('removes merged-audio-tmp.webm and screen-muxed.webm when the merge hits a full disk', async () => {
+      const { baseDir, meetingId, meetingDir } = await setupMeeting({
+        'screen.webm': 'original-screen',
+        'mic.webm': 'original-mic',
+        'system.webm': 'original-system'
+      })
+      spawnBehavior.current = 'disk-full'
+      try {
+        const { recording } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+
+        const names = await fsp.readdir(meetingDir)
+        expect(names).not.toContain('merged-audio-tmp.webm')
+        expect(names).not.toContain('screen-muxed.webm')
+        expect(names).not.toContain('screen-seekable.webm')
+        expect(await fsp.readFile(path.join(meetingDir, 'screen.webm'), 'utf8')).toBe(
+          'original-screen'
+        )
+        expect(await fsp.readFile(path.join(meetingDir, 'mic.webm'), 'utf8')).toBe('original-mic')
+        expect(await fsp.readFile(path.join(meetingDir, 'system.webm'), 'utf8')).toBe(
+          'original-system'
+        )
+        const muxFailure = logAutodocFailure.mock.calls
+          .map(([entry]) => entry)
+          .find((entry) => entry.message === 'Failed to mux audio into recorded video')
+        expect(muxFailure?.meetingId).toBe(meetingId)
+        expect(muxFailure?.error.message).toContain('No space left on device')
+        expect(muxFailure?.error.sentryFingerprint).toEqual([
+          'ffmpeg-exit',
+          'recording-merge',
+          '228'
+        ])
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('removes screen-muxed.webm and screen-seekable.webm when mux and remux hit a full disk', async () => {
+      const { baseDir, meetingDir } = await setupMeeting({
+        'screen.webm': 'original-screen',
+        'mic.webm': 'original-mic'
+      })
+      spawnBehavior.current = 'disk-full-mux'
+      try {
+        const { recording } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+
+        const names = await fsp.readdir(meetingDir)
+        expect(names).not.toContain('screen-muxed.webm')
+        expect(names).not.toContain('screen-seekable.webm')
+        expect(await fsp.readFile(path.join(meetingDir, 'screen.webm'), 'utf8')).toBe(
+          'original-screen'
+        )
+        const remuxFailure = logAutodocFailure.mock.calls
+          .map(([entry]) => entry)
+          .find((entry) => entry.message === 'Failed to remux recorded video for seeking')
+        expect(remuxFailure?.error.sentryFingerprint).toEqual(['ffmpeg-exit', 'remux', '228'])
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('keeps a successful mux in place and leaves no intermediates behind', async () => {
+      const { baseDir, meetingDir } = await setupMeeting({
+        'screen.webm': 'original-screen',
+        'mic.webm': 'original-mic',
+        'system.webm': 'original-system'
+      })
+      try {
+        const { recording } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+
+        const names = await fsp.readdir(meetingDir)
+        expect(names).not.toContain('merged-audio-tmp.webm')
+        expect(names).not.toContain('screen-muxed.webm')
+        expect(names).not.toContain('screen-seekable.webm')
+        expect(await fsp.readFile(path.join(meetingDir, 'screen.webm'), 'utf8')).toBe(
+          'mock-ffmpeg-output'
+        )
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('does not treat leftover screen-muxed/seekable files as video segments', async () => {
+      const { baseDir, meetingDir } = await setupMeeting({
+        'screen.webm': 'original-screen',
+        'screen-muxed.webm': 'leftover-muxed',
+        'screen-seekable.webm': 'leftover-seekable'
+      })
+      try {
+        const { recording } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+
+        const concatCalls = vi
+          .mocked(spawn)
+          .mock.calls.filter(([, args]) => (args as string[]).includes('concat'))
+        expect(concatCalls).toHaveLength(0)
+        expect(await fsp.readFile(path.join(meetingDir, 'screen-muxed.webm'), 'utf8')).toBe(
+          'leftover-muxed'
+        )
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('still assembles real numbered screen segments and ignores leftovers beside them', async () => {
+      const { baseDir, meetingDir } = await setupMeeting({
+        'screen-0000.webm': 'segment-a',
+        'screen-0001.webm': 'segment-b',
+        'screen-muxed.webm': 'leftover-muxed'
+      })
+      try {
+        const { recording } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+
+        const names = await fsp.readdir(meetingDir)
+        expect(names).not.toContain('screen-0000.webm')
+        expect(names).not.toContain('screen-0001.webm')
+        expect(names).toContain('screen.webm')
+        expect(await fsp.readFile(path.join(meetingDir, 'screen-muxed.webm'), 'utf8')).toBe(
+          'leftover-muxed'
+        )
+        const concatCalls = vi
+          .mocked(spawn)
+          .mock.calls.filter(([, args]) => (args as string[]).includes('concat'))
+        expect(concatCalls.length).toBeGreaterThan(0)
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('skips a meeting for 30 minutes after a disk-full failure, then retries', async () => {
+      const { baseDir } = await setupMeeting({ 'mic-0000.webm': 'audio' })
+      // Persisting isFinalizing:false fails on a full disk, so the meeting stays "finalizing".
+      vi.mocked(encryptJSON).mockImplementation(async (data) => {
+        if ((data as MeetingMetadata).isFinalizing === false) throw enospc()
+      })
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        const { recording, enqueue } = registerForRecovery(baseDir)
+
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(1)
+
+        vi.setSystemTime(Date.now() + 29 * 60_000)
+        await recording.recoverInterruptedRecordings()
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(1)
+
+        vi.setSystemTime(Date.now() + 2 * 60_000)
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(2)
+
+        // The retry failed the same way, so the meeting is held for another 30 minutes.
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('lets a manual retry clear the disk-full hold immediately', async () => {
+      const { baseDir, meetingId } = await setupMeeting({ 'mic-0000.webm': 'audio' })
+      vi.mocked(encryptJSON).mockImplementation(async (data) => {
+        if ((data as MeetingMetadata).isFinalizing === false) throw enospc()
+      })
+      try {
+        const { recording, enqueue } = registerForRecovery(baseDir)
+
+        await recording.recoverInterruptedRecordings()
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(1)
+
+        recording.clearDiskFullHold(meetingId)
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(2)
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('holds a meeting whose ffmpeg step fails with a full disk even when metadata still saves', async () => {
+      const { baseDir, meetingId } = await setupMeeting({
+        'screen.webm': 'original-screen',
+        'mic.webm': 'original-mic'
+      })
+      vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+      spawnBehavior.current = 'disk-full'
+      try {
+        const { recording, enqueue } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(1)
+
+        recording.clearDiskFullHold(meetingId)
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(2)
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('keeps retrying every pass for failures that are not disk-full', async () => {
+      const { baseDir } = await setupMeeting({ 'mic-0000.webm': 'audio' })
+      vi.mocked(encryptJSON).mockImplementation(async (data) => {
+        if ((data as MeetingMetadata).isFinalizing === false) throw new Error('EPERM: busy')
+      })
+      try {
+        const { recording, enqueue } = registerForRecovery(baseDir)
+        await recording.recoverInterruptedRecordings()
+        await recording.recoverInterruptedRecordings()
+        await recording.recoverInterruptedRecordings()
+        expect(enqueue).toHaveBeenCalledTimes(3)
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    describe('when the video replace fails after screen.webm was unlinked', () => {
+      // Mirrors replaceFileWithRetry failing at its rename step: the destination is already gone.
+      function failReplaceAfterUnlink(): void {
+        vi.mocked(replaceFileWithRetry).mockImplementationOnce(async (_from, to) => {
+          await fsp.unlink(to)
+          throw Object.assign(new Error('EBUSY: resource busy or locked, rename'), {
+            code: 'EBUSY'
+          })
+        })
+      }
+
+      beforeEach(() => {
+        vi.mocked(renameWithRetry).mockClear()
+        vi.mocked(replaceFileWithRetry).mockClear()
+      })
+
+      it('restores screen.webm from screen-muxed.webm', async () => {
+        const { baseDir, meetingDir } = await setupMeeting({
+          'screen.webm': 'original-screen',
+          'mic.webm': 'original-mic'
+        })
+        failReplaceAfterUnlink()
+        try {
+          const { recording } = registerForRecovery(baseDir)
+          await recording.recoverInterruptedRecordings()
+
+          const names = await fsp.readdir(meetingDir)
+          expect(names).toContain('screen.webm')
+          expect(names).not.toContain('screen-muxed.webm')
+          expect(renameWithRetry).toHaveBeenCalledWith(
+            path.join(meetingDir, 'screen-muxed.webm'),
+            path.join(meetingDir, 'screen.webm')
+          )
+          expect(logAutodocEvent).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'restored screen.webm from interrupted replace' })
+          )
+        } finally {
+          await fsp.rm(baseDir, { recursive: true, force: true })
+        }
+      })
+
+      it('keeps screen-muxed.webm when it cannot be restored either', async () => {
+        const { baseDir, meetingDir } = await setupMeeting({
+          'screen.webm': 'original-screen',
+          'mic.webm': 'original-mic'
+        })
+        failReplaceAfterUnlink()
+        vi.mocked(renameWithRetry).mockRejectedValueOnce(
+          Object.assign(new Error('EBUSY: resource busy or locked, rename'), { code: 'EBUSY' })
+        )
+        try {
+          const { recording } = registerForRecovery(baseDir)
+          await recording.recoverInterruptedRecordings()
+
+          const names = await fsp.readdir(meetingDir)
+          expect(names).toContain('screen-muxed.webm')
+          expect(await fsp.readFile(path.join(meetingDir, 'screen-muxed.webm'), 'utf8')).toBe(
+            'mock-ffmpeg-output'
+          )
+          expect(logAutodocFailure).toHaveBeenCalledWith(
+            expect.objectContaining({
+              message:
+                'Could not restore screen.webm after a failed replace; keeping the intermediate'
+            })
+          )
+        } finally {
+          await fsp.rm(baseDir, { recursive: true, force: true })
+        }
+      })
+
+      it('restores screen.webm from screen-seekable.webm after a failed remux replace', async () => {
+        const { baseDir, meetingDir } = await setupMeeting({ 'screen.webm': 'original-screen' })
+        failReplaceAfterUnlink()
+        try {
+          const { recording } = registerForRecovery(baseDir)
+          await recording.recoverInterruptedRecordings()
+
+          const names = await fsp.readdir(meetingDir)
+          expect(names).toContain('screen.webm')
+          expect(names).not.toContain('screen-seekable.webm')
+          expect(renameWithRetry).toHaveBeenCalledWith(
+            path.join(meetingDir, 'screen-seekable.webm'),
+            path.join(meetingDir, 'screen.webm')
+          )
+        } finally {
+          await fsp.rm(baseDir, { recursive: true, force: true })
+        }
+      })
+
+      it('keeps screen-seekable.webm when it cannot be restored either', async () => {
+        const { baseDir, meetingDir } = await setupMeeting({ 'screen.webm': 'original-screen' })
+        failReplaceAfterUnlink()
+        vi.mocked(renameWithRetry).mockRejectedValueOnce(
+          Object.assign(new Error('EBUSY: resource busy or locked, rename'), { code: 'EBUSY' })
+        )
+        try {
+          const { recording } = registerForRecovery(baseDir)
+          await recording.recoverInterruptedRecordings()
+
+          const names = await fsp.readdir(meetingDir)
+          expect(names).not.toContain('screen.webm')
+          expect(names).toContain('screen-seekable.webm')
+        } finally {
+          await fsp.rm(baseDir, { recursive: true, force: true })
+        }
+      })
+    })
+  }
+)

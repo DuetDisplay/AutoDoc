@@ -1,6 +1,7 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
 import type { E2EScenario } from '../src/shared/e2e'
 import {
+  closeE2EAppKeepingUserData,
   launchIsolatedE2EApp,
   relaunchIsolatedE2EApp,
   setOllamaStatus,
@@ -17,6 +18,8 @@ async function launchOnboarding(scenario?: E2EScenario): Promise<{
   const { electronApp } = session
   const page = await electronApp.firstWindow()
 
+  await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
 
   return { electronApp, page, cleanup: session.cleanup }
@@ -148,6 +151,8 @@ test('preserves the diagnostic log upload draft when navigating back and forward
   const page = await electronApp.firstWindow()
 
   try {
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await completeDependencySetup(page)
 
@@ -169,12 +174,14 @@ test('preserves the diagnostic log upload draft when navigating back and forward
 })
 
 test('persists analytics opt-in with diagnostic log upload disabled across relaunch', async () => {
-  const session = await launchIsolatedE2EApp()
+  let session = await launchIsolatedE2EApp()
   let { electronApp } = session
   const { userDataDir } = session
   let page = await electronApp.firstWindow()
 
   try {
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await completeDependencySetup(page)
 
@@ -197,9 +204,9 @@ test('persists analytics opt-in with diagnostic log upload disabled across relau
       page.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
     ).not.toBeChecked()
 
-    await electronApp.close()
-    const relaunched = await relaunchIsolatedE2EApp(userDataDir)
-    electronApp = relaunched.electronApp
+    await closeE2EAppKeepingUserData(electronApp, userDataDir)
+    session = await relaunchIsolatedE2EApp(userDataDir)
+    electronApp = session.electronApp
     page = await electronApp.firstWindow()
 
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
@@ -221,6 +228,8 @@ test('persists analytics opt-in with diagnostic log upload enabled after onboard
   const page = await electronApp.firstWindow()
 
   try {
+    await expect(page.getByRole('heading', { name: 'Choose your language' })).toBeVisible()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await completeDependencySetup(page)
 
@@ -400,7 +409,7 @@ test('shows Ollama setup failure and can recover after retry', async () => {
 
   try {
     await reachOllamaStep(page)
-    await expect(page.getByText(/setup failed: Managed Ollama failed to start/i)).toBeVisible()
+    await expect(page.getByText('AI setup failed.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: /^retry$/i }).click()
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
   } finally {
@@ -422,7 +431,7 @@ test('shows Ollama download progress and allows skipping while setup continues',
 
   try {
     await reachOllamaStep(page)
-    await expect(page.getByText(/downloading Ollama runtime\.\.\. 67%/i)).toBeVisible()
+    await expect(page.getByText('Downloading Ollama... 67%', { exact: true })).toBeVisible()
     await expect(
       page.getByRole('button', { name: /continue - this will finish in the background/i })
     ).toBeVisible({
@@ -482,12 +491,12 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
     await page.getByRole('button', { name: /^continue$/i }).click()
 
     await expect(page.getByRole('heading', { name: /AI/i })).toBeVisible()
-    await expect(page.getByText(/starting Ollama runtime/i)).toBeVisible()
+    await expect(page.getByText(/starting Ollama\.\.\./i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'downloading',
       percent: 38
     })
-    await expect(page.getByText(/downloading Ollama runtime\.\.\. 38%/i)).toBeVisible()
+    await expect(page.getByText(/downloading Ollama\.\.\. 38%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'pulling',
       percent: 82
@@ -551,12 +560,12 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await page.getByRole('button', { name: /^continue$/i }).click()
 
     await expect(page.getByRole('heading', { name: /AI/i })).toBeVisible()
-    await expect(page.getByText(/starting Ollama runtime/i)).toBeVisible()
+    await expect(page.getByText(/starting Ollama\.\.\./i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'downloading',
       percent: 44
     })
-    await expect(page.getByText(/downloading Ollama runtime\.\.\. 44%/i)).toBeVisible()
+    await expect(page.getByText(/downloading Ollama\.\.\. 44%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'pulling',
       percent: 91

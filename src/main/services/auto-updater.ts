@@ -3,12 +3,15 @@ import { BrowserWindow, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { logAutodocFailure } from './autodoc-log'
 import { getConfiguredPublicUpdateFeedUrl } from './distribution-config'
+import { isDiskFullError } from './disk-full'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
   version?: string
   percent?: number
   error?: string
+  /** Set with `error` when the update failed because the disk is full (e.g. "ditto: No space left on device"). */
+  errorKind?: 'disk-full'
   installBlockedReason?: string
 }
 
@@ -20,6 +23,7 @@ let getInstallBlockReason: (() => string | undefined) | undefined
 let onInstallFailed: (() => void) | undefined
 
 interface AutoUpdaterOptions {
+  recordUpdateDownload?: (version: string) => void
   prepareForInstall?: () => void
   onUpdateDownloaded?: (status: UpdateStatus) => void
   getInstallBlockReason?: () => string | undefined
@@ -89,7 +93,11 @@ function reportUpdaterError(message: string, err: unknown): void {
       currentVersion: app.getVersion()
     }
   })
-  broadcast({ state: 'error', error: formatUpdaterError(error) })
+  broadcast({
+    state: 'error',
+    error: formatUpdaterError(error),
+    ...(isDiskFullError(error) ? { errorKind: 'disk-full' as const } : {})
+  })
   // Reset to idle after 30s so it doesn't stay stuck on error
   const resetToken = ++errorResetToken
   setTimeout(() => {
@@ -192,6 +200,13 @@ export function initAutoUpdater(options: AutoUpdaterOptions = {}): void {
 
     autoUpdater.on('update-downloaded', (info) => {
       const status: UpdateStatus = { state: 'downloaded', version: getUpdaterVersion(info) }
+      if (status.version) {
+        try {
+          options.recordUpdateDownload?.(status.version)
+        } catch {
+          console.warn('Pending update analytics could not be persisted')
+        }
+      }
       broadcast(status)
       onUpdateDownloaded?.(status)
       if (shouldQuitAndInstallAfterDownloadForSmoke()) {

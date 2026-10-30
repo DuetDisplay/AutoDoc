@@ -1,10 +1,12 @@
+import { useT } from '../../services/i18n'
 import { useCallback, useRef, useState, useEffect } from 'react'
 import type { OllamaSetupStatus } from '../../../../shared/types'
-import { OLLAMA_NOTES_MODEL_LABEL, OLLAMA_RUNTIME_LABEL } from '../../../../shared/constants'
 import { getOllamaSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
 
 export function OllamaStep({ onNext }: { onNext: () => void }) {
+  const t = useT()
+
   const [phase, setPhase] = useState<OllamaSetupStatus['phase']>('starting')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -29,7 +31,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
       setPercent(status.percent)
       if (status.phase === 'ready') markReady()
       if (status.phase === 'error') {
-        setError(status.error ?? 'Unknown error')
+        setError(status.error ?? 'unknown')
         const failedStep = status.failedStep ?? 'unknown'
         const failureKey = `${failedStep}:${status.error ?? ''}`
         if (lastFailureKey.current !== failureKey) {
@@ -79,7 +81,9 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#4A6B4E"
+            stroke="currentColor"
+            className="text-sage-dark"
+            aria-hidden="true"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -87,33 +91,36 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
             <polyline points="20 6 9 17 4 12" />
           </svg>
         </div>
-        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">AI Model Ready</h2>
+        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+          {t('ui.aIModelReady')}
+        </h2>
         <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-          {OLLAMA_RUNTIME_LABEL} and the {OLLAMA_NOTES_MODEL_LABEL} are installed and ready to go.
+          {t('ui.ollamaAndTheNotesModelAreInstalledAndReadyToGo')}
         </p>
         <button
           onClick={onNext}
-          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Continue
+          {t('ui.continue')}
         </button>
       </div>
     )
   }
 
   const statusLabel = error
-    ? `Setup failed: ${error}`
-    : (getOllamaSetupLabel({ phase, percent }) ?? 'Preparing...')
+    ? t('setup.aiFailed')
+    : (getOllamaSetupLabel({ phase, percent }, t) ?? t('ui.preparing'))
 
   return (
     <div className="text-center">
       <div className="w-16 h-16 rounded-2xl bg-dusk-light flex items-center justify-center text-[28px] mx-auto mb-5">
-        AI
+        {t('ui.aI')}
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up AI</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        {t('ui.settingUpAI')}
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc installs the {OLLAMA_RUNTIME_LABEL} and downloads the {OLLAMA_NOTES_MODEL_LABEL}{' '}
-        once so your notes can run entirely on your machine.
+        {t('ui.autoDocInstallsOllamaAndDownloadsTheNotesModelOnceSoYourNotesCanRunEntirely')}
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
@@ -132,9 +139,9 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
             setPercent(0)
             await window.electronAPI.invoke('ollama:retry-setup')
           }}
-          className="px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+          className="i18n-btn px-6 py-2.5 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
         >
-          Retry
+          {t('ui.retry')}
         </button>
       )}
 
@@ -143,7 +150,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
         >
-          Continue - this will finish in the background
+          {t('ui.continueThisWillFinishInTheBackground')}
         </button>
       )}
     </div>

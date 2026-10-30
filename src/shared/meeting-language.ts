@@ -118,10 +118,24 @@ export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[]
 
 export type MeetingLanguageEngineAvailability = 'available' | 'slower' | 'locked'
 
+/**
+ * Machine-readable cause behind a language's engine reason. The renderer shows
+ * localized copy for the code; the English `reason` stays for logs and
+ * diagnostics.
+ */
+export type MeetingLanguageReasonCode =
+  | 'needs-supported-graphics-card'
+  | 'speech-runtime-missing'
+  | 'setup-disk-full'
+  | 'setup-download-failed'
+  | 'setup-verification-failed'
+  | 'setup-failed'
+
 /** Speech-engine state shared by Settings and onboarding on both platforms. */
 export interface MeetingLanguageEngineState {
   availability: MeetingLanguageEngineAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
   engineId?: string | null
   firstUseDownloadBytes: number
   /** GPU engine is selected but its self-test has not run yet. */
@@ -131,6 +145,7 @@ export interface MeetingLanguageEngineState {
 export interface WindowsMeetingLanguageAvailabilityInfo {
   availability: MeetingLanguageEngineAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
   engineId: string | null
   firstUseDownloadBytes: number
   needsSelfTest?: boolean
@@ -140,6 +155,7 @@ export interface WindowsMultilingualEngineReadyInfo {
   engineId: string | null
   availability: MeetingLanguageEngineAvailability
   reason: string | null
+  reasonCode?: MeetingLanguageReasonCode | null
   fallbackFrom?: string
   fallbackReason?: string | null
 }

@@ -422,6 +422,8 @@ export interface TranscriptionStatusPayload {
   etaSeconds?: number | null
   recordingDurationSec?: number | null
   reprocessFailed?: boolean
+  /** True while and after this recording is transcribed on CPU after the GPU failed or lacked memory. */
+  cpuFallback?: boolean
 }
 
 export type TranscriptionStatus =
@@ -435,6 +437,8 @@ export type TranscriptionStatus =
 
 export interface SpeakerInfo {
   label: string
+  /** Explicit names must never be translated, even if they match a default label. */
+  customLabel?: boolean
   suggestions?: string[]
 }
 
@@ -499,6 +503,8 @@ export interface WhisperSetupStatus {
     | 'error'
   percent: number
   error?: string
+  /** Set with `error` when the failure was caused by a full disk (e.g. extract/download ENOSPC). */
+  errorKind?: 'disk-full'
   backend?:
     | 'mlx-whisper'
     | 'faster-whisper-cuda'
@@ -616,6 +622,11 @@ export interface AnalyticsState {
 export interface AnalyticsUpgradeTransition {
   previousVersion: string
   currentVersion: string
+}
+
+export interface AnalyticsUpdateDownload {
+  version: string
+  downloadedAt: string
 }
 
 export interface AnalyticsConsentSnapshot {

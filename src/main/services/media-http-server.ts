@@ -126,8 +126,11 @@ async function handleMediaRequest(
 
   const baseUrl = 'http://127.0.0.1'
   let pathname: string
+  let download = false
   try {
-    pathname = new URL(req.url ?? '/', baseUrl).pathname
+    const url = new URL(req.url ?? '/', baseUrl)
+    pathname = url.pathname
+    download = url.searchParams.get('download') === '1'
   } catch {
     res.statusCode = 400
     res.end()
@@ -183,6 +186,8 @@ async function handleMediaRequest(
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'no-store'
   }
+
+  if (download) baseHeaders['Content-Disposition'] = `attachment; filename="${filename}"`
 
   const isFull = parsed === null || (parsed.start === 0 && parsed.end === fileSize - 1)
 

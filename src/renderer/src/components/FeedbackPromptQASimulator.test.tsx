@@ -57,7 +57,7 @@ describe('FeedbackPromptQASimulator', () => {
     expect(screen.getByText('QA BUILD')).toBeInTheDocument()
     expect(screen.getByText('Currently suppressed')).toBeInTheDocument()
     expect(screen.getByText('Natural session and time thresholds are not met')).toBeInTheDocument()
-    expect(screen.getByText('0 across 0 day(s)')).toBeInTheDocument()
+    expect(screen.getByText('Sessions: 0 · Days: 0')).toBeInTheDocument()
     expect(screen.getByText('PostHog not configured · consent off')).toBeInTheDocument()
   })
 
@@ -162,9 +162,7 @@ describe('FeedbackPromptQASimulator', () => {
 
     await screen.findByText('Currently suppressed')
     await user.click(screen.getByRole('button', { name: 'Reset natural eligibility' }))
-    expect(
-      await screen.findByText('The QA simulator rejected this state change.')
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Could not change feedback prompt state.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Show first prompt' })).toBeEnabled()
   })
 })

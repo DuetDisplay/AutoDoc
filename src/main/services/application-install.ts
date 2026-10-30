@@ -1,3 +1,4 @@
+import { tMain } from './ui-locale'
 import { execFile as execFileCallback, execFileSync, spawn } from 'node:child_process'
 import { access, readFile } from 'node:fs/promises'
 import { appendFileSync, writeFileSync } from 'node:fs'
@@ -272,14 +273,16 @@ export async function warnIfUnsupportedMacOS(
 
   await dialog.showMessageBox({
     type: 'warning',
-    buttons: ['Quit AutoDoc'],
+    buttons: [tMain('ui.quitAutoDoc')],
     defaultId: 0,
     cancelId: 0,
-    title: 'Unsupported macOS Version',
-    message: `AutoDoc requires ${MINIMUM_SUPPORTED_MACOS_NAME} or newer.`,
+    title: tMain('ui.unsupportedMacOSVersion'),
+    message: tMain('ui.autoDocRequiresVersionOrNewer', { version: MINIMUM_SUPPORTED_MACOS_NAME }),
     detail: systemVersion
-      ? `This Mac is running macOS ${systemVersion}. Please update macOS to continue using AutoDoc.`
-      : 'Please update macOS to continue using AutoDoc.',
+      ? tMain('ui.thisMacIsRunningMacOSVersionUpdateMacOSToContinueUsingAutoDoc', {
+          version: systemVersion
+        })
+      : tMain('ui.pleaseUpdateMacOSToContinueUsingAutoDoc'),
     noLink: true
   })
 
@@ -745,47 +748,57 @@ async function promptForInstalledCopyReplacement(options: {
   const versionComparison = compareVersionStrings(sourceVersion, installedVersion)
   const hasInstalledVersion = installedVersion !== null
   const isMac = platform === 'darwin'
-  const comparisonTarget = isMac ? `the copy in ${locationLabel}` : locationLabel
+  const comparisonTarget = isMac
+    ? tMain('ui.theCopyInLocation', { location: locationLabel })
+    : locationLabel
 
   const title = hasInstalledVersion
     ? versionComparison > 0
       ? isMac
-        ? 'Upgrade Applications Copy'
-        : 'Upgrade Installed Copy'
+        ? tMain('ui.upgradeApplicationsCopy')
+        : tMain('ui.upgradeInstalledCopy')
       : isMac
-        ? 'Downgrade Applications Copy'
-        : 'Downgrade Installed Copy'
+        ? tMain('ui.downgradeApplicationsCopy')
+        : tMain('ui.downgradeInstalledCopy')
     : isMac
-      ? 'Replace Applications Copy'
-      : 'Replace Installed Copy'
+      ? tMain('ui.replaceApplicationsCopy')
+      : tMain('ui.replaceInstalledCopy')
 
   const message = hasInstalledVersion
     ? versionComparison > 0
-      ? `AutoDoc ${sourceVersion} is newer than ${comparisonTarget} (${installedVersion}).`
-      : `AutoDoc ${sourceVersion} is older than ${comparisonTarget} (${installedVersion}).`
+      ? tMain('ui.autoDocSourceIsNewerThanTargetInstalled', {
+          source: sourceVersion,
+          target: comparisonTarget,
+          installed: installedVersion ?? ''
+        })
+      : tMain('ui.autoDocSourceIsOlderThanTargetInstalled', {
+          source: sourceVersion,
+          target: comparisonTarget,
+          installed: installedVersion ?? ''
+        })
     : isMac
-      ? 'AutoDoc found another copy in /Applications, but could not read its version.'
-      : 'AutoDoc found another installed copy, but could not read its version.'
+      ? tMain('ui.autoDocFoundAnotherCopyInApplicationsButCouldNotReadItsVersion')
+      : tMain('ui.autoDocFoundAnotherInstalledCopyButCouldNotReadItsVersion')
 
   const detail = isMac
-    ? 'Replace the AutoDoc copy in /Applications and relaunch from there so only one version can run.'
-    : 'Replace the installed AutoDoc copy and relaunch from it so only one version can run.'
+    ? tMain('ui.replaceTheAutoDocCopyInApplicationsAndRelaunchFromThereSoOnlyOneVersionCanR')
+    : tMain('ui.replaceTheInstalledAutoDocCopyAndRelaunchFromItSoOnlyOneVersionCanRun')
 
   const confirmLabel = hasInstalledVersion
     ? versionComparison > 0
       ? isMac
-        ? 'Upgrade in Applications'
-        : 'Upgrade Installed Copy'
+        ? tMain('ui.upgradeInApplications')
+        : tMain('ui.upgradeInstalledCopy')
       : isMac
-        ? 'Downgrade in Applications'
-        : 'Downgrade Installed Copy'
+        ? tMain('ui.downgradeInApplications')
+        : tMain('ui.downgradeInstalledCopy')
     : isMac
-      ? 'Replace in Applications'
-      : 'Replace Installed Copy'
+      ? tMain('ui.replaceInApplications')
+      : tMain('ui.replaceInstalledCopy')
 
   const { response } = await dialog.showMessageBox({
     type: 'question',
-    buttons: [confirmLabel, 'Quit'],
+    buttons: [confirmLabel, tMain('ui.quit')],
     defaultId: 0,
     cancelId: 1,
     title,
@@ -1433,20 +1446,20 @@ function formatScheduledTaskTime(date = new Date()): string {
   return `${hours}:${minutes}`
 }
 
-async function showReplacementError(platform: NodeJS.Platform, error: unknown): Promise<void> {
+async function showReplacementError(platform: NodeJS.Platform, _error: unknown): Promise<void> {
   await dialog.showMessageBox({
     type: 'error',
-    buttons: ['Quit'],
+    buttons: [tMain('ui.quit')],
     defaultId: 0,
     cancelId: 0,
     title:
       platform === 'darwin'
-        ? 'Could not replace Applications copy'
-        : 'Could not replace installed copy',
+        ? tMain('ui.couldNotReplaceApplicationsCopy')
+        : tMain('ui.couldNotReplaceInstalledCopy'),
     message:
       platform === 'darwin'
-        ? 'AutoDoc could not replace the copy in /Applications.'
-        : 'AutoDoc could not replace the installed copy.',
-    detail: error instanceof Error ? error.message : 'Unknown installation error.'
+        ? tMain('ui.autoDocCouldNotReplaceTheCopyInApplications')
+        : tMain('ui.autoDocCouldNotReplaceTheInstalledCopy'),
+    detail: tMain('ui.unknownInstallationError')
   })
 }

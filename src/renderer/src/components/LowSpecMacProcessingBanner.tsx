@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useEffect, useState, type ReactElement } from 'react'
 import type { WhisperSetupStatus } from '../../../shared/types'
 
@@ -6,6 +7,8 @@ export function LowSpecMacProcessingBanner({
 }: {
   onVisibilityChange?: (visible: boolean) => void
 }): ReactElement | null {
+  const t = useT()
+
   const [hasRecordings, setHasRecordings] = useState(false)
   const [isLowSpecHost, setIsLowSpecHost] = useState(false)
   const [dismissed, setDismissed] = useState(true)
@@ -92,10 +95,10 @@ export function LowSpecMacProcessingBanner({
 
   return (
     <div
-      className="mx-6 mt-2 mb-0 rounded-xl border border-sage/20 bg-bg-card px-4 py-3 shadow-sm animate-[slideDown_300ms_ease]"
+      className="app-banner mx-6 mt-2 mb-0 rounded-xl border border-sage/20 bg-bg-card px-4 py-3 shadow-sm animate-[slideDown_300ms_ease]"
       role="status"
     >
-      <div className="flex items-center gap-3">
+      <div className="app-banner-row">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sage/20 bg-sage-light">
           <div className="flex h-4 items-end gap-0.5">
             <span className="h-2 w-1 rounded-full bg-sage" />
@@ -103,19 +106,22 @@ export function LowSpecMacProcessingBanner({
             <span className="h-3 w-1 rounded-full bg-sage" />
           </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-[12.5px] font-semibold text-ink">Optimized local processing is on</h2>
+        <div className="app-banner-copy">
+          <h2 className="text-[12.5px] font-semibold text-ink">
+            {t('ui.optimizedLocalProcessingIsOn')}
+          </h2>
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            This computer has limited memory, so AutoDoc is processing recordings more carefully.
-            Notes may take a little longer, but this helps avoid slowdowns or failed processing.
+            {t('ui.thisComputerHasLimitedMemorySoAutoDocIsProcessingRecordingsMoreCarefullyNot')}
           </p>
         </div>
-        <button
-          onClick={dismiss}
-          className="shrink-0 text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark"
-        >
-          Got it
-        </button>
+        <div className="app-banner-actions">
+          <button
+            onClick={dismiss}
+            className="i18n-btn text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark"
+          >
+            {t('ui.gotIt')}
+          </button>
+        </div>
       </div>
     </div>
   )

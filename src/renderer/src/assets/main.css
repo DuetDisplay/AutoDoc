@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
   --font-sans: 'DM Sans Variable', system-ui, sans-serif;
@@ -6,36 +6,319 @@
   --font-mono: 'JetBrains Mono Variable', monospace;
 
   /* Murmur palette */
-  --color-bg-primary: #FAFAF7;
-  --color-bg-sidebar: #F5F5F0;
-  --color-bg-accent: #F0EFE9;
-  --color-bg-card: #FFFFFF;
-  --color-bg-deep: #F0EFE9;
-  --color-border: rgba(26, 26, 23, 0.10);
+  --color-bg-primary: #fafaf7;
+  --color-bg-sidebar: #f5f5f0;
+  --color-bg-accent: #f0efe9;
+  --color-bg-card: #ffffff;
+  --color-bg-deep: #f0efe9;
+  --color-border: rgba(26, 26, 23, 0.1);
   --color-border-subtle: rgba(26, 26, 23, 0.06);
   --color-border-strong: rgba(26, 26, 23, 0.18);
-  --color-ink: #1A1A17;
+  --color-control-border: #85847c;
+  --color-ink: #1a1a17;
   --color-ink-secondary: #3d3b37;
-  --color-ink-muted: #6B6A63;
-  --color-ink-faint: #9C9B94;
+  --color-ink-muted: #6b6a63;
+  --color-ink-faint: #6b6a63;
 
   /* Brand colors */
-  --color-sage: #7A9E7E;
-  --color-sage-light: #E8F0E8;
-  --color-sage-dark: #4A6B4E;
-  --color-clay: #C2886E;
-  --color-clay-light: #F5E8E0;
-  --color-clay-dark: #8B5E48;
-  --color-dusk: #8B7EAA;
-  --color-dusk-light: #EDE9F5;
-  --color-dusk-dark: #5A4F73;
-  --color-mist: #A3B4C0;
-  --color-mist-light: #E8EEF2;
+  --color-sage: #4a6b4e;
+  --color-sage-light: #e8f0e8;
+  --color-sage-dark: #4a6b4e;
+  --color-clay: #8b5e48;
+  --color-clay-light: #f5e8e0;
+  --color-clay-dark: #8b5e48;
+  --color-dusk: #8b7eaa;
+  --color-dusk-light: #ede9f5;
+  --color-dusk-dark: #5a4f73;
+  --color-mist: #a3b4c0;
+  --color-mist-light: #e8eef2;
+  --color-on-ink: #fafaf7;
+  --color-on-brand: #ffffff;
+  --color-control-thumb: #ffffff;
+  --color-control-thumb-on: #ffffff;
+  --color-control-track-off: #7d7c74;
 
   /* Status — sage-based for connected, clay for recording */
-  --color-status-connected: #7A9E7E;
-  --color-status-recording: #C2886E;
-  --color-status-processing: #8B7EAA;
+  --color-status-connected: #4a6b4e;
+  --color-status-recording: #8b5e48;
+  --color-status-processing: #8b7eaa;
+
+  --speaker-0-border: #5b8c6a;
+  --speaker-0-bg: #f6faf7;
+  --speaker-1-border: #c4956a;
+  --speaker-1-bg: #fdf8f4;
+  --speaker-2-border: #7a8fb5;
+  --speaker-2-bg: #f4f6fa;
+  --speaker-3-border: #b57a8f;
+  --speaker-3-bg: #faf4f6;
+  --speaker-4-border: #6a9e9e;
+  --speaker-4-bg: #f4fafa;
+  --speaker-5-border: #8f7ab5;
+  --speaker-5-bg: #f6f4fa;
+  --speaker-6-border: #a89460;
+  --speaker-6-bg: #faf8f4;
+  --speaker-7-border: #7a8a7a;
+  --speaker-7-bg: #f4f6f4;
+}
+
+html {
+  color-scheme: light;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+html,
+body,
+#root {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#root {
+  overflow-x: hidden;
+}
+
+button,
+[role='button'] {
+  max-width: 100%;
+}
+
+/*
+ * W3C CSS Text / internationalization: wrap instead of clipping, and pick
+ * line-breaking from the document language. CJK wraps between ideographs;
+ * Korean keeps Hangul words intact; long Latin languages hyphenate.
+ */
+:lang(zh),
+:lang(zh-Hans),
+:lang(ja) {
+  line-break: strict;
+  word-break: normal;
+  letter-spacing: 0;
+  text-autospace: normal;
+}
+
+:lang(ko) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-break: auto;
+  letter-spacing: 0;
+  text-autospace: normal;
+}
+
+:lang(de),
+:lang(fi),
+:lang(hu),
+:lang(nl),
+:lang(sv),
+:lang(da),
+:lang(et),
+:lang(lv),
+:lang(lt),
+:lang(cs),
+:lang(sk),
+:lang(sl),
+:lang(pl),
+:lang(ru),
+:lang(uk),
+:lang(bg),
+:lang(fr),
+:lang(it),
+:lang(es),
+:lang(pt),
+:lang(ro),
+:lang(el),
+:lang(hr) {
+  hyphens: auto;
+  hyphenate-limit-chars: 6 3 2;
+}
+
+/* Keep control labels intact; body copy may still use language-aware hyphenation. */
+:is(button, [role='button'], a, label, h1, h2, h3) {
+  hyphens: none;
+}
+
+.i18n-setting-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.i18n-setting-copy {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.i18n-setting-control {
+  flex: 0 1 auto;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.i18n-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.i18n-btn {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+/* Banner controls move below the copy before the text column becomes cramped. */
+.app-banner {
+  container-type: inline-size;
+  flex-shrink: 0;
+}
+
+.app-banner-row {
+  display: grid;
+  /* The controls keep their natural width (capped) instead of being squeezed into a sliver. */
+  grid-template-columns: auto minmax(0, 1fr) fit-content(60%);
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.app-banner-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Banners without a leading icon: the copy spans the (empty) icon column. */
+.app-banner-row > .app-banner-copy:first-child {
+  grid-column: 1 / 3;
+}
+
+@container (max-width: 40rem) {
+  .app-banner-row > .app-banner-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+
+  .app-banner-row > .app-banner-copy:first-child ~ .app-banner-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+.github-star-card {
+  container-type: inline-size;
+}
+
+@container (max-width: 24rem) {
+  .github-star-layout:not(.github-star-thanks) {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+    gap: 0.25rem 0.75rem;
+    padding-right: 0;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy {
+    display: contents;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > h2 {
+    align-self: center;
+    padding-right: 1.75rem;
+    line-height: 1.25;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > :is(p, div) {
+    grid-column: 1 / -1;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > div {
+    margin-top: 0.25rem;
+  }
+  .github-star-layout:not(.github-star-thanks) > .github-star-copy > p {
+    line-height: 1.4;
+  }
+}
+
+/* Preserve a usable page below stacked banners; the main pane can scroll. */
+.app-route {
+  flex-shrink: 0;
+  min-height: 16rem;
+}
+
+@media (max-width: 640px) {
+  .app-route {
+    min-height: 24rem;
+  }
+}
+
+.i18n-chrome-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg-primary: #1c1c18;
+  --color-bg-sidebar: #161613;
+  --color-bg-accent: #252520;
+  --color-bg-card: #2a2a24;
+  --color-bg-deep: #121210;
+  --color-border: rgba(245, 245, 240, 0.12);
+  --color-border-subtle: rgba(245, 245, 240, 0.07);
+  --color-border-strong: rgba(245, 245, 240, 0.2);
+  --color-control-border: #85847c;
+  --color-ink: #f5f5f0;
+  --color-ink-secondary: #c8c6bc;
+  --color-ink-muted: #9c9b94;
+  --color-ink-faint: #aaa99f;
+  --color-sage: #8fb392;
+  --color-sage-light: #2a3a2c;
+  --color-sage-dark: #b5d0b7;
+  --color-clay: #d4a08a;
+  --color-clay-light: #3a2c26;
+  --color-clay-dark: #e8c4b4;
+  --color-dusk: #a89bc4;
+  --color-dusk-light: #2e2a38;
+  --color-dusk-dark: #c8bde0;
+  --color-mist: #8a9ba8;
+  --color-mist-light: #252a2e;
+  --color-on-ink: #1c1c18;
+  --color-on-brand: #1c1c18;
+  --color-control-thumb: #f5f5f0;
+  --color-control-thumb-on: #1c1c18;
+  --color-control-track-off: #77766e;
+  --color-status-connected: #8fb392;
+  --color-status-recording: #d4a08a;
+  --color-status-processing: #a89bc4;
+  --speaker-0-border: #8fb392;
+  --speaker-0-bg: #243028;
+  --speaker-1-border: #d4a08a;
+  --speaker-1-bg: #322820;
+  --speaker-2-border: #8aa0c4;
+  --speaker-2-bg: #222830;
+  --speaker-3-border: #c48aa0;
+  --speaker-3-bg: #302228;
+  --speaker-4-border: #7eb3b3;
+  --speaker-4-bg: #203030;
+  --speaker-5-border: #a894c8;
+  --speaker-5-bg: #282230;
+  --speaker-6-border: #c4b078;
+  --speaker-6-bg: #302c20;
+  --speaker-7-border: #8a9a8a;
+  --speaker-7-bg: #242824;
 }
 
 @layer base {
@@ -46,27 +329,106 @@
 }
 
 @keyframes slideDown {
-  from { opacity: 0; transform: translateY(-12px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes wave {
-  0%, 100% { transform: scaleY(0.5); }
-  50% { transform: scaleY(1); }
+  0%,
+  100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }
 
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes checkCirclePop {
-  0% { opacity: 0; transform: scale(0.72); }
-  62% { opacity: 1; transform: scale(1.08); }
-  100% { opacity: 1; transform: scale(1); }
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes checkStroke {
-  from { stroke-dasharray: 22; stroke-dashoffset: 22; }
-  to { stroke-dasharray: 22; stroke-dashoffset: 0; }
+  from {
+    stroke-dasharray: 22;
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dasharray: 22;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Keep transport controls readable independently of the operating system locale. */
+.media-range {
+  appearance: none;
+  height: 1.5rem;
+  background: transparent;
+  cursor: pointer;
+}
+.media-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-control-track-off);
+}
+.media-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--color-bg-card);
+  border-radius: 50%;
+  background: var(--color-ink);
+}
+.media-range:focus-visible {
+  outline: 2px solid var(--color-sage-dark);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.media-range:disabled {
+  cursor: not-allowed;
+}
+[data-video-player]:fullscreen {
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+}
+[data-video-player]:fullscreen > [data-video-viewport] {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+[data-video-player]:fullscreen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }

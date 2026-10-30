@@ -5,7 +5,12 @@ import type { Transcript } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
 import { meetingSegmentsFromDisk } from '../services/writer-catalog'
 import { readMetadata } from '../services/calendar-matcher'
-import { collectNotesV2SearchEntries, matchNotesV2SearchEntries } from '../services/notes-search-text'
+import {
+  collectNotesV2SearchEntries,
+  matchNotesV2SearchEntries
+} from '../services/notes-search-text'
+import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
+import { getMainUiLanguage } from '../services/ui-locale'
 
 export interface SearchResult {
   meetingId: string
@@ -16,14 +21,16 @@ export interface SearchResult {
 
 export function registerSearchIpc(recordingsBaseDir: string): void {
   ipcMain.handle('search:query', async (_event, query: string): Promise<SearchResult[]> => {
+    const language = getMainUiLanguage()
     if (!query.trim()) return []
 
     const terms = query.toLowerCase().split(/\s+/)
     let dirs: string[]
     try {
       dirs = await readdir(recordingsBaseDir)
-    } catch {
-      return []
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
     }
 
     const results: SearchResult[] = []
@@ -97,10 +104,12 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
           ? new Date(metadata.startedAt)
           : (micStat?.birthtime ?? legacyStat?.birthtime ?? dirStat.birthtime)
 
-        const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-        const title = metadata?.sourceName
-          ? `${metadata.sourceName} — ${dateSuffix}`
-          : `Recording ${dateSuffix}`
+        const title = buildRecordingTitle(
+          metadata,
+          createdAt.getTime(),
+          getRecordingDisplayCalendarTitle(metadata, null),
+          language
+        )
 
         results.push({
           meetingId,

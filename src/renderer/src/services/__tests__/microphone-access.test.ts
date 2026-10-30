@@ -1,7 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { getMicrophoneCaptureFailureMessage } from '../microphone-access'
+import {
+  getMicrophoneCaptureFailureMessage,
+  getMicrophoneCaptureFailureMessageKey
+} from '../microphone-access'
+import { translate } from '../../../../shared/i18n'
+import { UI_LANGUAGE_CODES } from '../../../../shared/ui-language'
 
 describe('getMicrophoneCaptureFailureMessage', () => {
+  it('provides localized copy for every microphone failure and supported UI language', () => {
+    for (const isWindows of [false, true])
+      for (const name of [
+        'NotAllowedError',
+        'SecurityError',
+        'NotFoundError',
+        'NotReadableError',
+        'TrackStartError',
+        'UnknownError'
+      ]) {
+        const key = getMicrophoneCaptureFailureMessageKey({ name, message: '' }, isWindows)
+        for (const language of UI_LANGUAGE_CODES.filter((l) => l !== 'en'))
+          expect(translate(language, key)).not.toBe(translate('en', key))
+      }
+  })
   it('keeps the original revoked copy on non-Windows regardless of error name', () => {
     const expected =
       'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.'

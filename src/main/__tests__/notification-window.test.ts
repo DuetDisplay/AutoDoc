@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
-  const ipcHandlers = new Map<string, () => void>()
+  const ipcHandlers = new Map<string, (...args: any[]) => void>()
+  const themeHandlers = new Set<() => void>()
+  const theme = {
+    shouldUseDarkColors: false,
+    themeSource: 'system',
+    on: vi.fn((_event: string, fn: () => void) => themeHandlers.add(fn)),
+    removeListener: vi.fn((_event: string, fn: () => void) => themeHandlers.delete(fn))
+  }
   const windows: FakeNotificationWindow[] = []
 
   class FakeNotificationWindow {
@@ -10,6 +17,8 @@ const mocks = vi.hoisted(() => {
     deferClosedEvent = false
     isDestroyed = vi.fn(() => this.destroyed)
     showInactive = vi.fn()
+    setContentSize = vi.fn()
+    loaded: (() => Promise<void>) | undefined
     loadURL = vi.fn()
     close = vi.fn(() => {
       this.destroyed = true
@@ -18,7 +27,11 @@ const mocks = vi.hoisted(() => {
       }
     })
     webContents = {
-      executeJavaScript: vi.fn(() => Promise.resolve())
+      executeJavaScript: vi.fn(() => Promise.resolve()),
+      send: vi.fn(),
+      once: vi.fn((_event: string, fn: () => Promise<void>) => {
+        this.loaded = fn
+      })
     }
 
     constructor() {
@@ -42,10 +55,15 @@ const mocks = vi.hoisted(() => {
 
   return {
     FakeNotificationWindow,
+    theme,
+    themeHandlers,
     getMainWindow: vi.fn(),
     appHide: vi.fn(),
     ipcHandlers,
     windows,
+    ipcOn: vi.fn((channel: string, handler: (...args: any[]) => void) => {
+      ipcHandlers.set(channel, handler)
+    }),
     ipcOnce: vi.fn((channel: string, handler: () => void) => {
       ipcHandlers.set(channel, handler)
     }),
@@ -62,6 +80,7 @@ vi.mock('../services/main-window', () => ({ getMainWindow: mocks.getMainWindow }
 vi.mock('electron', () => ({
   app: { hide: mocks.appHide },
   BrowserWindow: mocks.FakeNotificationWindow,
+  nativeTheme: mocks.theme,
   screen: {
     getPrimaryDisplay: () => ({
       workArea: { x: 0, y: 0, width: 1440, height: 900 }
@@ -69,17 +88,21 @@ vi.mock('electron', () => ({
   },
   ipcMain: {
     once: mocks.ipcOnce,
+    on: mocks.ipcOn,
     removeListener: mocks.ipcRemoveListener
   }
 }))
 
 const {
+  refreshNotificationLocale,
   hideNotificationWindow,
   onNotificationActivationSuppressionChange,
   resetNotificationActivationSuppressionForTests,
   shouldSuppressNotificationActivation,
   showNotificationWindow
 } = await import('../notification-window')
+const { setMainUiLanguage } = await import('../services/ui-locale')
+const { translate } = await import('../../shared/i18n')
 const suppressionUnsubscribers: Array<() => void> = []
 const originalPlatform = process.platform
 function setPlatform(platform: string): void {
@@ -121,6 +144,9 @@ describe('notification window activation suppression', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    setMainUiLanguage('en')
+    mocks.theme.shouldUseDarkColors = false
+    mocks.themeHandlers.clear()
     mocks.getMainWindow.mockReturnValue(null)
     mocks.ipcHandlers.clear()
     mocks.windows.length = 0
@@ -439,6 +465,78 @@ describe('notification window activation suppression', () => {
     mocks.ipcHandlers.get('notification:primary-action')?.()
 
     expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('waits for rendered content and sizes the notification before showing it', async () => {
+    showTestNotification({ kind: 'notes-ready', bodyTitle: 'A very long meeting title' })
+    const win = mocks.windows[0]
+    expect(win.showInactive).not.toHaveBeenCalled()
+    win.webContents.executeJavaScript.mockResolvedValueOnce(219 as never)
+    await win.loaded?.()
+    expect(win.webContents.executeJavaScript).toHaveBeenCalledWith(
+      'document.querySelector(".toast").offsetHeight + 26'
+    )
+    expect(win.setContentSize).toHaveBeenCalledWith(400, 219)
+    expect(win.setContentSize.mock.invocationCallOrder[0]).toBeLessThan(
+      win.showInactive.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('only accepts finite, bounded content heights from its own renderer', () => {
+    showTestNotification()
+    const win = mocks.windows[0]
+    const resize = mocks.ipcHandlers.get('notification:resize')!
+    resize({ sender: {} }, 200)
+    resize({ sender: win.webContents }, Number.NaN)
+    expect(win.setContentSize).not.toHaveBeenCalled()
+    resize({ sender: win.webContents }, 2000)
+    expect(win.setContentSize).toHaveBeenLastCalledWith(400, 884)
+    resize({ sender: win.webContents }, 151.2)
+    expect(win.setContentSize).toHaveBeenLastCalledWith(400, 152)
+    win.close()
+    expect(mocks.ipcHandlers.has('notification:resize')).toBe(false)
+  })
+
+  it('updates visible notification copy and theme and removes listeners on close', () => {
+    showTestNotification({ kind: 'notes-ready' })
+    const win = mocks.windows[0]
+    setMainUiLanguage('de')
+    refreshNotificationLocale()
+    expect(win.webContents.send).toHaveBeenCalledWith('notification:locale', {
+      lang: 'de',
+      title: translate('de', 'notesReady.title'),
+      body: translate('de', 'notesReady.body'),
+      action: translate('de', 'notesReady.open'),
+      dismiss: translate('de', 'common.dismiss')
+    })
+    mocks.theme.shouldUseDarkColors = true
+    for (const listener of mocks.themeHandlers) listener()
+    expect(win.webContents.send).toHaveBeenCalledWith('notification:appearance', true)
+    win.close()
+    expect(mocks.themeHandlers.size).toBe(0)
+    const calls = win.webContents.send.mock.calls.length
+    refreshNotificationLocale()
+    expect(win.webContents.send).toHaveBeenCalledTimes(calls)
+  })
+
+  it('re-renders localized body and action text for a banner that supplies its own copy', () => {
+    showTestNotification({
+      kind: 'meeting-detection',
+      localize: () => ({
+        body: translate('de', 'recording.chooseWindow'),
+        primaryActionLabel: translate('de', 'recording.selectWindow')
+      })
+    })
+    const win = mocks.windows[0]
+    setMainUiLanguage('de')
+    refreshNotificationLocale()
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'notification:locale',
+      expect.objectContaining({
+        body: translate('de', 'recording.chooseWindow'),
+        action: translate('de', 'recording.selectWindow')
+      })
+    )
   })
 })
 

@@ -57,6 +57,39 @@ describe('LocalProcessingCoordinator', () => {
     await cpu
     expect(await pending).toBe('next')
   })
+  it('reports other active Windows work only while a second job is registered', async () => {
+    const coordinator = new LocalProcessingCoordinator(() => false)
+    let finishOther!: () => void
+    let other: Promise<void> | undefined
+    let sawOtherWhileAlone: boolean | undefined
+    let sawOtherWhileSecondRuns: boolean | undefined
+
+    await coordinator.runWindows(async () => {
+      // The caller's own registration does not count as "other" work.
+      sawOtherWhileAlone = coordinator.hasOtherActiveWindowsWork()
+      other = coordinator.runWindows(
+        () =>
+          new Promise<void>((resolve) => {
+            finishOther = resolve
+          })
+      )
+      await vi.waitFor(() => expect(finishOther).toBeTypeOf('function'))
+      sawOtherWhileSecondRuns = coordinator.hasOtherActiveWindowsWork()
+    })
+    expect(sawOtherWhileAlone).toBe(false)
+    expect(sawOtherWhileSecondRuns).toBe(true)
+
+    // The first job finished, so the remaining one is alone again.
+    await coordinator.runWindows(async () => {
+      expect(coordinator.hasOtherActiveWindowsWork()).toBe(true)
+    })
+    finishOther()
+    await other
+    await coordinator.runWindows(async () => {
+      expect(coordinator.hasOtherActiveWindowsWork()).toBe(false)
+    })
+  })
+
   it('serializes local processing when low-spec mode is active', async () => {
     const coordinator = new LocalProcessingCoordinator(() => true)
     const order: string[] = []

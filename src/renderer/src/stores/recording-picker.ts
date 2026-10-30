@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { MessageKey } from '../../../shared/i18n'
 import type { RecordingSource } from '../../../shared/types'
 import type { RecordingSelectionContext } from '../services/window-detection'
 
@@ -6,11 +7,11 @@ export type PickerDiagnosticTrigger = 'manual' | 'auto_record' | 'select_window'
 
 interface RecordingPickerState {
   isOpen: boolean
-  title: string
-  subtitle: string | null
+  titleKey: MessageKey
+  subtitleKey: MessageKey | null
   sources: RecordingSource[]
   detectedId: string | null
-  suggestionLabel: string | null
+  suggestionLabelKey: MessageKey | null
   selectionContext: RecordingSelectionContext | null
   trigger: 'manual' | 'auto_record'
   /** Diagnostics only: ids in score order, the opening request and where the picker came from. */
@@ -18,11 +19,11 @@ interface RecordingPickerState {
   requestId: number | null
   diagnosticTrigger: PickerDiagnosticTrigger
   openPicker: (params: {
-    title: string
-    subtitle?: string | null
+    titleKey: MessageKey
+    subtitleKey?: MessageKey | null
     sources: RecordingSource[]
     detectedId?: string | null
-    suggestionLabel?: string | null
+    suggestionLabelKey?: MessageKey | null
     selectionContext?: RecordingSelectionContext | null
     trigger?: 'manual' | 'auto_record'
     scoredSourceIds?: string[]
@@ -34,11 +35,11 @@ interface RecordingPickerState {
 
 export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   isOpen: false,
-  title: 'Select a window to record',
-  subtitle: null,
+  titleKey: 'recording.selectWindowToRecord',
+  subtitleKey: null,
   sources: [],
   detectedId: null,
-  suggestionLabel: null,
+  suggestionLabelKey: null,
   selectionContext: null,
   trigger: 'manual',
   scoredSourceIds: [],
@@ -46,11 +47,11 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   diagnosticTrigger: 'manual',
 
   openPicker: ({
-    title,
-    subtitle = null,
+    titleKey,
+    subtitleKey = null,
     sources,
     detectedId = null,
-    suggestionLabel = null,
+    suggestionLabelKey = null,
     selectionContext = null,
     trigger = 'manual',
     scoredSourceIds = [],
@@ -59,11 +60,11 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   }) =>
     set({
       isOpen: true,
-      title,
-      subtitle,
+      titleKey,
+      subtitleKey,
       sources,
       detectedId,
-      suggestionLabel,
+      suggestionLabelKey,
       selectionContext,
       trigger,
       scoredSourceIds,
@@ -74,10 +75,10 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   closePicker: () =>
     set({
       isOpen: false,
-      subtitle: null,
+      subtitleKey: null,
       sources: [],
       detectedId: null,
-      suggestionLabel: null,
+      suggestionLabelKey: null,
       selectionContext: null,
       trigger: 'manual',
       scoredSourceIds: [],

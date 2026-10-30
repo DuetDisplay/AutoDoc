@@ -1,3 +1,5 @@
+import { translate, type MessageKey } from '../../../shared/i18n'
+
 export interface MicrophoneAccessErrorDetails {
   name: string
   message: string
@@ -55,22 +57,29 @@ export function getMicrophoneCaptureFailureMessage(
   error: MicrophoneAccessErrorDetails,
   isWindows: boolean
 ): string {
+  return translate('en', getMicrophoneCaptureFailureMessageKey(error, isWindows))
+}
+
+export function getMicrophoneCaptureFailureMessageKey(
+  error: MicrophoneAccessErrorDetails,
+  isWindows: boolean
+): MessageKey {
   if (!isWindows) {
     // Keep the original macOS copy: mic capture failures on macOS are
     // permission revocations surfaced via System Settings.
-    return 'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.'
+    return 'recording.microphoneRevoked'
   }
 
   switch (error.name) {
     case 'NotAllowedError':
     case 'SecurityError':
-      return 'Microphone access is blocked. Enable microphone access in Windows Settings, then try recording again.'
+      return 'recording.microphoneBlocked'
     case 'NotFoundError':
-      return 'No microphone was detected, or Windows privacy settings are hiding it. AutoDoc can still record system audio.'
+      return 'recording.microphoneMissing'
     case 'NotReadableError':
     case 'TrackStartError':
-      return 'Your microphone is unavailable or in use by another app. AutoDoc can still record system audio.'
+      return 'recording.microphoneBusy'
     default:
-      return 'AutoDoc could not start the microphone. Recordings can continue with system audio only.'
+      return 'recording.microphoneStartFailed'
   }
 }

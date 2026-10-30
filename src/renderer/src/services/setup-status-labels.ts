@@ -1,76 +1,75 @@
+import { translate, type MessageKey } from '../../../shared/i18n'
+import { readCachedUiLanguage } from './document-language'
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../../shared/types'
-import {
-  DEFAULT_OLLAMA_EMBEDDING_MODEL,
-  OLLAMA_ASK_AI_EMBEDDING_MODEL_LABEL,
-  OLLAMA_NOTES_MODEL_LABEL,
-  OLLAMA_RUNTIME_LABEL
-} from '../../../shared/constants'
 
-function getOllamaPullModelLabel(pullModel?: string): string {
-  if (
-    pullModel &&
-    (pullModel === DEFAULT_OLLAMA_EMBEDDING_MODEL ||
-      pullModel.startsWith(`${DEFAULT_OLLAMA_EMBEDDING_MODEL}:`) ||
-      pullModel.toLowerCase().includes('embedding'))
-  ) {
-    return OLLAMA_ASK_AI_EMBEDDING_MODEL_LABEL
-  }
+type TranslateFn = (key: MessageKey, params?: Record<string, string | number>) => string
 
-  return OLLAMA_NOTES_MODEL_LABEL
-}
+const defaultT: TranslateFn = (key, params) => translate(readCachedUiLanguage(), key, params)
+import { DEFAULT_OLLAMA_EMBEDDING_MODEL } from '../../../shared/constants'
 
-export function getWhisperSetupLabel(status: WhisperSetupStatus | null | undefined): string | null {
+export function getWhisperSetupLabel(
+  status: WhisperSetupStatus | null | undefined,
+  t: TranslateFn = defaultT
+): string | null {
   if (!status) {
     return null
   }
 
   switch (status.phase) {
     case 'checking':
-      return status.backendLabel
-        ? `Checking ${status.backendLabel}...`
-        : 'Checking transcription engine...'
+      return t('setup.checkingEngine')
     case 'downloading-whisper':
-      return status.backendLabel
-        ? `Downloading ${status.backendLabel}... ${status.percent}%`
-        : `Downloading transcription engine... ${status.percent}%`
+      return t('setup.downloadingEngine', { percent: status.percent })
     case 'downloading-ffmpeg':
-      return `Installing audio tools... ${status.percent}%`
+      return t('setup.installingAudioTools', { percent: status.percent })
     case 'downloading-model':
-      return status.backendLabel
-        ? `Downloading speech model for ${status.backendLabel}... ${status.percent}%`
-        : `Downloading speech model... ${status.percent}%`
+      return t('setup.downloadingSpeechModel', { percent: status.percent })
     case 'preparing-speaker-runtime':
-      return `Preparing speaker ID runtime... ${status.percent}%`
+      return t('setup.preparingSpeakerRuntime', { percent: status.percent })
     case 'installing-speaker-id':
-      return `Installing speaker ID... ${status.percent}%`
+      return t('setup.installingSpeakerId', { percent: status.percent })
     case 'downloading-speaker-model':
-      return `Downloading speaker model... ${status.percent}%`
+      return t('setup.downloadingSpeakerModel', { percent: status.percent })
     case 'error':
-      return status.error ?? 'Transcription setup failed.'
+      return status.errorKind === 'disk-full'
+        ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
+        : t('setup.transcriptionFailed')
     default:
       return null
   }
 }
 
-export function getOllamaSetupLabel(status: OllamaSetupStatus | null | undefined): string | null {
+export function getOllamaSetupLabel(
+  status: OllamaSetupStatus | null | undefined,
+  t: TranslateFn = defaultT
+): string | null {
   if (!status) {
     return null
   }
 
   switch (status.phase) {
     case 'starting':
-      return `Starting ${OLLAMA_RUNTIME_LABEL}...`
+      return t('setup.startingRuntime', { runtime: 'Ollama' })
     case 'downloading':
-      return `Downloading ${OLLAMA_RUNTIME_LABEL}... ${status.percent}%`
+      return t('setup.downloadingRuntime', {
+        runtime: 'Ollama',
+        percent: status.percent
+      })
     case 'pulling': {
-      const modelLabel = getOllamaPullModelLabel(status.pullModel)
+      const embedding =
+        !!status.pullModel &&
+        (status.pullModel === DEFAULT_OLLAMA_EMBEDDING_MODEL ||
+          status.pullModel.startsWith(`${DEFAULT_OLLAMA_EMBEDDING_MODEL}:`) ||
+          status.pullModel.toLowerCase().includes('embedding'))
       if (status.percent === 0) {
-        return `Preparing ${modelLabel}...`
+        return embedding ? t('ui.preparingAskAISearchModel') : t('ui.preparingNotesModel')
       }
-      return `Downloading ${modelLabel}... ${status.percent}%`
+      return embedding
+        ? t('ui.downloadingAskAISearchModelPercent', { percent: status.percent })
+        : t('ui.downloadingNotesModelPercent', { percent: status.percent })
     }
     case 'error':
-      return status.error ?? 'AI setup failed.'
+      return t('setup.aiFailed')
     default:
       return null
   }

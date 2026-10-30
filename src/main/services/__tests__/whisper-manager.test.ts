@@ -289,17 +289,32 @@ describe('WhisperManager', () => {
       expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
         availability: 'available',
         reason: 'offline',
+        reasonCode: 'setup-download-failed',
         firstUseDownloadBytes: 100
       })
       await manager.prepareMeetingLanguage('fr')
-      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({ reason: null })
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
+        reason: null,
+        reasonCode: null
+      })
+    })
+
+    it('gives an unrecognized Mac setup failure the generic setup reason code', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      vi.mocked(downloadMacSpeechModels).mockRejectedValueOnce(new Error('something odd'))
+      await expect(manager.prepareMeetingLanguage('fr')).rejects.toThrow('something odd')
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
+        reason: 'something odd',
+        reasonCode: 'setup-failed'
+      })
     })
   })
 
   it('locks a missing Mac turbo runtime with a reason', async () => {
     expect(await manager.getMacMeetingLanguageState('es')).toMatchObject({
       availability: 'locked',
-      reason: expect.stringContaining('runtime')
+      reason: expect.stringContaining('runtime'),
+      reasonCode: 'speech-runtime-missing'
     })
   })
 
@@ -756,5 +771,61 @@ describe('WhisperManager', () => {
         })
       }
     }
+  })
+})
+
+describe('WhisperManager extract and disk-full reporting', () => {
+  let manager: WhisperManager
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    manager = new WhisperManager()
+  })
+
+  it('fingerprints archive extract failures by platform', async () => {
+    mockExecFile.mockImplementation((...args: any[]) => {
+      args[args.length - 1](new Error('Command failed: tar xzf\ntar: write error'))
+      return {} as never
+    })
+
+    const error = await (manager as any).extractTarGz('/mock/archive.tar.gz', '/mock/dest').then(
+      () => null,
+      (err: Error & { sentryFingerprint?: string[] }) => err
+    )
+
+    expect(error?.message).toContain('Failed to extract archive')
+    expect(error?.sentryFingerprint).toEqual(['model-extract-failed', process.platform])
+  })
+
+  it('reports a full disk during setup as errorKind disk-full', async () => {
+    const statuses: Array<{ phase: string; errorKind?: string; error?: string }> = []
+    manager.on('setup-status', (status) => statuses.push(status))
+    vi.spyOn(manager as any, 'selectMacProfile').mockResolvedValue(undefined)
+    vi.spyOn(manager as any, 'selectWindowsProfile').mockResolvedValue(undefined)
+    vi.spyOn(manager as any, 'adoptInstalledAssetsIfAvailable').mockRejectedValue(
+      new Error('Failed to extract archive: tar: write error: No space left on device')
+    )
+
+    await expect(manager.ensureReady()).rejects.toThrow('No space left on device')
+
+    expect(manager.getSetupStatus()).toMatchObject({
+      phase: 'error',
+      errorKind: 'disk-full',
+      error: expect.stringContaining('No space left on device')
+    })
+  })
+
+  it('leaves errorKind unset for other setup failures', async () => {
+    vi.spyOn(manager as any, 'selectMacProfile').mockResolvedValue(undefined)
+    vi.spyOn(manager as any, 'selectWindowsProfile').mockResolvedValue(undefined)
+    vi.spyOn(manager as any, 'adoptInstalledAssetsIfAvailable').mockRejectedValue(
+      new Error('network down')
+    )
+
+    await expect(manager.ensureReady()).rejects.toThrow('network down')
+
+    const status = manager.getSetupStatus()
+    expect(status.phase).toBe('error')
+    expect(status).not.toHaveProperty('errorKind')
   })
 })

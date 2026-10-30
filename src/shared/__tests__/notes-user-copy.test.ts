@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { notesFailureKindFromCode, notesUserCopy } from '../notes-user-copy'
+import { UI_LANGUAGE_CODES } from '../ui-language'
 
 describe('notes user copy', () => {
   it('maps internal codes to the locked user-facing titles', () => {
@@ -27,4 +28,15 @@ describe('notes user copy', () => {
       'problem writing notes'
     )
   })
+})
+
+it('localizes every failure kind rather than returning English for a selected locale', () => {
+  for (const kind of ['empty', 'nothing-found', 'memory', 'engine', 'generic', 'layout'] as const) {
+    const english = notesUserCopy(kind)
+    for (const language of UI_LANGUAGE_CODES.filter((code) => code !== 'en')) {
+      const translated = notesUserCopy(kind, language)
+      expect(translated.title, `${kind} ${language}`).not.toBe(english.title)
+      expect(translated.body, `${kind} ${language}`).not.toBe(english.body)
+    }
+  }
 })

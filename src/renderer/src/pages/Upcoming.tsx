@@ -1,3 +1,4 @@
+import { translatePlural } from '../../../shared/i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
@@ -12,6 +13,8 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { CalendarEvent } from '../../../shared/types'
 import { ROUTES } from '../../../shared/constants'
 import { FeedbackPromptSlot } from '../components/FeedbackPromptSlot'
+import { useI18n } from '../services/i18n'
+import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
 
 let calendarToastShown = false
 
@@ -20,6 +23,8 @@ export function Upcoming({
 }: {
   feedbackPromptSuppressed?: boolean
 }) {
+  const { language, t } = useI18n()
+  const dateLocale = dateLocaleForUiLanguage(language)
   const [calendarChecked, setCalendarChecked] = useState(false)
   const [calendarEventsChecked, setCalendarEventsChecked] = useState(false)
   const [feedbackCalendarReady, setFeedbackCalendarReady] = useState(false)
@@ -32,6 +37,11 @@ export function Upcoming({
     error: calendarConnectError,
     connect
   } = useCalendarConnect({
+    formatError: (provider) =>
+      t('upcoming.connectFailed', {
+        provider:
+          provider === 'google' ? t('upcoming.googleCalendar') : t('upcoming.microsoftOutlook')
+      }),
     onConnected: async (account, provider) => {
       addAccount(account)
       trackEvent('calendar_connected', { provider })
@@ -87,15 +97,17 @@ export function Upcoming({
       calendarToastShown = true
       useToastStore.getState().showToast({
         type: 'calendar',
-        message: 'Connect a calendar to see upcoming meetings and auto-name recordings.',
+        message: t('upcoming.connectToast'),
+        messageKey: 'upcoming.connectToast',
         action: {
-          label: 'Open Settings',
+          label: t('upcoming.openSettings'),
+          labelKey: 'upcoming.openSettings',
           type: 'navigate',
           target: ROUTES.settings
         }
       })
     }
-  }, [isConnected, calendarChecked])
+  }, [isConnected, calendarChecked, t])
 
   useEffect(() => {
     if (!calendarEventsChecked) return
@@ -155,18 +167,21 @@ export function Upcoming({
         console.error('Failed to save auto-record preference:', err)
         useToastStore.getState().showToast({
           type: 'warning',
-          message: 'Could not save auto-record preference. Please try again.'
+          message: t('upcoming.autoRecordSaveFailed'),
+          messageKey: 'upcoming.autoRecordSaveFailed'
         })
       })
   }
 
   const { isRecording, fetchSources, handleStart, handleStop } = useRecordingActions()
 
-  const today = new Date().toLocaleDateString('en-US', {
+  const today = new Date().toLocaleDateString(dateLocale, {
     weekday: 'long',
     month: 'long',
     day: 'numeric'
   })
+  const todayLabel = t('upcoming.today')
+  const tomorrowLabel = t('upcoming.tomorrow')
 
   const groupedEvents = useMemo(() => {
     const now = new Date()
@@ -187,26 +202,26 @@ export function Upcoming({
     for (const [dateStr, dayEvents] of buckets) {
       let label: string
       if (dateStr === todayStr) {
-        label = 'Today'
+        label = todayLabel
       } else if (dateStr === tomorrowStr) {
-        label = 'Tomorrow'
+        label = tomorrowLabel
       } else {
         const d = new Date(dateStr)
-        label = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+        label = d.toLocaleDateString(dateLocale, { weekday: 'long', month: 'long', day: 'numeric' })
       }
       groups.push({ label, events: dayEvents })
     }
 
     return groups
-  }, [events])
+  }, [dateLocale, events, todayLabel, tomorrowLabel])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-w-0" data-testid="upcoming-page">
       <PageHeader
-        title="Upcoming"
+        title={t('upcoming.title')}
         subtitle={today}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 min-w-0 max-w-full">
             <RecordingControls
               isRecording={isRecording}
               onStartRecording={handleStart}
@@ -217,9 +232,9 @@ export function Upcoming({
               <button
                 onClick={handleSync}
                 disabled={isSyncing}
-                className="text-[11px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-md border border-border-subtle hover:border-ink-muted transition-colors disabled:opacity-50"
+                className="i18n-btn text-[11px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-md border border-border-subtle hover:border-ink-muted transition-colors disabled:opacity-50"
               >
-                {isSyncing ? 'Syncing...' : 'Sync'}
+                {isSyncing ? t('upcoming.syncing') : t('upcoming.sync')}
               </button>
             )}
           </div>
@@ -239,26 +254,28 @@ export function Upcoming({
         />
       ) : events.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
-          <p className="text-ink-muted text-[13px]">No upcoming meetings</p>
+          <p className="text-ink-muted text-[13px] text-pretty [overflow-wrap:anywhere]">
+            {t('upcoming.noMeetings')}
+          </p>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="flex flex-col gap-5">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 min-w-0">
+          <div className="flex flex-col gap-5 min-w-0">
             {groupedEvents.map((group) => (
-              <div key={group.label}>
-                <div className="flex items-center gap-2 mb-2">
+              <div key={group.label} className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-2 min-w-0">
                   <h2
-                    className={`text-[12px] font-bold tracking-[0.03em] uppercase ${
-                      group.label === 'Today' ? 'text-ink' : 'text-ink-faint'
+                    className={`text-[12px] font-bold tracking-[0.03em] uppercase text-pretty [overflow-wrap:anywhere] ${
+                      group.label === todayLabel ? 'text-ink' : 'text-ink-faint'
                     }`}
                   >
                     {group.label}
                   </h2>
-                  <span className="text-[11px] text-ink-faint">
-                    {group.events.length} meeting{group.events.length !== 1 ? 's' : ''}
+                  <span className="text-[11px] text-ink-faint text-pretty [overflow-wrap:anywhere]">
+                    {translatePlural(language, 'meetings', group.events.length)}
                   </span>
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 min-w-0">
                   {group.events.map((event) => (
                     <EventCard key={event.id} event={event} onSetAutoRecord={handleSetAutoRecord} />
                   ))}

@@ -1,8 +1,21 @@
 import type { CalendarEvent, MeetingMetadata } from '../../shared/types'
+import { translate } from '../../shared/i18n'
+import { dateLocaleForUiLanguage, type UiLanguageCode } from '../../shared/ui-language'
+import { getMainUiLanguage } from './ui-locale'
 
-export function formatRecordingDateSuffix(startedAt: number): string {
+export function formatRecordingDateSuffix(
+  startedAt: number,
+  language: UiLanguageCode = getMainUiLanguage()
+): string {
+  if (!Number.isFinite(startedAt)) return ''
   const createdAt = new Date(startedAt)
-  return `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+  if (!Number.isFinite(createdAt.getTime())) return ''
+  return new Intl.DateTimeFormat(dateLocaleForUiLanguage(language), {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(createdAt)
 }
 
 /**
@@ -34,9 +47,10 @@ export function getRecordingDisplayCalendarTitle(
 export function buildRecordingTitle(
   metadata: MeetingMetadata | null,
   startedAt: number,
-  calendarTitle: string | null
+  calendarTitle: string | null,
+  language: UiLanguageCode = getMainUiLanguage()
 ): string {
-  const dateSuffix = formatRecordingDateSuffix(startedAt)
+  const dateSuffix = formatRecordingDateSuffix(startedAt, language)
 
   const customTitle = metadata?.customTitle?.trim()
   if (customTitle) {
@@ -44,14 +58,16 @@ export function buildRecordingTitle(
   }
 
   if (calendarTitle) {
-    return `${calendarTitle} — ${dateSuffix}`
+    return dateSuffix ? `${calendarTitle} — ${dateSuffix}` : calendarTitle
   }
 
   if (metadata?.sourceName) {
-    return `${metadata.sourceName} — ${dateSuffix}`
+    return dateSuffix ? `${metadata.sourceName} — ${dateSuffix}` : metadata.sourceName
   }
 
-  return `Recording ${dateSuffix}`
+  return dateSuffix
+    ? translate(language, 'recording.unnamed', { date: dateSuffix })
+    : translate(language, 'ui.recording')
 }
 
 export function normalizeRecordingSearchText(text: string): string {
@@ -85,6 +101,11 @@ export function buildRecordingTitleAliases(params: {
   if (sourceName) aliases.add(sourceName)
 
   aliases.add(dateSuffix)
+  // Keep historical English date wording searchable without displaying it in the UI.
+  const createdAt = new Date(params.startedAt)
+  aliases.add(
+    `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+  )
 
   return [...aliases].map((alias) => alias.trim()).filter(Boolean)
 }

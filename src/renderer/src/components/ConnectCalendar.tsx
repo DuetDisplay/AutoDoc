@@ -1,3 +1,8 @@
+import { useT } from '../services/i18n'
+
+export const CALENDAR_CONNECT_BUTTON_CLASS =
+  'i18n-btn inline-flex items-center gap-2 text-[12px] font-medium leading-snug text-on-ink bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50'
+
 interface ConnectCalendarProps {
   isConnecting: boolean
   error?: string | null
@@ -5,19 +10,21 @@ interface ConnectCalendarProps {
 }
 
 export function ConnectCalendar({ isConnecting, error, onConnect }: ConnectCalendarProps) {
+  const t = useT()
+
   return (
-    <div className="flex-1 flex items-center justify-center p-6">
-      <div className="text-center">
-        <p className="text-ink-muted text-[13px] mb-4">
-          Connect a calendar to see upcoming meetings
+    <div className="flex-1 flex items-center justify-center p-6 min-w-0">
+      <div className="text-center min-w-0 max-w-full">
+        <p className="text-ink-muted text-[13px] mb-4 text-pretty [overflow-wrap:anywhere]">
+          {t('upcoming.connectPrompt')}
         </p>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-center gap-2 min-w-0">
           <button
             onClick={() => onConnect('google')}
             disabled={isConnecting}
-            className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+            className={CALENDAR_CONNECT_BUTTON_CLASS}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
               <path
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
                 fill="#4285F4"
@@ -35,26 +42,26 @@ export function ConnectCalendar({ isConnecting, error, onConnect }: ConnectCalen
                 fill="#EA4335"
               />
             </svg>
-            {isConnecting ? 'Connecting...' : 'Connect Google Calendar'}
+            {isConnecting ? t('settings.connecting') : t('upcoming.connectGoogle')}
           </button>
           <button
             onClick={() => onConnect('microsoft')}
             disabled={isConnecting}
-            className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+            className={CALENDAR_CONNECT_BUTTON_CLASS}
           >
-            <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
+            <svg width="14" height="14" viewBox="0 0 23 23" fill="none" className="shrink-0">
               <rect x="1" y="1" width="10" height="10" fill="#F25022" />
               <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
               <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
               <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
             </svg>
-            {isConnecting ? 'Connecting...' : 'Connect Microsoft Outlook'}
+            {isConnecting ? t('settings.connecting') : t('upcoming.connectMicrosoft')}
           </button>
         </div>
         {error && (
           <div
             role="alert"
-            className="max-w-[300px] mt-4 rounded-[12px] border border-border bg-mist-light/60 px-4 py-3 text-[13px] leading-relaxed text-ink-muted"
+            className="w-full max-w-[min(18.75rem,100%)] mt-4 rounded-[12px] border border-border bg-mist-light/60 px-4 py-3 text-[13px] leading-relaxed text-ink-muted text-pretty [overflow-wrap:anywhere]"
           >
             {error}
           </div>

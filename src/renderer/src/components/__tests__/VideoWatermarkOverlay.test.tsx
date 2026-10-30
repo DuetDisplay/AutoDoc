@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { VideoWatermarkOverlay } from '../VideoWatermarkOverlay'
 
 describe('VideoWatermarkOverlay', () => {
-  it('renders the subtle translucent watermark without obstructing video controls', () => {
+  it('renders the readable translucent watermark without obstructing video controls', () => {
     const { container } = render(<VideoWatermarkOverlay />)
     const watermark = container.firstElementChild
 
@@ -16,12 +16,12 @@ describe('VideoWatermarkOverlay', () => {
       'top-3',
       'right-3',
       'border-white/5',
-      'bg-ink/15',
-      'text-white/45',
+      'bg-black/70',
+      'text-white',
       '[&:popover-open]:fixed'
     )
     expect(watermark?.querySelectorAll('svg rect')).toHaveLength(4)
-    expect(watermark?.querySelector('svg')).toHaveClass('text-sage-light/50')
-    expect(screen.getByText('AutoDoc')).toHaveClass('font-serif')
+    expect(watermark?.querySelector('svg')).toHaveClass('text-white/85')
+    expect(screen.getByText('Meeting notes by AutoDoc')).toBeInTheDocument()
   })
 })

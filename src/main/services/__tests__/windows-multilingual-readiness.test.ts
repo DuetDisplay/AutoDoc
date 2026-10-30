@@ -171,7 +171,8 @@ describe('windows-multilingual-readiness', () => {
     expect(result).toMatchObject({
       availability: 'locked',
       engineId: null,
-      reason: 'Spanish needs a supported graphics card on this PC.'
+      reason: 'Spanish needs a supported graphics card on this PC.',
+      reasonCode: 'needs-supported-graphics-card'
     })
   })
 

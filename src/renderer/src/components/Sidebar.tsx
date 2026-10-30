@@ -8,29 +8,31 @@ import type {
   WhisperSetupStatus
 } from '../../../shared/types'
 import { trackEvent } from '../services/analytics'
+import { useT } from '../services/i18n'
+import { AppearanceSwitch } from './AppearanceSwitch'
 import { getOllamaSetupLabel, getWhisperSetupLabel } from '../services/setup-status-labels'
-
-const navItems = [
-  { to: ROUTES.upcoming, label: 'Upcoming' },
-  { to: ROUTES.recordings, label: 'AI Notes' },
-  { to: ROUTES.search, label: 'Search' },
-  { to: ROUTES.askAi, label: 'Ask AI' }
-]
 
 const SUPPORT_SURFACE = 'sidebar' as const
 
 function WaveformIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 40 40" fill="none" className={className}>
-      <rect x="6" y="14" width="4" height="12" rx="2" fill="#7A9E7E" />
-      <rect x="14" y="8" width="4" height="24" rx="2" fill="#7A9E7E" />
-      <rect x="22" y="11" width="4" height="18" rx="2" fill="#7A9E7E" />
-      <rect x="30" y="16" width="4" height="8" rx="2" fill="#7A9E7E" />
+      <rect x="6" y="14" width="4" height="12" rx="2" fill="currentColor" />
+      <rect x="14" y="8" width="4" height="24" rx="2" fill="currentColor" />
+      <rect x="22" y="11" width="4" height="18" rx="2" fill="currentColor" />
+      <rect x="30" y="16" width="4" height="8" rx="2" fill="currentColor" />
     </svg>
   )
 }
 
 export function Sidebar() {
+  const t = useT()
+  const navItems = [
+    { to: ROUTES.upcoming, label: t('nav.upcoming') },
+    { to: ROUTES.recordings, label: t('nav.recordings') },
+    { to: ROUTES.search, label: t('nav.search') },
+    { to: ROUTES.askAi, label: t('nav.askAi') }
+  ]
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
   const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null)
@@ -140,8 +142,8 @@ export function Sidebar() {
       : ({ phase: whisperPhase, percent: whisperPercent } as WhisperSetupStatus)
   const ollamaStatus =
     setupPhase == null ? null : ({ phase: setupPhase, percent: setupPercent } as OllamaSetupStatus)
-  const whisperLabel = getWhisperSetupLabel(whisperStatus)
-  const ollamaLabel = getOllamaSetupLabel(ollamaStatus)
+  const whisperLabel = getWhisperSetupLabel(whisperStatus, t)
+  const ollamaLabel = getOllamaSetupLabel(ollamaStatus, t)
   const showOllamaSetupProgress =
     setupPhase === 'downloading' ||
     setupPhase === 'pulling' ||
@@ -213,11 +215,11 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-[200px] bg-bg-sidebar border-r border-border flex flex-col shrink-0">
+    <aside className="w-[clamp(9rem,25vw,12.5rem)] min-w-[9rem] bg-bg-sidebar border-r border-border flex flex-col shrink-0 min-h-0 overflow-hidden">
       <div className="h-[52px] shrink-0" />
-      <div className="flex flex-col flex-1 px-5 pb-5">
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-5 pb-5">
         <div className="flex items-center gap-2">
-          <WaveformIcon className="w-6 h-6" />
+          <WaveformIcon className="w-6 h-6 text-sage" />
           <span className="font-serif text-[20px] text-ink tracking-[-0.02em]">AutoDoc</span>
         </div>
 
@@ -227,9 +229,9 @@ export function Sidebar() {
               key={to}
               to={to}
               className={({ isActive }) =>
-                `px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors ${
+                `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${
                   isActive
-                    ? 'bg-sage text-white'
+                    ? 'bg-sage text-on-brand'
                     : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
                 }`
               }
@@ -247,7 +249,9 @@ export function Sidebar() {
           whisperPhase === 'installing-speaker-id' ||
           whisperPhase === 'downloading-speaker-model' ? (
             <div className="px-2.5 py-2 flex flex-col gap-1.5">
-              <span className="text-[11px] text-ink-faint">{whisperLabel}</span>
+              <span className="text-[11px] text-ink-faint leading-snug text-pretty">
+                {whisperLabel}
+              </span>
               <div className="w-full h-1 bg-border rounded-full overflow-hidden">
                 <div
                   className="h-full bg-sage rounded-full transition-all duration-300"
@@ -259,7 +263,9 @@ export function Sidebar() {
 
           {showOllamaSetupProgress ? (
             <div className="px-2.5 py-2 flex flex-col gap-1.5">
-              <span className="text-[11px] text-ink-faint">{ollamaLabel}</span>
+              <span className="text-[11px] text-ink-faint leading-snug text-pretty">
+                {ollamaLabel}
+              </span>
               <div className="w-full h-1 bg-border rounded-full overflow-hidden">
                 <div
                   className="h-full bg-sage rounded-full transition-all duration-300"
@@ -270,13 +276,15 @@ export function Sidebar() {
           ) : modelLoadFailed ? (
             <div className="flex items-center gap-2 px-2.5 py-2">
               <div className="w-2 h-2 rounded-full bg-clay" />
-              <span className="text-[11px] text-ink-faint">Notes model unavailable</span>
+              <span className="min-w-0 text-[11px] text-ink-faint leading-snug text-pretty">
+                {t('nav.notesModelUnavailable')}
+              </span>
             </div>
           ) : ollamaConnected !== null ? (
             <div className="flex items-center gap-2 px-2.5 py-2">
               <div className={`w-2 h-2 rounded-full ${ollamaConnected ? 'bg-sage' : 'bg-clay'}`} />
-              <span className="text-[11px] text-ink-faint">
-                Ollama {ollamaConnected ? 'connected' : 'disconnected'}
+              <span className="min-w-0 text-[11px] text-ink-faint leading-snug text-pretty">
+                {ollamaConnected ? t('nav.ollamaConnected') : t('nav.ollamaDisconnected')}
               </span>
             </div>
           ) : null}
@@ -284,22 +292,28 @@ export function Sidebar() {
           {isRecording && (
             <div className="flex items-center gap-2 px-2.5 py-2 bg-clay-light rounded-lg">
               <div className="w-2 h-2 rounded-full bg-clay animate-pulse" />
-              <span className="text-[11px] text-ink-muted">
-                Recording · {formatTime(recordingSeconds)}
+              <span className="min-w-0 text-[11px] text-ink-muted leading-snug text-pretty">
+                {t('nav.recording', { time: formatTime(recordingSeconds) })}
               </span>
             </div>
           )}
+
+          <div className="px-2.5 py-2">
+            <AppearanceSwitch />
+          </div>
 
           <NavLink
             to={ROUTES.settings}
             onClick={() => trackEvent('navigation_clicked', { page: 'settings' })}
             className={({ isActive }) =>
-              `px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors ${
-                isActive ? 'bg-sage text-white' : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
+              `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${
+                isActive
+                  ? 'bg-sage text-on-brand'
+                  : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
               }`
             }
           >
-            Settings
+            {t('nav.settings')}
           </NavLink>
 
           <button
@@ -307,15 +321,15 @@ export function Sidebar() {
             onClick={openSupportEmail}
             disabled={supportAvailable !== true || supportRequestPending}
             aria-describedby={supportAvailable === false ? 'support-email-unavailable' : undefined}
-            className="w-full px-2.5 py-2 rounded-lg text-left text-[12.5px] font-medium text-ink-muted hover:text-ink hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-muted"
+            className="w-full px-2.5 py-2 rounded-lg text-left text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] text-ink-muted hover:text-ink hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-muted"
           >
-            {supportRequestPending ? 'Opening email…' : 'Email Us'}
+            {supportRequestPending ? t('nav.openingEmail') : t('nav.emailUs')}
           </button>
 
           <div aria-live="polite" className="px-2.5 text-[10.5px] leading-4 text-ink-faint">
             {supportResult?.status === 'copy-required' ? (
               <div className="flex flex-col items-start gap-1">
-                <p>Mail app didn’t open.</p>
+                <p>{t('nav.mailDidNotOpen')}</p>
                 <span className="break-all select-text text-ink-muted">
                   {supportResult.address}
                 </span>
@@ -323,17 +337,15 @@ export function Sidebar() {
                   type="button"
                   onClick={copySupportEmail}
                   disabled={supportCopyStatus === 'copying'}
-                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 rounded-sm transition-colors disabled:cursor-wait disabled:opacity-60"
+                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage rounded-sm transition-colors disabled:cursor-wait disabled:opacity-60"
                 >
-                  {supportCopyStatus === 'copying' ? 'Copying…' : 'Copy email address'}
+                  {supportCopyStatus === 'copying' ? t('nav.copying') : t('nav.copyEmail')}
                 </button>
-                {supportCopyStatus === 'copied' ? <p>Email address copied.</p> : null}
-                {supportCopyStatus === 'failed' ? (
-                  <p>Couldn’t copy. Select the address above.</p>
-                ) : null}
+                {supportCopyStatus === 'copied' ? <p>{t('nav.emailCopied')}</p> : null}
+                {supportCopyStatus === 'failed' ? <p>{t('nav.copyFailed')}</p> : null}
               </div>
             ) : supportResult?.status === 'unavailable' || supportAvailable === false ? (
-              <p id="support-email-unavailable">Email isn’t configured in this build.</p>
+              <p id="support-email-unavailable">{t('nav.emailUnavailable')}</p>
             ) : null}
           </div>
         </div>

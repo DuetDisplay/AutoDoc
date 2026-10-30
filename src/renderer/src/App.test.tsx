@@ -1,3 +1,5 @@
+import { I18nProvider } from './services/i18n'
+import { translate, type MessageKey } from '../../shared/i18n'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -84,7 +86,7 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/your meetings talk/i)).toBeInTheDocument()
+    expect(await screen.findByText('Choose your language')).toBeInTheDocument()
   })
 
   it('skips onboarding and renders the app shell for returning users', async () => {
@@ -559,6 +561,56 @@ describe('App', () => {
     expect(screen.queryByText('Optimized local processing is on')).not.toBeInTheDocument()
   })
 
+  it('shows a disk-full update alert that can retry or be dismissed until the next failure', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus(),
+      'updater:check': undefined
+    })
+
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+
+    act(() => {
+      api.emit('updater:status', createUpdateStatus({ state: 'error', error: 'boom' }))
+    })
+    expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+
+    const diskFull = createUpdateStatus({
+      state: 'error',
+      error: 'ENOSPC',
+      errorKind: 'disk-full'
+    })
+    act(() => api.emit('updater:status', diskFull))
+    expect(await screen.findByText('Not enough space to install the update')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Your computer is almost out of disk space. Free up some space, then try again.'
+      )
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(api.invoke).toHaveBeenCalledWith('updater:check')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+
+    act(() => api.emit('updater:status', createUpdateStatus({ state: 'checking' })))
+    act(() => api.emit('updater:status', diskFull))
+    expect(await screen.findByText('Not enough space to install the update')).toBeInTheDocument()
+
+    // Settings shows its own card, so the app-wide banner steps aside there.
+    act(() => {
+      window.location.hash = '#/settings'
+    })
+    await waitFor(() =>
+      expect(screen.queryByText('Not enough space to install the update')).not.toBeInTheDocument()
+    )
+  })
+
   it('shows a restart prompt when an update is ready', async () => {
     const api = installMockElectronApi({
       'prefs:get-onboarding-complete': true,
@@ -578,7 +630,7 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('Update ready')).toBeInTheDocument()
-    expect(screen.getByText('Restart AutoDoc to install v0.1.47.')).toBeInTheDocument()
+    expect(screen.getByText('Restart to update to v0.1.47')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }))
 
@@ -610,6 +662,47 @@ describe('App', () => {
     )
     expect(restart).toBeEnabled()
   })
+
+  it.each([
+    ['Finish your recording before restarting.', 'settings.finishRecordingBeforeRestart'],
+    ['AutoDoc is starting. Try again shortly.', 'update.startingBeforeRestart'],
+    [
+      'AutoDoc is processing your meeting. Restart when it finishes.',
+      'update.processingBeforeRestart'
+    ],
+    ['Wait for the model download to finish before restarting.', 'update.downloadBeforeRestart'],
+    ['AutoDoc is saving your recording.', 'update.savingBeforeRestart']
+  ] as const)(
+    'localizes a visible restart block and preserves its guard: %s',
+    async (reason, key: MessageKey) => {
+      const api = installMockElectronApi({
+        'prefs:get-onboarding-complete': true,
+        'prefs:get-analytics-consent': false,
+        'prefs:get-ui-language': 'ko',
+        'calendar:get-accounts': [],
+        'calendar:get-events': [],
+        'updater:get-status': createUpdateStatus({
+          state: 'downloaded',
+          version: '1.3.1',
+          installBlockedReason: reason
+        })
+      })
+      render(
+        <I18nProvider>
+          <App />
+        </I18nProvider>
+      )
+      expect(await screen.findByText(translate('ko', key))).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: translate('ko', 'ui.restart'), exact: true })
+      ).toBeDisabled()
+      act(() => api.emit('prefs:ui-language-changed', 'ja'))
+      expect(await screen.findByText(translate('ja', key))).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: translate('ja', 'ui.restart'), exact: true })
+      ).toBeDisabled()
+    }
+  )
 
   it('shows the up to date banner in the app banner stack after a manual update check finds no updates', async () => {
     window.location.hash = '#/settings'
