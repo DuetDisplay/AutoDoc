@@ -1,4 +1,5 @@
 import { isDiskFullError } from '../../../shared/disk-full'
+import { updateInstallBlockMessage } from '../services/update-install-status'
 import { AUTODOC_GITHUB_URL } from '../../../shared/constants'
 import type { MessageKey } from '../../../shared/i18n'
 import { meetingLanguageName } from '../services/meeting-language-name'
@@ -70,15 +71,20 @@ function getCalendarAccountLabel(
 
 function getCalendarSyncIssueMessage(
   account: CalendarAccount,
-  t: (key: 'settings.syncUnsupportedMailbox' | 'settings.syncReconnectRequired') => string
+  t: (
+    key:
+      | 'settings.syncUnsupportedMailbox'
+      | 'settings.syncReconnectRequired'
+      | 'settings.syncReconnectRequiredGoogle'
+  ) => string
 ): string | null {
   if (account.syncIssue === 'unsupported-mailbox') {
     return t('settings.syncUnsupportedMailbox')
   }
   if (account.syncIssue === 'reconnect-required') {
     return account.provider === 'google'
-      ? 'Google Calendar needs to be reconnected to resume calendar sync. Disconnect it, then connect again and allow calendar access.'
-      : 'Microsoft Outlook needs to be reconnected to resume calendar sync.'
+      ? t('settings.syncReconnectRequiredGoogle')
+      : t('settings.syncReconnectRequired')
   }
 
   return null
@@ -117,8 +123,8 @@ export function Settings() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const isRecording = useRecordingStore((state) => state.isRecording)
   const installBlockedReason = isRecording
-    ? 'Finish your recording before restarting.'
-    : updateStatus.installBlockedReason
+    ? t('settings.finishRecordingBeforeRestart')
+    : updateInstallBlockMessage(updateStatus.installBlockedReason, t)
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
@@ -1012,7 +1018,7 @@ export function Settings() {
                     })
                   }}
                   disabled={isInstallingUpdate || Boolean(installBlockedReason)}
-                  className="i18n-btn text-[11px] font-semibold text-on-brand bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
+                  className="i18n-btn text-[11px] font-semibold text-on-brand bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
                 >
                   {isInstallingUpdate
                     ? t('settings.restarting')

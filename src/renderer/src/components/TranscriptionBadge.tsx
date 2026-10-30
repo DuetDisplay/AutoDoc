@@ -93,7 +93,7 @@ export function TranscriptionBadge({
   return (
     <Tag
       {...(Tag === 'button' ? { type: 'button' as const, disabled: retryPending } : {})}
-      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${isMemoryFailure ? 'cursor-default' : status === 'failed' ? 'cursor-pointer hover:bg-bg-card' : ''}`}
+      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${isMemoryFailure ? 'cursor-default' : ''}`}
       onClick={
         Tag === 'button'
           ? () => {

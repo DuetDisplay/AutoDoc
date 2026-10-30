@@ -1,3 +1,5 @@
+import { I18nProvider } from './services/i18n'
+import { translate, type MessageKey } from '../../shared/i18n'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -628,7 +630,7 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('Update ready')).toBeInTheDocument()
-    expect(screen.getByText('Restart AutoDoc to install v0.1.47.')).toBeInTheDocument()
+    expect(screen.getByText('Restart to update to v0.1.47')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }))
 
@@ -660,6 +662,47 @@ describe('App', () => {
     )
     expect(restart).toBeEnabled()
   })
+
+  it.each([
+    ['Finish your recording before restarting.', 'settings.finishRecordingBeforeRestart'],
+    ['AutoDoc is starting. Try again shortly.', 'update.startingBeforeRestart'],
+    [
+      'AutoDoc is processing your meeting. Restart when it finishes.',
+      'update.processingBeforeRestart'
+    ],
+    ['Wait for the model download to finish before restarting.', 'update.downloadBeforeRestart'],
+    ['AutoDoc is saving your recording.', 'update.savingBeforeRestart']
+  ] as const)(
+    'localizes a visible restart block and preserves its guard: %s',
+    async (reason, key: MessageKey) => {
+      const api = installMockElectronApi({
+        'prefs:get-onboarding-complete': true,
+        'prefs:get-analytics-consent': false,
+        'prefs:get-ui-language': 'ko',
+        'calendar:get-accounts': [],
+        'calendar:get-events': [],
+        'updater:get-status': createUpdateStatus({
+          state: 'downloaded',
+          version: '1.3.1',
+          installBlockedReason: reason
+        })
+      })
+      render(
+        <I18nProvider>
+          <App />
+        </I18nProvider>
+      )
+      expect(await screen.findByText(translate('ko', key))).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: translate('ko', 'ui.restart'), exact: true })
+      ).toBeDisabled()
+      act(() => api.emit('prefs:ui-language-changed', 'ja'))
+      expect(await screen.findByText(translate('ja', key))).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: translate('ja', 'ui.restart'), exact: true })
+      ).toBeDisabled()
+    }
+  )
 
   it('shows the up to date banner in the app banner stack after a manual update check finds no updates', async () => {
     window.location.hash = '#/settings'

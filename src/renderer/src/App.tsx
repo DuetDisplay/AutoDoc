@@ -1,3 +1,4 @@
+import { updateInstallBlockMessage } from './services/update-install-status'
 import { useT } from './services/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
@@ -92,8 +93,8 @@ function UpdateReadyPrompt({
 }: {
   onVisibilityChange?: (visible: boolean) => void
 }) {
-  const isRecording = useRecordingStore((state) => state.isRecording)
   const t = useT()
+  const isRecording = useRecordingStore((state) => state.isRecording)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
   const [showUpToDateBanner, setShowUpToDateBanner] = useState(false)
@@ -261,8 +262,8 @@ function UpdateReadyPrompt({
   const version = updateStatus.version ?? 'unknown'
   const isInstalling = updateStatus.state === 'installing'
   const installBlockedReason = isRecording
-    ? 'Finish your recording before restarting.'
-    : updateStatus.installBlockedReason
+    ? t('settings.finishRecordingBeforeRestart')
+    : updateInstallBlockMessage(updateStatus.installBlockedReason, t)
 
   if (!isInstalling && dismissedVersion === version) {
     return null
@@ -324,8 +325,6 @@ function UpdateReadyPrompt({
 }
 
 export default function App() {
-  const t = useT()
-
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [lowSpecBannerVisible, setLowSpecBannerVisible] = useState(false)
   const [notesEngineBannerVisible, setNotesEngineBannerVisible] = useState(false)

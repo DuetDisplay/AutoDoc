@@ -8,7 +8,11 @@ import {
   type ReactNode
 } from 'react'
 import { translate, type MessageKey } from '../../../shared/i18n'
-import { DEFAULT_UI_LANGUAGE, normalizeUiLanguage, type UiLanguageCode } from '../../../shared/ui-language'
+import {
+  DEFAULT_UI_LANGUAGE,
+  normalizeUiLanguage,
+  type UiLanguageCode
+} from '../../../shared/ui-language'
 import { applyDocumentLanguage, readCachedUiLanguage } from './document-language'
 
 type TranslateFn = (key: MessageKey, params?: Record<string, string | number>) => string
@@ -63,10 +67,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
+// The context hooks and their provider share this module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useI18n(): I18nContextValue {
   return useContext(I18nContext)
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useT(): TranslateFn {
   return useI18n().t
 }

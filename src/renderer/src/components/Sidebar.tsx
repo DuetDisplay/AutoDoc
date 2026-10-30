@@ -276,7 +276,9 @@ export function Sidebar() {
           ) : modelLoadFailed ? (
             <div className="flex items-center gap-2 px-2.5 py-2">
               <div className="w-2 h-2 rounded-full bg-clay" />
-              <span className="text-[11px] text-ink-faint">Notes model unavailable</span>
+              <span className="min-w-0 text-[11px] text-ink-faint leading-snug text-pretty">
+                {t('nav.notesModelUnavailable')}
+              </span>
             </div>
           ) : ollamaConnected !== null ? (
             <div className="flex items-center gap-2 px-2.5 py-2">

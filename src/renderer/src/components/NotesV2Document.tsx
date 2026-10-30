@@ -1,5 +1,5 @@
 import { useT } from '../services/i18n'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type {
   MeetingNotesContent,
   MeetingNotesV2,

@@ -295,8 +295,12 @@ export class DetectionService {
       { requestId, eventId: request.eventId, providerId: request.providerId },
       {
         title: displayTitle,
-        body: 'AI notes started. This meeting is being recorded.',
-        primaryActionLabel: 'Stop',
+        body: tMain('recording.startedNoticeBody'),
+        primaryActionLabel: tMain('recording.stop'),
+        localize: () => ({
+          body: tMain('recording.startedNoticeBody'),
+          primaryActionLabel: tMain('recording.stop')
+        }),
         kind: 'recording-started',
         autoDismissMs: 15_000,
         suppressAppActivationWhileVisible: true,
@@ -502,8 +506,12 @@ export class DetectionService {
       },
       {
         title: request.title,
-        body: 'Choose a window.',
-        primaryActionLabel: 'Select window',
+        body: tMain('recording.chooseWindow'),
+        primaryActionLabel: tMain('recording.selectWindow'),
+        localize: () => ({
+          body: tMain('recording.chooseWindow'),
+          primaryActionLabel: tMain('recording.selectWindow')
+        }),
         kind: 'meeting-detection',
         autoDismissMs: 0,
         suppressAppActivationWhileVisible: true,

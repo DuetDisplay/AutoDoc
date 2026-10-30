@@ -213,26 +213,26 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           <FeatureStep
             icon="📋"
             iconBg="bg-clay-light"
-            heading="Notes That Think"
-            body="AutoDoc writes a summary, topics, and key takeaways you can edit. Decisions show up when the meeting made them."
+            heading={t('ui.notesThatThink')}
+            body={t('onboarding.notesBody')}
             features={[
               {
                 icon: '✅',
                 iconBg: 'bg-clay-light',
-                title: 'Summary',
-                description: 'A short overview of the meeting'
+                title: t('ui.summary'),
+                description: t('onboarding.summaryDescription')
               },
               {
                 icon: '📌',
                 iconBg: 'bg-clay-light',
-                title: 'Topics',
-                description: 'The conversation, grouped by topic'
+                title: t('onboarding.topicsTitle'),
+                description: t('onboarding.topicsDescription')
               },
               {
                 icon: '💬',
                 iconBg: 'bg-sage-light',
-                title: 'Key takeaways',
-                description: 'The points worth keeping'
+                title: t('onboarding.keyTakeawaysTitle'),
+                description: t('onboarding.keyTakeawaysDescription')
               }
             ]}
             onNext={next}

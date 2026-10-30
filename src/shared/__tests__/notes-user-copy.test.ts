@@ -31,7 +31,7 @@ describe('notes user copy', () => {
 })
 
 it('localizes every failure kind rather than returning English for a selected locale', () => {
-  for (const kind of ['empty', 'memory', 'engine', 'generic', 'layout'] as const) {
+  for (const kind of ['empty', 'nothing-found', 'memory', 'engine', 'generic', 'layout'] as const) {
     const english = notesUserCopy(kind)
     for (const language of UI_LANGUAGE_CODES.filter((code) => code !== 'en')) {
       const translated = notesUserCopy(kind, language)

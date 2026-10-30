@@ -128,13 +128,14 @@ export function RecordingControls({
     closePicker
   } = useRecordingPickerStore()
   const placement = useAnchoredPopover(showPicker, triggerRef, 320, 384)
+  const cancelPickerRef = useRef<() => void>(closePicker)
   useEffect(() => {
     if (!showPicker) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
-        closePicker()
+        cancelPickerRef.current()
         triggerRef.current?.focus()
       } else if (event.key === 'Tab') {
         const buttons =
@@ -240,6 +241,7 @@ export function RecordingControls({
     })
     closePicker()
   }
+  cancelPickerRef.current = handleCancelPicker
 
   const handleSourceSelect = (source: RecordingSource): void => {
     const scoredIndex = scoredSourceIds.indexOf(source.id)

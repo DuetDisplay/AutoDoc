@@ -1429,7 +1429,7 @@ export class OllamaManager extends EventEmitter {
         finish(() => {
           reject(
             withSentryFingerprint(new Error(`Failed to start Ollama: ${err.message}`), [
-              'ollama-exit',
+              'ollama-server-exited',
               'spawn-failed'
             ])
           )

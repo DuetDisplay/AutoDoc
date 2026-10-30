@@ -39,6 +39,11 @@ describe('Onboarding', () => {
     expect(screen.getByText('How It Works')).toBeInTheDocument()
     await userEvent.click(screen.getByText('Next →'))
     expect(screen.getByText('Notes That Think')).toBeInTheDocument()
+    expect(screen.getByText(/writes a summary, topics, and key takeaways/)).toBeInTheDocument()
+    for (const title of ['Summary', 'Topics', 'Key takeaways']) {
+      expect(screen.getByText(title)).toBeInTheDocument()
+    }
+    expect(screen.queryByText('Action Items')).not.toBeInTheDocument()
   })
 
   it('goes back to the previous onboarding screen and persists the previous step', async () => {

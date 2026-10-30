@@ -332,10 +332,7 @@ const safeQuit = new SafeQuitCoordinator({
       message: 'Could not finish recording before quit',
       error
     })
-    dialog.showErrorBox(
-      'AutoDoc is still saving your recording',
-      'AutoDoc stayed open to protect your recording. Wait for it to finish, then quit again.'
-    )
+    dialog.showErrorBox(tMain('quit.savingTitle'), tMain('quit.savingBody'))
   }
 })
 let mainSentry: MainSentryRuntimeModule | null = null

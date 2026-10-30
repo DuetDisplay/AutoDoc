@@ -45,6 +45,8 @@ interface NotificationOptions {
   body: string
   bodyTitle?: string
   primaryActionLabel: string
+  /** Re-renders body and action text when the app language changes while the notification is open. */
+  localize?: () => { body: string; primaryActionLabel: string }
   onPrimaryAction: () => void
   onDismiss: (reason: NotificationDismissReason) => void
   /** Called when the app (not the user) hides or replaces this notification. */
@@ -227,19 +229,24 @@ export function showNotificationWindow(options: NotificationOptions): void {
   const updateLocale = (): void => {
     if (win.isDestroyed()) return
     const notesReady = options.kind === 'notes-ready'
+    const localized = options.localize?.()
     win.webContents.send('notification:locale', {
       lang: htmlLangForUiLanguage(getMainUiLanguage()),
       title: notesReady ? tMain('notesReady.title') : options.title,
       body: notesReady
         ? tMain('notesReady.body')
-        : options.kind === 'meeting-detection'
-          ? tMain('recording.wouldYouLikeToStart')
-          : options.body,
+        : localized
+          ? localized.body
+          : options.kind === 'meeting-detection'
+            ? tMain('recording.wouldYouLikeToStart')
+            : options.body,
       action: notesReady
         ? tMain('notesReady.open')
-        : options.kind === 'meeting-detection'
-          ? tMain('recording.startNotes')
-          : options.primaryActionLabel,
+        : localized
+          ? localized.primaryActionLabel
+          : options.kind === 'meeting-detection'
+            ? tMain('recording.startNotes')
+            : options.primaryActionLabel,
       dismiss: tMain('common.dismiss')
     })
   }

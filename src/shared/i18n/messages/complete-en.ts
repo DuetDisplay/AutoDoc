@@ -95,7 +95,6 @@ export const completeEn = {
   'ui.gotIt': 'Got it',
   'ui.exportNotes': 'Export notes',
   'ui.chooseAFileFormat': 'Choose a file format.',
-  'ui.newIn130': 'New in 1.3.0',
   'ui.yourMeetingsInYourLanguage': 'Your meetings, in your language',
   'ui.changingLanguagesMayNeedAOneTimeSpeechModelDownload':
     'Changing languages may need a one-time speech model download.',
@@ -210,8 +209,6 @@ export const completeEn = {
   'ui.autoDocQuietlyRecordsYourMeetingAudioTranscribesItLocallyAndIdentifiesWhoSS':
     "AutoDoc quietly records your meeting audio, transcribes it locally, and identifies who's speaking — all on your device.",
   'ui.notesThatThink': 'Notes That Think',
-  'ui.inspiredByAndyGroveSHighOutputManagementAutoDocBreaksEveryMeetingIntoThePat':
-    "Inspired by Andy Grove's High Output Management, AutoDoc breaks every meeting into the patterns that matter — fully editable by you.",
   'ui.back': '← Back',
   'ui.updateReady': 'Update ready',
   'ui.autoDocWillReopenAfterTheUpdateInstalls': 'AutoDoc will reopen after the update installs.',
@@ -295,10 +292,6 @@ export const completeEn = {
   'ui.identifiesSpeakers': 'Identifies speakers',
   'ui.knowsWhoSTalkingLabelsMeVsThemAutomatically':
     'Knows who\'s talking — labels "Me" vs "Them" automatically',
-  'ui.whatWasDecidedAndWhy': 'What was decided and why',
-  'ui.whoDoesWhatByWhen': 'Who does what, by when',
-  'ui.discussionStatus': 'Discussion & Status',
-  'ui.keyPointsUpdatesAndContext': 'Key points, updates, and context',
   'ui.newNotesAreReady': 'New notes are ready',
   'ui.yourNotesJustGotALotMoreReadable': 'Your notes just got a lot more readable',
   'ui.yourNextMeetingWillComeBackClearerAndEasierToScanExistingNotesStayAsTheyAre':
@@ -366,8 +359,6 @@ export const completeEn = {
   'ui.transcribingAudio': 'Transcribing audio...',
   'ui.couldNotLoadMeetingLanguages': 'Could not load meeting languages.',
   'ui.selectTheMeetingWindow': 'Select the meeting window',
-  'ui.autoDocCouldNotConfidentlyIdentifyTheMeetingWindowPickItManually':
-    'AutoDoc could not confidently identify the meeting window. Pick it manually.',
   'ui.chooseWhereToSaveTheseNotes': 'Choose where to save these notes.',
   'ui.wordDocument': 'Word Document',
   'count.meetings.zero': '{count} meetings',

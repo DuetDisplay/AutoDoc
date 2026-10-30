@@ -518,6 +518,26 @@ describe('notification window activation suppression', () => {
     refreshNotificationLocale()
     expect(win.webContents.send).toHaveBeenCalledTimes(calls)
   })
+
+  it('re-renders localized body and action text for a banner that supplies its own copy', () => {
+    showTestNotification({
+      kind: 'meeting-detection',
+      localize: () => ({
+        body: translate('de', 'recording.chooseWindow'),
+        primaryActionLabel: translate('de', 'recording.selectWindow')
+      })
+    })
+    const win = mocks.windows[0]
+    setMainUiLanguage('de')
+    refreshNotificationLocale()
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'notification:locale',
+      expect.objectContaining({
+        body: translate('de', 'recording.chooseWindow'),
+        action: translate('de', 'recording.selectWindow')
+      })
+    )
+  })
 })
 
 describe('notification window dismiss and hide reasons', () => {

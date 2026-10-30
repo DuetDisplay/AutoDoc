@@ -1332,6 +1332,7 @@ describe('MeetingDetail', () => {
       act(() =>
         api.emit('segmentation:status-changed', { meetingId: 'test-123', status: 'queued' })
       )
+      expect(screen.queryByText('Notes couldn’t finish')).not.toBeInTheDocument()
       expect(screen.queryByText('No notes were generated')).not.toBeInTheDocument()
       expect(screen.getByText('Queued for notes')).toBeInTheDocument()
     }

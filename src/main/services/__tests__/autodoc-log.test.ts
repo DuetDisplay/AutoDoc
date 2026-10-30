@@ -72,16 +72,17 @@ describe('autodoc log', () => {
       area: 'ollama',
       message: 'ollama server process exited',
       error: new Error('Ollama exited with code 2'),
-      fingerprint: ['ollama-exit', '2']
+      fingerprint: ['ollama-server-exited', '2']
     })
     logAutodocFailure({ area: 'app', message: 'plain failure', error: new Error('boom') })
 
     await flushAutodocLogWrites()
 
     expect(captureError).toHaveBeenCalledTimes(2)
-    expect(captureError.mock.calls[0]?.[1]?.fingerprint).toEqual(['ollama-exit', '2'])
+    expect(captureError.mock.calls[0]?.[1]?.fingerprint).toEqual(['ollama-server-exited', '2'])
     expect(captureError.mock.calls[1]?.[1]).not.toHaveProperty('fingerprint')
   })
+
   it('attaches a sanitized diagnostic log tail when uploads are enabled', async () => {
     setDiagnosticLogUploadForErrorsEnabled(true)
 
@@ -109,19 +110,5 @@ describe('autodoc log', () => {
     expect(context?.diagnosticLogAttachment?.data).toContain('[home]')
     expect(context?.diagnosticLogAttachment?.data).not.toContain('qa@example.com')
     expect(context?.diagnosticLogAttachment?.data).not.toContain('/Users/tester')
-  })
-
-  it('forwards a Sentry fingerprint to captureError', async () => {
-    logAutodocFailure({
-      area: 'ollama',
-      message: 'ollama server process exited',
-      error: new Error('Ollama exited with code 1: sampler params'),
-      fingerprint: ['ollama-server-exited', '1']
-    })
-
-    await flushAutodocLogWrites()
-
-    expect(captureError).toHaveBeenCalledTimes(1)
-    expect(captureError.mock.calls[0]?.[1]?.fingerprint).toEqual(['ollama-server-exited', '1'])
   })
 })

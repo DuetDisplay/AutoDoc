@@ -19,25 +19,6 @@ beforeEach(() => {
 })
 
 describe('RecordingControls', () => {
-  it('keeps keyboard focus in the picker and restores the trigger on Escape', async () => {
-    render(
-      <RecordingControls
-        isRecording={false}
-        onStartRecording={async () => {}}
-        onStopRecording={() => {}}
-        onFetchSources={async () => [{ id: 'window:1', name: 'Notes', thumbnailDataUrl: '' }]}
-      />
-    )
-    const trigger = screen.getByRole('button', { name: 'Record', exact: true })
-    await userEvent.click(trigger)
-    const source = await screen.findByRole('button', { name: 'Notes', exact: true })
-    await waitFor(() => expect(source).toHaveFocus())
-    await userEvent.tab()
-    expect(source).toHaveFocus()
-    await userEvent.keyboard('{Escape}')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
-  })
   it('keeps the detector context and meeting intent when the user chooses an ambiguous window', async () => {
     const onStartRecording = vi.fn(async () => {})
     const selectionContext = {
@@ -125,7 +106,7 @@ describe('RecordingControls', () => {
       requestId: 9,
       diagnosticTrigger: 'select_window'
     })
-    const { container } = render(
+    render(
       <RecordingControls
         isRecording={false}
         onStartRecording={async () => {}}
@@ -133,7 +114,7 @@ describe('RecordingControls', () => {
         onFetchSources={async () => []}
       />
     )
-    await userEvent.click(container.querySelector('.fixed.inset-0') as HTMLElement)
+    await userEvent.click(document.querySelector('.fixed.inset-0') as HTMLElement)
     expect(mockInvoke).toHaveBeenCalledWith(
       'diagnostics:record-action',
       expect.objectContaining({
@@ -171,6 +152,26 @@ describe('RecordingControls', () => {
         }
       })
     )
+  })
+
+  it('keeps keyboard focus in the picker and restores the trigger on Escape', async () => {
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={async () => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => [{ id: 'window:1', name: 'Notes', thumbnailDataUrl: '' }]}
+      />
+    )
+    const trigger = screen.getByRole('button', { name: 'Record', exact: true })
+    await userEvent.click(trigger)
+    const source = await screen.findByRole('button', { name: 'Notes', exact: true })
+    await waitFor(() => expect(source).toHaveFocus())
+    await userEvent.tab()
+    expect(source).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   it('renders start recording button when not recording', () => {

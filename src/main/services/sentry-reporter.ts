@@ -84,9 +84,6 @@ export function captureError(error: unknown, context: ErrorContext): void {
     if (context.diagnosticLogAttachment) {
       attachmentAwareScope.addAttachment?.(context.diagnosticLogAttachment)
     }
-    if (context.fingerprint) {
-      attachmentAwareScope.setFingerprint?.(context.fingerprint)
-    }
 
     currentSentry.captureException(error instanceof Error ? error : new Error(String(error)))
   })
