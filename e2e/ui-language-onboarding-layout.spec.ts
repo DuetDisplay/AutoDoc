@@ -248,9 +248,17 @@ for (const includeMeetingLanguage of [true, false]) {
       })
       await setUi(page, 'en', 'light')
       await page.screenshot({ path: test.info().outputPath('popup-en-light.png') })
-      const control = dialog.getByRole('switch')
-      await expect(control).toHaveText('')
-      await expectSlidingIndicator(control)
+      const choices = dialog.getByRole('radiogroup', { name: 'Appearance', exact: true })
+      await expect(choices.getByRole('radio')).toHaveCount(2)
+      await expect(choices.getByRole('radio', { name: 'Light', exact: true })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+      await choices.getByRole('radio', { name: 'Dark', exact: true }).click()
+      await expect(choices.getByRole('radio', { name: 'Dark', exact: true })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
       await dialog.getByRole('button', { name: 'App language' }).click()
       await page.getByRole('option', { name: 'Deutsch', exact: true }).click()

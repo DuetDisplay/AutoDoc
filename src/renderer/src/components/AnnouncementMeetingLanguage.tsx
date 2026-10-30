@@ -15,6 +15,7 @@ import { meetingLanguageName } from '../services/meeting-language-name'
 import { loadMeetingLanguageAvailability } from '../services/meeting-language-setup'
 import { isNetworkErrorMessage } from '../services/network-errors'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
+import { AnnouncementRow } from './AnnouncementRow'
 import { MeetingLanguagePicker } from './MeetingLanguagePicker'
 
 export function AnnouncementMeetingLanguage({
@@ -110,20 +111,11 @@ export function AnnouncementMeetingLanguage({
   const setupLabel = getWhisperSetupLabel(status, t)
 
   return (
-    <section
-      className="mt-4 border-b border-border-subtle pb-4"
-      aria-labelledby="announcement-meeting-language"
-    >
-      <h3 id="announcement-meeting-language" className="text-[13px] font-semibold">
-        {t('settings.meetingLanguage')}
-      </h3>
-      <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-        {t('announcement.meetingLanguageBody', { count: MEETING_LANGUAGE_DEFINITIONS.length })}
-      </p>
-      <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-        {t('announcement.meetingLanguageDescription')}
-      </p>
-      <div className="mt-3">
+    <AnnouncementRow
+      icon="microphone"
+      headingId="announcement-meeting-language"
+      title={t('settings.meetingLanguage')}
+      control={
         <MeetingLanguagePicker
           value={language}
           onChange={(next) => void choose(next)}
@@ -131,7 +123,14 @@ export function AnnouncementMeetingLanguage({
           availability={availability ?? undefined}
           offline={!online}
         />
-      </div>
+      }
+    >
+      <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+        {t('announcement.meetingLanguageBody', { count: MEETING_LANGUAGE_DEFINITIONS.length })}
+      </p>
+      <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+        {t('announcement.meetingLanguageDescription')}
+      </p>
       {download && <p className="mt-2 text-[12px] text-ink-muted">{download}</p>}
       {setupLabel && (
         <p role="status" className="mt-2 text-[12px] text-ink-muted">
@@ -152,6 +151,6 @@ export function AnnouncementMeetingLanguage({
           {t('ui.retry')}
         </button>
       )}
-    </section>
+    </AnnouncementRow>
   )
 }

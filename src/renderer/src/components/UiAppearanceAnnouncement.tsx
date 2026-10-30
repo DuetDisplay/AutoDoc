@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../services/i18n'
 import { UiLanguagePicker } from './UiLanguagePicker'
-import { AppearanceSwitch } from './AppearanceSwitch'
+import { AnnouncementGreeting } from './AnnouncementGreeting'
+import { AnnouncementGroup, AnnouncementRow } from './AnnouncementRow'
+import { AppearancePreviewChoice } from './AppearancePreviewChoice'
 import type { UiLanguageCode } from '../../../shared/ui-language'
 import { AnnouncementMeetingLanguage } from './AnnouncementMeetingLanguage'
 
@@ -66,48 +68,57 @@ export function UiAppearanceAnnouncement({
       }}
       className="fixed inset-0 m-auto max-h-[calc(100%-32px)] w-[440px] max-w-[calc(100%-32px)] flex-col overflow-hidden rounded-2xl border border-border bg-bg-card text-ink shadow-xl backdrop:bg-ink/20 open:flex"
     >
-      <h2
-        id="ui-appearance-title"
-        className="shrink-0 px-6 pt-6 font-sans text-[22px] font-semibold leading-tight tracking-[-0.02em] text-sage-dark"
-      >
-        {t('ui.new')}
-      </h2>
-      <div className="min-h-0 overflow-y-auto px-6">
-        {includeMeetingLanguage && (
-          <AnnouncementMeetingLanguage visible={visible} onBusyChange={setMeetingLanguageBusy} />
-        )}
-        <section className="mt-4" aria-labelledby="announcement-app-language">
-          <h3 id="announcement-app-language" className="text-[13px] font-semibold">
-            {t('uiLanguage.title')}
-          </h3>
-          <p
-            id="ui-appearance-body"
-            className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
-          >
-            {t('announcement.uiLanguageBody')}
-          </p>
-          <div className="mt-3">
-            <UiLanguagePicker
-              value={language}
-              onChange={(next) => void chooseLanguage(next)}
-              label={t('uiLanguage.title')}
-            />
-          </div>
-        </section>
-        <section
-          className="mt-4 flex items-center justify-between gap-4 border-t border-border-subtle pt-4"
-          aria-labelledby="announcement-appearance"
+      <div className="flex shrink-0 flex-col items-center px-6 pt-6 text-center">
+        <h2
+          id="ui-appearance-title"
+          className="inline-flex items-center gap-1.5 rounded-full border border-sage/35 py-1 pl-2.5 pr-[13px] font-sans text-[13px] font-semibold leading-tight text-sage-dark"
         >
-          <div>
-            <h3 id="announcement-appearance" className="text-[13px] font-semibold">
-              {t('appearance.title')}
-            </h3>
-            <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-              {t('appearance.description')}
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="size-3.5">
+            <path d="M12 2c.5 4.8 2.7 7.5 8 10-5.3 2.5-7.5 5.2-8 10-.5-4.8-2.7-7.5-8-10 5.3-2.5 7.5-5.2 8-10Z" />
+          </svg>
+          {t('ui.new')}
+        </h2>
+        <AnnouncementGreeting language={language} active={visible} />
+      </div>
+      <div className="min-h-0 overflow-y-auto px-6 pb-1 pt-4">
+        <AnnouncementGroup>
+          {includeMeetingLanguage && (
+            <AnnouncementMeetingLanguage visible={visible} onBusyChange={setMeetingLanguageBusy} />
+          )}
+          <AnnouncementRow
+            icon="language"
+            headingId="announcement-app-language"
+            title={t('uiLanguage.title')}
+            control={
+              <UiLanguagePicker
+                value={language}
+                onChange={(next) => void chooseLanguage(next)}
+                label={t('uiLanguage.title')}
+              />
+            }
+          >
+            <p
+              id="ui-appearance-body"
+              className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
+            >
+              {t('announcement.uiLanguageBody')}
             </p>
-          </div>
-          <AppearanceSwitch />
-        </section>
+          </AnnouncementRow>
+        </AnnouncementGroup>
+        <div className="mt-3">
+          <AnnouncementGroup>
+            <AnnouncementRow
+              icon="appearance"
+              headingId="announcement-appearance"
+              title={t('appearance.title')}
+            >
+              <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+                {t('appearance.description')}
+              </p>
+              <AppearancePreviewChoice labelledBy="announcement-appearance" />
+            </AnnouncementRow>
+          </AnnouncementGroup>
+        </div>
         {error && (
           <p role="alert" className="mt-3 text-[12px] text-clay-dark">
             {t('ui.couldNotSaveThisPreferenceTryAgain')}

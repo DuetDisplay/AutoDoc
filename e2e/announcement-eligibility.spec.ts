@@ -49,7 +49,7 @@ for (const profile of UPGRADE_PROFILES) {
         animations: 'disabled',
         path: test.info().outputPath(`${variant}-light.png`)
       })
-      await dialog.getByRole('switch', { name: 'Dark mode' }).click()
+      await dialog.getByRole('radio', { name: 'Dark', exact: true }).click()
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
       await dialog.screenshot({
         animations: 'disabled',
