@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useAnchoredPopover } from '../hooks/useAnchoredPopover'
-import { meetingLanguageName } from '../services/meeting-language-name'
+import { meetingLanguageLabel, meetingLanguageName } from '../services/meeting-language-name'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import {
   getMeetingLanguageDefinition,
@@ -207,7 +207,7 @@ export function MeetingLanguagePicker({
         className="flex min-w-0 max-w-full w-48 items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-left text-[12px] font-medium leading-snug text-ink transition-colors hover:border-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-wait disabled:opacity-60"
       >
         <span className="min-w-0 text-pretty [overflow-wrap:anywhere]">
-          {meetingLanguageName(selected.code)}
+          {meetingLanguageLabel(selected.code)}
         </span>
         <svg
           aria-hidden="true"
@@ -289,7 +289,7 @@ export function MeetingLanguagePicker({
                     <span className="flex min-w-0 flex-col gap-0.5">
                       <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                         <span className="text-pretty [overflow-wrap:anywhere]">
-                          {meetingLanguageName(definition.code)}
+                          {meetingLanguageLabel(definition.code)}
                         </span>
                         {definition.code === 'en' && (
                           <span className="text-[10px] font-medium text-ink-faint">

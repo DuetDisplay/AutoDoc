@@ -343,3 +343,37 @@ describe('MeetingLanguagePicker Windows engine availability', () => {
     expect(screen.queryByText(/download on first use/i)).not.toBeInTheDocument()
   })
 })
+
+describe('MeetingLanguagePicker capitalisation (AD-193)', () => {
+  afterEach(() => {
+    applyDocumentLanguage('en')
+  })
+
+  it.each([
+    ['ru', 'Английский'],
+    ['fr', 'Anglais'],
+    ['es', 'Inglés']
+  ] as const)(
+    'shows capitalised names for the value and options in %s',
+    async (language, english) => {
+      applyDocumentLanguage(language)
+      const user = userEvent.setup()
+      render(<MeetingLanguagePicker value="en" onChange={vi.fn()} />)
+      const trigger = screen.getByRole('button')
+      expect(trigger).toHaveTextContent(english)
+      // The aria-label inserts the name mid-sentence, so it stays lowercase there.
+      expect(trigger.getAttribute('aria-label')).toContain(english.toLocaleLowerCase(language))
+      await user.click(trigger)
+      for (const option of screen.getAllByRole('option'))
+        expect(option.textContent!.match(/^./u)![0]).toBe(
+          option.textContent!.match(/^./u)![0].toLocaleUpperCase(language)
+        )
+    }
+  )
+
+  it('leaves Japanese names as they are', () => {
+    applyDocumentLanguage('ja')
+    render(<MeetingLanguagePicker value="en" onChange={vi.fn()} />)
+    expect(screen.getByRole('button')).toHaveTextContent('英語')
+  })
+})
