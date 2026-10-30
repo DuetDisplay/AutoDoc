@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc nyní mluví vaším jazykem",
   "announcement.uiLanguageBody": "Vyberte jazyk nabídek, tlačítek a zpráv aplikace AutoDoc.",
   "announcement.darkModeBody": "Dáváte přednost tmavšímu vzhledu? Zapněte tmavý režim.",
-  "announcement.done": "Hotovo"
+  "announcement.done": "Hotovo",
+  "announcement.meetingLanguageBody": "Přepisy a poznámky nyní podporují {count} jazyků!",
+  "announcement.meetingLanguageDescription": "Vyberte jazyk, kterým se na schůzkách mluví. Nové přepisy a poznámky budou v tomto jazyce."
 }

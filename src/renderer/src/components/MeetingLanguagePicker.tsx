@@ -67,6 +67,7 @@ export function MeetingLanguagePicker({
   const listRef = useRef<HTMLDivElement>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [isOpen, setIsOpen] = useState(false)
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null)
   const placement = useAnchoredPopover(isOpen, triggerRef, 256, 256)
   const selected = getMeetingLanguageDefinition(value)
   const selectedIndex = Math.max(
@@ -97,6 +98,7 @@ export function MeetingLanguagePicker({
   }, [isOpen])
 
   const open = (index = selectedIndex) => {
+    setPortalTarget(rootRef.current?.closest('dialog') ?? document.body)
     setActiveIndex(index)
     setIsOpen(true)
   }
@@ -126,6 +128,7 @@ export function MeetingLanguagePicker({
 
     if (event.key === 'Escape' && isOpen) {
       event.preventDefault()
+      event.stopPropagation()
       close(true)
     }
   }
@@ -167,6 +170,7 @@ export function MeetingLanguagePicker({
 
     if (event.key === 'Escape') {
       event.preventDefault()
+      event.stopPropagation()
       close(true)
     }
   }
@@ -338,7 +342,7 @@ export function MeetingLanguagePicker({
               )
             })}
           </div>,
-          document.body
+          portalTarget ?? document.body
         )}
     </div>
   )

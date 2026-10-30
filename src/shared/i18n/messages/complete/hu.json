@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "Az AutoDoc már az Ön nyelvén is beszél",
   "announcement.uiLanguageBody": "Válassza ki az AutoDoc menüinek, gombjainak és üzeneteinek nyelvét.",
   "announcement.darkModeBody": "Sötétebb megjelenést szeretne? Kapcsolja be a sötét módot.",
-  "announcement.done": "Kész"
+  "announcement.done": "Kész",
+  "announcement.meetingLanguageBody": "Az átiratok és a jegyzetek mostantól {count} nyelvet támogatnak!",
+  "announcement.meetingLanguageDescription": "Válassza ki a megbeszéléseken használt nyelvet. Az új átiratok és jegyzetek ezen a nyelven készülnek."
 }

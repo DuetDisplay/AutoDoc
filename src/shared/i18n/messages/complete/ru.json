@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc теперь говорит на вашем языке",
   "announcement.uiLanguageBody": "Выберите язык меню, кнопок и сообщений AutoDoc.",
   "announcement.darkModeBody": "Предпочитаете тёмное оформление? Включите тёмный режим.",
-  "announcement.done": "Готово"
+  "announcement.done": "Готово",
+  "announcement.meetingLanguageBody": "Расшифровки и заметки теперь доступны на {count} языках!",
+  "announcement.meetingLanguageDescription": "Выберите язык, на котором говорят на ваших встречах. Новые расшифровки и заметки будут на этом языке."
 }

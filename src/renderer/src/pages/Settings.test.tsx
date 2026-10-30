@@ -912,11 +912,15 @@ describe('Settings Windows meeting languages', () => {
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
   })
 
-  it('keeps the previous language when the first-use download fails', async () => {
+  it.each([
+    'Disk is full.',
+    'There is not enough space on the disk.',
+    'EDQUOT: disk quota exceeded'
+  ])('keeps the previous language when the first-use download fails: %s', async (message) => {
     const user = userEvent.setup()
     const { state, api } = installWindowsSettingsApi({
       languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) },
-      ensure: () => Promise.reject(new Error('Disk is full.'))
+      ensure: () => Promise.reject(new Error(message))
     })
     render(<Settings />)
 

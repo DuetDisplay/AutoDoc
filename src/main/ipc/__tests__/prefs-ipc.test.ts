@@ -127,7 +127,51 @@ describe('PrefsStore', () => {
   it('never queues the upgrade popup for a newly completed onboarding', () => {
     store.setOnboardingComplete()
     expect(store.isUiAppearanceAnnouncementPending()).toBe(false)
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
   })
+
+  it.each([
+    {
+      history: 'never chose or dismissed meeting language',
+      confirmed: false,
+      dismissed: false,
+      meetingPending: true
+    },
+    {
+      history: 'confirmed meeting language',
+      confirmed: true,
+      dismissed: false,
+      meetingPending: false
+    },
+    {
+      history: 'dismissed the 1.3.0 language announcement',
+      confirmed: false,
+      dismissed: true,
+      meetingPending: false
+    },
+    {
+      history: 'confirmed and dismissed meeting language',
+      confirmed: true,
+      dismissed: true,
+      meetingPending: false
+    }
+  ])(
+    'preserves upgrade eligibility for users who $history',
+    ({ confirmed, dismissed, meetingPending }) => {
+      // These are the persisted fields from before the app-language/appearance update.
+      preferenceFixture.saved = {
+        onboardingComplete: true,
+        onboardingLanguageConfirmed: confirmed,
+        meetingLanguageAnnouncementDismissed: dismissed,
+        meetingLanguage: 'en',
+        uiLanguage: 'en'
+      }
+      const upgraded = new PrefsStore()
+      expect(upgraded.isMeetingLanguageAnnouncementPending()).toBe(meetingPending)
+      expect(upgraded.isUiAppearanceAnnouncementPending()).toBe(true)
+      expect(upgraded.getMeetingLanguage()).toBe('en')
+    }
+  )
 
   it('shows the language announcement only for existing users and remembers dismissal', () => {
     expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)

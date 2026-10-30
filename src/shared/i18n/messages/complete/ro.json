@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc vorbește acum limba dvs.",
   "announcement.uiLanguageBody": "Alegeți limba pentru meniurile, butoanele și mesajele AutoDoc.",
   "announcement.darkModeBody": "Preferați un aspect mai întunecat? Activați modul întunecat.",
-  "announcement.done": "Gata"
+  "announcement.done": "Gata",
+  "announcement.meetingLanguageBody": "Transcrierile și notițele sunt acum disponibile în {count} de limbi!",
+  "announcement.meetingLanguageDescription": "Alegeți limba vorbită în întâlniri. Noile transcrieri și notițe vor fi în această limbă."
 }

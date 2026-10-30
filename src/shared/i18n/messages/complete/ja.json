@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDocがあなたの言語に対応しました",
   "announcement.uiLanguageBody": "AutoDocのメニュー、ボタン、メッセージの言語を選択できます。",
   "announcement.darkModeBody": "暗めの画面がお好みですか？ダークモードをオンにしましょう。",
-  "announcement.done": "完了"
+  "announcement.done": "完了",
+  "announcement.meetingLanguageBody": "文字起こしとノートが{count}言語に対応しました！",
+  "announcement.meetingLanguageDescription": "会議で話す言語を選択してください。新しい文字起こしとノートは、この言語で作成されます。"
 }

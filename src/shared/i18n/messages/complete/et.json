@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc räägib nüüd sinu keelt",
   "announcement.uiLanguageBody": "Vali AutoDoci menüüde, nuppude ja teadete keel.",
   "announcement.darkModeBody": "Eelistad tumedamat ilmet? Lülita sisse tume režiim.",
-  "announcement.done": "Valmis"
+  "announcement.done": "Valmis",
+  "announcement.meetingLanguageBody": "Transkriptsioonid ja märkmed toetavad nüüd {count} keelt!",
+  "announcement.meetingLanguageDescription": "Valige koosolekutel räägitav keel. Uued transkriptsioonid ja märkmed koostatakse selles keeles."
 }

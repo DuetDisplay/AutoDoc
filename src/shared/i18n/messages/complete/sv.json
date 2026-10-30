@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc talar nu ditt språk",
   "announcement.uiLanguageBody": "Välj språk för menyer, knappar och meddelanden i AutoDoc.",
   "announcement.darkModeBody": "Föredrar du ett mörkare utseende? Slå på mörkt läge.",
-  "announcement.done": "Klart"
+  "announcement.done": "Klart",
+  "announcement.meetingLanguageBody": "Transkriptioner och anteckningar stöder nu {count} språk!",
+  "announcement.meetingLanguageDescription": "Välj det språk som talas på dina möten. Nya transkriptioner och anteckningar kommer att använda detta språk."
 }

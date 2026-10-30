@@ -296,7 +296,9 @@ export function Sidebar() {
             </div>
           )}
 
-          <AppearanceSwitch />
+          <div className="px-2.5 py-2">
+            <AppearanceSwitch />
+          </div>
 
           <NavLink
             to={ROUTES.settings}

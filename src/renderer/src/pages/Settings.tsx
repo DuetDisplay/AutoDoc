@@ -1,3 +1,4 @@
+import { isDiskFullError } from '../../../shared/disk-full'
 import { AUTODOC_GITHUB_URL } from '../../../shared/constants'
 import type { MessageKey } from '../../../shared/i18n'
 import { meetingLanguageName } from '../services/meeting-language-name'
@@ -417,7 +418,7 @@ export function Settings() {
         // Keep the last picker value if the saved preference cannot be read.
       }
       setMeetingLanguageFailure(
-        /ENOSPC|disk(?: is)? full|no space left/i.test(message)
+        isDiskFullError(err)
           ? { kind: 'disk-full' }
           : isNetworkErrorMessage(message)
             ? {

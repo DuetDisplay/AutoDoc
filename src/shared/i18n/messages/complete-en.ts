@@ -571,5 +571,8 @@ export const completeEn = {
   'announcement.uiAppearanceTitle': 'AutoDoc now speaks your language',
   'announcement.uiLanguageBody': 'Choose the language for AutoDoc’s menus, buttons and messages.',
   'announcement.darkModeBody': 'Prefer a darker look? Turn on Dark mode.',
-  'announcement.done': 'Done'
+  'announcement.done': 'Done',
+  'announcement.meetingLanguageBody': 'Transcripts and notes now support {count} languages!',
+  'announcement.meetingLanguageDescription':
+    'Choose the language spoken in your meetings. New transcripts and notes will use this language.'
 } as const

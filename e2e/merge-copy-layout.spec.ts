@@ -160,7 +160,7 @@ test('Sidebar model status and Settings Google reconnect message fit in every UI
   }
 })
 
-test('New badge in the meeting language announcement fits in every UI language', async () => {
+test('New heading in the combined language announcement fits in every UI language', async () => {
   test.setTimeout(600_000)
   const f = await launchUiFollowupApp()
   const { electronApp, page } = f
@@ -174,7 +174,10 @@ test('New badge in the meeting language announcement fits in every UI language',
     await expect(dialog).toBeVisible({ timeout: 15_000 })
     await eachPass(electronApp, page, async (language, minimum, label) => {
       await expect(dialog.getByText(translate(language, 'ui.new'), { exact: true })).toBeVisible()
-      await expectCardLayout(dialog, `language announcement ${label}`)
+      await expectCardLayout(
+        dialog.getByRole('heading', { name: translate(language, 'ui.new'), exact: true }),
+        `language announcement heading ${label}`
+      )
       await shot(page, 'language-announcement-new', language, minimum)
     })
   } finally {

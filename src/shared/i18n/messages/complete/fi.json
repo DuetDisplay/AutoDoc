@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc puhuu nyt kieltäsi",
   "announcement.uiLanguageBody": "Valitse AutoDocin valikoiden, painikkeiden ja viestien kieli.",
   "announcement.darkModeBody": "Pidätkö tummemmasta ulkoasusta? Ota tumma tila käyttöön.",
-  "announcement.done": "Valmis"
+  "announcement.done": "Valmis",
+  "announcement.meetingLanguageBody": "Litteroinnit ja muistiinpanot tukevat nyt {count} kieltä!",
+  "announcement.meetingLanguageDescription": "Valitse kokouksissasi puhuttu kieli. Uudet litteroinnit ja muistiinpanot tehdään tällä kielellä."
 }

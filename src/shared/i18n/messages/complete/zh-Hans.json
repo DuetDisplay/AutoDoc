@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc现在支持你的语言",
   "announcement.uiLanguageBody": "选择AutoDoc菜单、按钮和消息的显示语言。",
   "announcement.darkModeBody": "喜欢更暗的外观？开启深色模式吧。",
-  "announcement.done": "完成"
+  "announcement.done": "完成",
+  "announcement.meetingLanguageBody": "转录和笔记现已支持 {count} 种语言！",
+  "announcement.meetingLanguageDescription": "选择会议中使用的语言。新的转录和笔记将使用此语言。"
 }

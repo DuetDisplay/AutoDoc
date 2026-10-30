@@ -1,4 +1,4 @@
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Page, type Locator } from '@playwright/test'
 import { translate } from '../src/shared/i18n'
 import { UI_LANGUAGE_CODES, type UiLanguageCode } from '../src/shared/ui-language'
 import { launchIsolatedE2EApp, setOllamaStatus } from './helpers/electron-app'
@@ -31,6 +31,27 @@ async function eachPass(
         await page.screenshot({ path: test.info().outputPath(`${language}-${pass.theme}.png`) })
     }
   }
+}
+
+async function expectSlidingIndicator(control: Locator) {
+  // Capture a real transition while it is running, so a static indicator cannot pass.
+  expect(
+    await control.evaluate(async (element) => {
+      const thumb = element.querySelector('[data-appearance-thumb]')!
+      ;(element as HTMLButtonElement).click()
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+      return thumb
+        .getAnimations()
+        .some(
+          (animation) =>
+            animation instanceof CSSTransition &&
+            ['transform', 'translate'].includes(animation.transitionProperty) &&
+            animation.playState === 'running'
+        )
+    })
+  ).toBe(true)
 }
 
 async function expectPickerBounds(page: Page) {
@@ -132,6 +153,25 @@ test('sidebar appearance switch fits long status rows in all UI languages and sy
     await setUi(page, 'en', 'light')
     await page.getByRole('link', { name: 'Settings', exact: true }).click()
     const control = page.locator('aside').getByRole('switch', { name: 'Dark mode' })
+    const background = await control.evaluate(
+      (element) => getComputedStyle(element).backgroundColor
+    )
+    await control.hover()
+    expect(await control.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+      background
+    )
+    await expect(control).toHaveText('')
+    await expectSlidingIndicator(control)
+    await expect(control).toHaveAttribute('aria-checked', 'true')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(
+      await control
+        .locator('[data-appearance-thumb]')
+        .evaluate((element) => getComputedStyle(element).transitionProperty)
+    ).toBe('none')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await control.click()
+    await expect(control).toHaveAttribute('aria-checked', 'false')
     await control.focus()
     await page.keyboard.press('Space')
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
@@ -153,59 +193,94 @@ test('sidebar appearance switch fits long status rows in all UI languages and sy
     await fixture.cleanup()
   }
 })
-test('upgrade popup fits every language and queues behind the meeting-language announcement', async () => {
-  test.setTimeout(180_000)
-  const fixture = await launchGithubStarApp({
-    qualified: false,
-    uiAppearanceAnnouncement: true,
-    meetingLanguageAnnouncement: true
-  })
-  const { page, electronApp } = fixture
-  try {
-    const meeting = page.locator('dialog[data-announcement="meeting-language"]')
-    await expect(meeting).toBeVisible()
-    await expect(page.locator('dialog[open]')).toHaveCount(1)
-    await meeting.getByRole('button', { name: 'Got it', exact: true }).click()
-    const dialog = page.locator('dialog[data-announcement="ui-appearance"]')
-    await expect(dialog).toBeVisible()
-    await expect(page.locator('dialog[open]')).toHaveCount(1)
-    await eachPass(electronApp, page, async (language, label) => {
-      await expectCardLayout(dialog, `popup ${label}`)
-      const box = await dialog.boundingBox()
-      expect(box!.y).toBeGreaterThanOrEqual(0)
-      expect(box!.y + box!.height).toBeLessThanOrEqual(await page.evaluate(() => innerHeight))
-      await dialog
-        .getByRole('button', { name: translate(language, 'uiLanguage.title'), exact: true })
-        .click()
-      await expectPickerBounds(page)
-      await page.keyboard.press('Escape')
-      await expect(dialog).toBeVisible()
-      await expect(page.getByRole('listbox')).toHaveCount(0)
+for (const includeMeetingLanguage of [true, false]) {
+  test(`upgrade popup fits every language (${includeMeetingLanguage ? 'combined' : 'app language and appearance'})`, async () => {
+    test.setTimeout(180_000)
+    const fixture = await launchGithubStarApp({
+      qualified: false,
+      uiAppearanceAnnouncement: true,
+      meetingLanguageAnnouncement: includeMeetingLanguage
     })
-    await setUi(page, 'en', 'light')
-    await dialog.getByRole('switch').click()
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-    await dialog.getByRole('button', { name: 'App language' }).click()
-    await page.getByRole('option', { name: 'Deutsch', exact: true }).click()
-    await expect(dialog.getByRole('heading')).toHaveText('AutoDoc spricht jetzt Ihre Sprache')
-    // Native modal focus remains in the popup through keyboard traversal.
-    for (let i = 0; i < 8; i++) {
-      await page.keyboard.press('Tab')
-      expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(
-        true
-      )
+    const { page, electronApp } = fixture
+    try {
+      const dialog = page.locator('dialog[data-announcement="ui-appearance"]')
+      await expect(dialog).toBeVisible()
+      await expect(page.locator('dialog[open]')).toHaveCount(1)
+      await expect(dialog.getByRole('heading', { name: 'New', exact: true })).toBeVisible()
+      await expect(
+        dialog.getByRole('heading', { name: 'Meeting language', exact: true })
+      ).toHaveCount(includeMeetingLanguage ? 1 : 0)
+      await eachPass(electronApp, page, async (language, label) => {
+        // The content can scroll in short windows; audit each section and the fixed actions.
+        for (const section of await dialog.getByRole('region').all()) {
+          await revealVertically(section)
+          await expectCardLayout(section, `popup section ${label}`)
+        }
+        const actions = dialog.locator('[data-announcement-actions]')
+        await expectCardLayout(actions, `popup actions ${label}`)
+        await expectTextWithin(dialog)
+        const box = await dialog.boundingBox()
+        expect(box!.y).toBeGreaterThanOrEqual(0)
+        expect(box!.y + box!.height).toBeLessThanOrEqual(await page.evaluate(() => innerHeight))
+        const actionsBox = await actions.boundingBox()
+        expect(actionsBox!.y).toBeGreaterThanOrEqual(box!.y)
+        expect(actionsBox!.y + actionsBox!.height).toBeLessThanOrEqual(box!.y + box!.height)
+        await dialog
+          .getByRole('button', { name: translate(language, 'uiLanguage.title'), exact: true })
+          .click()
+        await expectPickerBounds(page)
+        await page.keyboard.press('Escape')
+        await expect(dialog).toBeVisible()
+        await expect(page.getByRole('listbox')).toHaveCount(0)
+        if (includeMeetingLanguage) {
+          const meetingSection = dialog.getByRole('region', {
+            name: translate(language, 'settings.meetingLanguage'),
+            exact: true
+          })
+          // The only button in this section is the meeting-language dropdown.
+          await expect(meetingSection.getByRole('button')).toBeEnabled()
+          await meetingSection.getByRole('button').click()
+          await expectPickerBounds(page)
+          await page.keyboard.press('Escape')
+          await expect(dialog).toBeVisible()
+          await expect(page.getByRole('listbox')).toHaveCount(0)
+        }
+      })
+      await setUi(page, 'en', 'light')
+      await page.screenshot({ path: test.info().outputPath('popup-en-light.png') })
+      const control = dialog.getByRole('switch')
+      await expect(control).toHaveText('')
+      await expectSlidingIndicator(control)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+      await dialog.getByRole('button', { name: 'App language' }).click()
+      await page.getByRole('option', { name: 'Deutsch', exact: true }).click()
+      await expect(dialog.getByRole('heading', { name: 'Neu', exact: true })).toBeVisible()
+      // Native modal focus remains in the popup through keyboard traversal.
+      for (let i = 0; i < 8; i++) {
+        await page.keyboard.press('Tab')
+        expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(
+          true
+        )
+      }
+      await dialog
+        .getByRole('button', { name: translate('de', 'announcement.done'), exact: true })
+        .click()
+      await expect(dialog).not.toBeVisible()
+      expect(
+        await page.evaluate(() =>
+          window.electronAPI.invoke('prefs:get-ui-appearance-announcement-pending')
+        )
+      ).toBe(false)
+      expect(
+        await page.evaluate(() =>
+          window.electronAPI.invoke('prefs:get-meeting-language-announcement-pending')
+        )
+      ).toBe(false)
+      await page.reload()
+      await settleLayout(page)
+      await expect(dialog).not.toBeVisible()
+    } finally {
+      await fixture.cleanup()
     }
-    await page.keyboard.press('Escape')
-    await expect(dialog).not.toBeVisible()
-    expect(
-      await page.evaluate(() =>
-        window.electronAPI.invoke('prefs:get-ui-appearance-announcement-pending')
-      )
-    ).toBe(false)
-    await page.reload()
-    await settleLayout(page)
-    await expect(dialog).not.toBeVisible()
-  } finally {
-    await fixture.cleanup()
-  }
-})
+  })
+}

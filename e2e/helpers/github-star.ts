@@ -20,6 +20,7 @@ export async function launchGithubStarApp(
     empty?: boolean
     failed?: boolean
     videoDir?: string
+    savedPreferences?: Record<string, unknown>
   } = {}
 ) {
   const userDataDir = mkdtempSync(path.join(tmpdir(), 'autodoc-e2e-star-'))
@@ -39,7 +40,8 @@ export async function launchGithubStarApp(
     analyticsConsent: false,
     diagnosticLogUploadConsent: false,
     notesEngineReadyDismissed: true,
-    lowSpecMacProcessingBannerDismissed: true
+    lowSpecMacProcessingBannerDismissed: true,
+    ...options.savedPreferences
   })
   save('autodoc-github-star.json', {
     state: {

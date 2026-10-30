@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc dabar kalba jūsų kalba",
   "announcement.uiLanguageBody": "Pasirinkite AutoDoc meniu, mygtukų ir pranešimų kalbą.",
   "announcement.darkModeBody": "Patinka tamsesnė išvaizda? Įjunkite tamsųjį režimą.",
-  "announcement.done": "Atlikta"
+  "announcement.done": "Atlikta",
+  "announcement.meetingLanguageBody": "Transkripcijos ir užrašai dabar palaiko {count} kalbas!",
+  "announcement.meetingLanguageDescription": "Pasirinkite kalbą, kuria kalbama susitikimuose. Naujos transkripcijos ir užrašai bus kuriami šia kalba."
 }

@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc sada govori vaš jezik",
   "announcement.uiLanguageBody": "Odaberite jezik izbornika, gumba i poruka u aplikaciji AutoDoc.",
   "announcement.darkModeBody": "Želite tamniji izgled? Uključite tamni način rada.",
-  "announcement.done": "Gotovo"
+  "announcement.done": "Gotovo",
+  "announcement.meetingLanguageBody": "Transkripti i bilješke sada podržavaju {count} jezika!",
+  "announcement.meetingLanguageDescription": "Odaberite jezik koji se govori na vašim sastancima. Novi transkripti i bilješke bit će na tom jeziku."
 }

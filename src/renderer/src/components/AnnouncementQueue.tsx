@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { MeetingLanguageAnnouncement } from './MeetingLanguageAnnouncement'
 import { UiAppearanceAnnouncement } from './UiAppearanceAnnouncement'
 
 export function AnnouncementQueue({
@@ -41,25 +40,18 @@ export function AnnouncementQueue({
     }
   }, [])
   const blocked = suppressed || otherModalOpen
-  const meetingVisible = !!pending?.meeting && !blocked
-  const appearanceVisible = !!pending?.appearance && !pending.meeting && !blocked
+  // One card covers every pending update, including upgrades that need meeting-language setup.
+  const visible = !!(pending?.meeting || pending?.appearance) && !blocked
   useEffect(() => {
-    onVisibilityChange(meetingVisible || appearanceVisible)
+    onVisibilityChange(visible)
     return () => onVisibilityChange(false)
-  }, [meetingVisible, appearanceVisible, onVisibilityChange])
+  }, [visible, onVisibilityChange])
   if (!pending) return null
   return (
-    <>
-      <MeetingLanguageAnnouncement
-        pending={pending.meeting}
-        suppressed={blocked}
-        onVisibilityChange={() => {}}
-        onDismiss={() => setPending((current) => current && { ...current, meeting: false })}
-      />
-      <UiAppearanceAnnouncement
-        visible={appearanceVisible}
-        onDismiss={() => setPending((current) => current && { ...current, appearance: false })}
-      />
-    </>
+    <UiAppearanceAnnouncement
+      visible={visible}
+      includeMeetingLanguage={pending.meeting}
+      onDismiss={() => setPending({ meeting: false, appearance: false })}
+    />
   )
 }

@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc ya habla tu idioma",
   "announcement.uiLanguageBody": "Elige el idioma de los menús, botones y mensajes de AutoDoc.",
   "announcement.darkModeBody": "¿Prefieres un aspecto más oscuro? Activa el modo oscuro.",
-  "announcement.done": "Listo"
+  "announcement.done": "Listo",
+  "announcement.meetingLanguageBody": "¡Las transcripciones y las notas ahora están disponibles en {count} idiomas!",
+  "announcement.meetingLanguageDescription": "Elige el idioma que se habla en tus reuniones. Las nuevas transcripciones y notas usarán este idioma."
 }

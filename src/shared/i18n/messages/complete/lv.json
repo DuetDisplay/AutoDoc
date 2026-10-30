@@ -472,5 +472,7 @@
   "announcement.uiAppearanceTitle": "AutoDoc tagad runā jūsu valodā",
   "announcement.uiLanguageBody": "Izvēlieties AutoDoc izvēļņu, pogu un ziņojumu valodu.",
   "announcement.darkModeBody": "Vēlaties tumšāku izskatu? Ieslēdziet tumšo režīmu.",
-  "announcement.done": "Gatavs"
+  "announcement.done": "Gatavs",
+  "announcement.meetingLanguageBody": "Transkripti un piezīmes tagad atbalsta {count} valodas!",
+  "announcement.meetingLanguageDescription": "Izvēlieties valodu, kurā runājat sapulcēs. Jaunie transkripti un piezīmes tiks veidoti šajā valodā."
 }
