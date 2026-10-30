@@ -25,7 +25,9 @@ test('only Light and Dark are offered and fit every supported language at minimu
       })
       await expect(group.getByRole('button')).toHaveCount(2)
       await expect(
-        page.getByText(translate(language, 'appearance.description'), { exact: true })
+        page
+          .getByRole('main')
+          .getByText(translate(language, 'appearance.description'), { exact: true })
       ).toBeVisible()
       for (const mode of ['light', 'dark'] as const) {
         const button = group.getByRole('button', {
