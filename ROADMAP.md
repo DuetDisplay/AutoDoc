@@ -5,15 +5,18 @@ Nothing here has an owner or a date.
 
 ## Shipped
 
-Verified in [v1.2.0](https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.2.0):
+Verified in [v1.3.3](https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.3.3):
 
 - Local meeting notes for Apple Silicon Macs (macOS 14+) and Windows 10+ x64
 - Screen, microphone, and system-audio recording, with no meeting bot
 - On-device transcription and local Ollama notes and Ask AI
+- Transcripts and notes in 27 meeting languages (English only on 8 GB Macs and low-spec PCs)
 - Topic-based notes with a summary, editable details, and timestamp playback
 - Copy as plain text, and export to PDF, Word, or Markdown
 - Optional Google and Microsoft calendars
 - Encrypted local storage
+- App interface in 27 languages
+- Light and Dark appearance
 
 See [`PRODUCT.md`](PRODUCT.md) for behavior and limits, including audio source labels
 (Me / Them) and the network uses that remain after setup.
