@@ -668,5 +668,16 @@ export interface AppStorageInfo {
 /** Native saved-recording count metadata shown independently of model prose. */
 export interface ChatCountSummary {
   count: number
+  // Retained unchanged for the writer's native count history.
   filterDescription: string
+  // Display metadata only; never added to the native tool's result or prompt.
+  filter?: {
+    from?: string
+    through?: string
+    title?: string
+    participant?: string
+    keyword?: string
+    list?: boolean
+  }
+  scoped?: boolean
 }

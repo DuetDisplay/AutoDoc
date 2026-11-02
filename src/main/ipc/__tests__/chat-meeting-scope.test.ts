@@ -162,7 +162,12 @@ it('applies the same attached scope to the authoritative count tool', async () =
   await send({ sender } as never, 'count', 'How many recordings are attached?', [], ['lumen'])
   expect(sender.send).toHaveBeenCalledWith('chat:count-result', {
     requestId: 'count',
-    summary: { count: 1, filterDescription: 'attached saved recordings (no filters)' }
+    summary: {
+      count: 1,
+      filterDescription: 'attached saved recordings (no filters)',
+      filter: { list: true },
+      scoped: true
+    }
   })
   expect(requests).toHaveLength(2)
   const tool = requests[1].messages.find((m) => m.role === 'tool')!

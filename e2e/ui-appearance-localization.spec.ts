@@ -243,3 +243,119 @@ for (const saved of ['auto', 'light', 'dark'] as const) {
     }
   })
 }
+
+test('Ask AI beta surfaces translate, wrap, and retain text and focus contrast in every UI language and theme', async () => {
+  test.setTimeout(180_000)
+  const { setUi, setContentSize, contrastRatio, expectTextWithin } =
+    await import('./helpers/ui-layout')
+  const fixture = await launchIsolatedE2EApp({ permissions: { microphone: true, screen: true } })
+  try {
+    const page = await fixture.electronApp.firstWindow()
+    await completeOnboarding(page)
+    await fixture.electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('chat:notes-work')
+      ipcMain.handle('chat:notes-work', () => [
+        { meetingId: 'cedar', title: 'Synthetic Cedar planning' }
+      ])
+    })
+    await page.evaluate(() => {
+      const scope = { meetingId: 'harbor', title: 'Synthetic Harbor engineering review' }
+      localStorage.setItem(
+        'autodoc-ask-ai-chat',
+        JSON.stringify({
+          state: {
+            draftInput: '',
+            meetingScope: scope,
+            messages: [
+              { id: 'user', role: 'user', content: 'How many attached recordings?' },
+              {
+                id: 'answer',
+                role: 'assistant',
+                content: 'Synthetic answer: 1 recording.',
+                status: 'complete',
+                originalQuestion: 'How many attached recordings?',
+                meetingScope: scope,
+                countSummary: {
+                  count: 1,
+                  filterDescription: 'attached saved recordings (no filters)',
+                  filter: {},
+                  scoped: true
+                },
+                sources: [
+                  {
+                    n: 1,
+                    meetingId: 'harbor',
+                    title: 'Synthetic Harbor engineering review',
+                    quote: 'Synthetic evidence.',
+                    startMs: 1200,
+                    category: 'note'
+                  }
+                ]
+              }
+            ]
+          },
+          version: 0
+        })
+      )
+      location.hash = '#/ask-ai'
+    })
+    await page.reload()
+    await setContentSize(fixture.electronApp, page, 788, 540, 1)
+    for (const language of UI_LANGUAGE_CODES)
+      for (const theme of ['light', 'dark'] as const) {
+        await setUi(page, language, theme)
+        const chip = page.getByRole('group', {
+          name: translate(language, 'askAi.scope'),
+          exact: true
+        })
+        const banner = page.locator('[data-ask-ai-notes-banner] p')
+        const receipt = page.locator('[data-ask-ai-count-summary]')
+        const searchAll = page.getByRole('button', {
+          name: translate(language, 'askAi.searchAll'),
+          exact: true
+        })
+        const source = page.getByRole('button', { name: /^\[1\]/ })
+        await expect(chip).toContainText(
+          translate(language, 'askAi.onlyMeeting', { title: 'Synthetic Harbor engineering review' })
+        )
+        await expect(banner).toHaveText(
+          translate(language, 'askAi.notesPendingOne', { title: 'Synthetic Cedar planning' })
+        )
+        await expect(receipt).toHaveText(
+          translate(language, 'askAi.countReceipt', {
+            count: 1,
+            filter: `${translate(language, 'askAi.countAttached')} (${translate(language, 'askAi.countNoFilters')})`
+          })
+        )
+        for (const element of [
+          chip.locator('span').first(),
+          banner,
+          receipt,
+          searchAll,
+          source.locator('span').nth(1),
+          source.locator('span').nth(2)
+        ]) {
+          await expectTextWithin(element, page.locator('main'))
+          expect(await contrastRatio(element), `${language} ${theme} text`).toBeGreaterThanOrEqual(
+            4.5
+          )
+        }
+        await page.keyboard.press('Tab')
+        for (const button of [chip.getByRole('button'), searchAll, source]) {
+          await button.focus()
+          expect(
+            await button.evaluate((el) => parseFloat(getComputedStyle(el).outlineWidth))
+          ).toBeGreaterThanOrEqual(2)
+          expect(
+            await contrastRatio(button, false, undefined, 'outlineColor'),
+            `${language} ${theme} focus`
+          ).toBeGreaterThanOrEqual(3)
+        }
+        await expect(
+          page.getByRole('button', { name: translate(language, 'askAi.send'), exact: true })
+        ).toBeInViewport()
+      }
+  } finally {
+    await fixture.cleanup()
+  }
+})

@@ -46,10 +46,11 @@ export async function setContentSize(
 export async function contrastRatio(
   target: Locator,
   border = false,
-  underlay?: string
+  underlay?: string,
+  foregroundProperty: 'color' | 'outlineColor' = 'color'
 ): Promise<number> {
   return target.evaluate(
-    (element, { border, underlay }) => {
+    (element, { border, underlay, foregroundProperty }) => {
       const canvas = document.createElement('canvas')
       canvas.width = canvas.height = 1
       const ctx = canvas.getContext('2d', { willReadFrequently: true })!
@@ -80,7 +81,10 @@ export async function contrastRatio(
       // Progress fills are siblings behind a transparent label, so an ancestor-
       // only walk cannot see their paint. Callers sample that actual fill color.
       const backdrop = underlay ? rgba(underlay) : [0, 0, 0, 0]
-      let foreground = over(rgba(border ? style.borderTopColor : style.color), backdrop),
+      let foreground = over(
+          rgba(border ? style.borderTopColor : style[foregroundProperty]),
+          backdrop
+        ),
         background = backdrop
       for (let parent: Element | null = element; parent; parent = parent.parentElement) {
         const css = getComputedStyle(parent),
@@ -96,7 +100,7 @@ export async function contrastRatio(
         b = luminance(background)
       return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
     },
-    { border, underlay }
+    { border, underlay, foregroundProperty }
   )
 }
 

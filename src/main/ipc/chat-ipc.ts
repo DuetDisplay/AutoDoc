@@ -623,7 +623,9 @@ export function registerChatIpc(
                 )
                   onCountResult?.({
                     count: toolResult.count,
-                    filterDescription: toolResult.filterDescription
+                    filterDescription: toolResult.filterDescription,
+                    filter: toolResult.filter as ChatCountSummary['filter'],
+                    scoped: Boolean(result.conversation?.scopedMeetingIds?.length)
                   })
                 return toolResult
               }

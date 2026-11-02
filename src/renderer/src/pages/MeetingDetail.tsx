@@ -1603,7 +1603,7 @@ export function MeetingDetail() {
               void window.electronAPI.invoke('chat:new')
               navigate(ROUTES.askAi)
             }}
-            className="rounded-lg border border-border bg-bg-card px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40"
+            className="i18n-btn rounded-lg border border-border bg-bg-card px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
           >
             {t('askAi.askMeeting')}
           </button>

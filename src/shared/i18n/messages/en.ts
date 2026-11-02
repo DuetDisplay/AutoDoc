@@ -146,6 +146,15 @@ export const en = {
     'Notes for {title} are still being made. Using Ask AI now will make them take a little longer.',
   'askAi.notesPendingMany':
     'Notes for {count} meetings are still being made. Using Ask AI now will make them take a little longer.',
+  'askAi.countAll': 'all saved recordings',
+  'askAi.countAttached': 'attached saved recordings',
+  'askAi.countNoFilters': 'no filters',
+  'askAi.filterFrom': 'on or after {value}',
+  'askAi.filterThrough': 'on or before {value}',
+  'askAi.filterTitle': 'title contains all terms {value}',
+  'askAi.filterParticipant': 'participant contains all terms {value}',
+  'askAi.filterKeyword': 'notes or transcript contain all terms {value}',
+  'askAi.filterUnavailable': 'filter details unavailable',
   'askAi.title': 'Ask AI',
   'askAi.newChat': 'New chat',
   'askAi.emptyHint':

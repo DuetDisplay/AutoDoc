@@ -1,3 +1,4 @@
+import { askAiCountFilterCopy } from '../services/ask-ai-count-copy'
 import {
   useCallback,
   useState,
@@ -12,7 +13,7 @@ import { useChatStore, type MeetingChatScope, type Message } from '../stores/cha
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { ChatClarificationOption, ChatSourceCard } from '../../../preload/ipc'
-import { useT } from '../services/i18n'
+import { useI18n } from '../services/i18n'
 
 let fallbackRequestIdCounter = 0
 const FIRST_TOKEN_TIMEOUT_MS = 45_000
@@ -40,7 +41,7 @@ function openSource(source: ChatSourceCard): void {
 }
 
 export function AskAI(): ReactElement {
-  const t = useT()
+  const { t, language } = useI18n()
   const {
     messages,
     draftInput,
@@ -439,7 +440,7 @@ export function AskAI(): ReactElement {
             type="button"
             onClick={handleNewChat}
             disabled={messages.length === 0 && !draftInput.trim() && !meetingScope}
-            className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-40"
+            className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark disabled:opacity-40"
           >
             {t('askAi.newChat')}
           </button>
@@ -458,7 +459,7 @@ export function AskAI(): ReactElement {
       {meetingScope && (
         <div className="px-6 pt-3" role="group" aria-label={t('askAi.scope')}>
           <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-sage/40 bg-sage/5 px-3 py-1.5 text-[12px] text-ink">
-            <span className="truncate">
+            <span className="min-w-0 [overflow-wrap:anywhere]">
               {t('askAi.onlyMeeting', { title: meetingScope.title })}
             </span>
             <button
@@ -466,7 +467,7 @@ export function AskAI(): ReactElement {
               aria-label={t('askAi.removeScope')}
               onClick={handleRemoveScope}
               disabled={loading}
-              className="shrink-0 rounded px-1 hover:bg-sage/10 disabled:opacity-40"
+              className="shrink-0 rounded px-1 hover:bg-sage/10 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
             >
               ×
             </button>
@@ -552,7 +553,7 @@ export function AskAI(): ReactElement {
                         >
                           {t('askAi.countReceipt', {
                             count: msg.countSummary.count,
-                            filter: msg.countSummary.filterDescription
+                            filter: askAiCountFilterCopy(msg.countSummary, t, language)
                           })}
                         </p>
                       )}
@@ -563,7 +564,7 @@ export function AskAI(): ReactElement {
                               key={`${source.n}-${source.meetingId}`}
                               type="button"
                               onClick={() => openSource(source)}
-                              className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors"
+                              className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
                             >
                               <span className="font-medium">[{source.n}]</span>{' '}
                               <span className="text-ink-muted">{source.title}</span>
@@ -582,7 +583,7 @@ export function AskAI(): ReactElement {
                           type="button"
                           disabled={loading}
                           onClick={() => void handleSearchAll(msg.id, msg.originalQuestion!)}
-                          className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40"
+                          className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
                         >
                           {t('askAi.searchAll')}
                         </button>
@@ -595,7 +596,7 @@ export function AskAI(): ReactElement {
                               type="button"
                               disabled={loading}
                               onClick={() => handleClarificationSelect(msg, option)}
-                              className="min-w-0 max-w-full text-left rounded-lg border border-border bg-bg px-3 py-2 [overflow-wrap:anywhere] hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-60"
+                              className="min-w-0 max-w-full text-left rounded-lg border border-border bg-bg px-3 py-2 [overflow-wrap:anywhere] hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark disabled:opacity-60"
                             >
                               <span className="block text-[13px] font-medium text-ink">
                                 {option.title}
@@ -640,7 +641,7 @@ export function AskAI(): ReactElement {
             aria-label={t('askAi.placeholder')}
             placeholder={t('askAi.placeholder')}
             disabled={loading}
-            className="flex-[1_1_14rem] min-w-0 max-w-full min-h-[44px] max-h-40 resize-none [field-sizing:content] px-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
+            className="flex-[1_1_14rem] min-w-0 max-w-full min-h-[44px] max-h-40 resize-none [field-sizing:content] px-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark disabled:opacity-50"
             autoFocus
           />
           {loading ? (
