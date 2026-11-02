@@ -21,7 +21,8 @@ async function warmup(
   append: string | undefined,
   context: string | undefined,
   qualifies = false,
-  failLoad = false
+  failLoad = false,
+  writerModel?: string
 ) {
   vi.resetModules()
   hardware.qualifies = qualifies
@@ -46,10 +47,11 @@ async function warmup(
       isServerRunning: async () => true,
       getBaseUrl: () => 'http://localhost:11434'
     } as never,
-    { getModel: () => 'test' } as never,
+    { getModel: () => (writerModel ? 'llama3.2:3b' : 'test') } as never,
     {} as never,
     () => 'en',
     {
+      writerModel,
       getWriterContextTokens: () => 4096,
       meetingIndex: { ensureLoaded: async () => {}, listMeetings: async () => [] } as never
     }
@@ -81,4 +83,9 @@ it('uses the same tested 8192 warmup on qualifying hardware and preserves all ot
 it('retries a warmup load failure once and retains the session fallback for later warmups', async () => {
   const requests = await warmup(undefined, undefined, true, true)
   expect(requests.map((request) => request.options.num_ctx)).toEqual([8192, 4096, 4096])
+})
+
+it('keeps Ask AI on its selected Qwen writer while the shared notes provider selects a small model', async () => {
+  const requests = await warmup(undefined, undefined, true, false, 'qwen3:4b-instruct')
+  expect(requests[0].model).toBe('qwen3:4b-instruct')
 })

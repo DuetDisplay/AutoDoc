@@ -2331,7 +2331,7 @@ app.whenReady().then(async () => {
   )
   const meetingIndex = new MeetingIndexService(recordingService.getRecordingsBaseDir())
   registerSearchIpc(recordingService.getRecordingsBaseDir(), meetingIndex)
-  registerChatIpc(
+  const releaseAskAiConversationHolds = registerChatIpc(
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
@@ -2339,7 +2339,9 @@ app.whenReady().then(async () => {
     () => prefsStore.getMeetingLanguage(),
     {
       meetingIndex,
+      writerModel: DEFAULT_OLLAMA_MODEL,
       getWriterContextTokens: () => notesOllamaProvider.getGenerationContextTokens(),
+      getPendingNotesIds: () => segmentationService.getPendingMeetingIds(),
       isProcessing: () =>
         transcriptionService.hasActiveOrQueuedWork() ||
         (segmentationService.hasActiveOrQueuedWork() &&
@@ -2350,7 +2352,7 @@ app.whenReady().then(async () => {
           recordingService.getState().isRecording ||
           transcriptionService.hasActiveOrQueuedWork()
         )
-          return () => {}
+          return undefined
         return segmentationService.holdForInteractiveAnswer(signal)
       },
       canWarmup: () =>
@@ -2360,6 +2362,7 @@ app.whenReady().then(async () => {
         localProcessingCoordinator.getActiveKind() == null
     }
   )
+  app.on('will-quit', releaseAskAiConversationHolds)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()

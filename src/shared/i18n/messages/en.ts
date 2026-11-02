@@ -142,6 +142,10 @@ export const en = {
   'askAi.countReceipt': 'Counted {count}: {filter}.',
   'askAi.searchAll': 'Search all meetings',
   'askAi.askMeeting': 'Ask about this meeting',
+  'askAi.notesPendingOne':
+    'Notes for {title} are still being made. Using Ask AI now will make them take a little longer.',
+  'askAi.notesPendingMany':
+    'Notes for {count} meetings are still being made. Using Ask AI now will make them take a little longer.',
   'askAi.title': 'Ask AI',
   'askAi.newChat': 'New chat',
   'askAi.emptyHint':

@@ -252,6 +252,9 @@ export interface IpcInvokeEvents {
   'search:query': [query: string]
   'chat:send': [question: string]
   'chat:new': []
+  'chat:activity': [typedAt: number]
+  'chat:close': []
+  'chat:notes-work': []
   'chat:cancel': [requestId: string]
   'chat:send-stream': [
     requestId: string,
@@ -444,6 +447,9 @@ export interface IpcInvokeReturns {
   'search:query': SearchResult[]
   'chat:send': string
   'chat:new': void
+  'chat:activity': void
+  'chat:close': void
+  'chat:notes-work': Array<{ meetingId: string; title: string }>
   'chat:cancel': void
   'chat:send-stream': void
   'chat:warmup': { warmed: boolean; reason?: string }

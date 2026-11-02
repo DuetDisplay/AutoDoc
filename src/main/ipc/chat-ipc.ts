@@ -1,3 +1,4 @@
+import { AskAiConversationHolds } from '../services/ask-ai-conversation-hold'
 import {
   useAskAiAppendFollowups,
   withAskAiWriterLoadFallback
@@ -215,10 +216,17 @@ export function registerChatIpc(
     meetingIndex?: MeetingIndexService
     canWarmup?: () => boolean | Promise<boolean>
     isProcessing?: () => boolean
-    acquireGenerationPriority?: (signal?: AbortSignal) => Promise<() => void>
+    acquireGenerationPriority?: (signal?: AbortSignal) => Promise<(() => void) | undefined>
+    getPendingNotesIds?: () => string[]
     getWriterContextTokens?: () => number
+    writerModel?: string
   } = {}
-): void {
+): () => void {
+  // Notes may select a different model on the shared Mac provider. Capture the
+  // Ask AI writer independently so notes retries cannot change a conversation.
+  const writerModel =
+    process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? options.writerModel ?? ollamaProvider.getModel()
+  const conversationHolds = new AskAiConversationHolds()
   const meetingIndex = options.meetingIndex ?? new MeetingIndexService(recordingsBaseDir)
   const writerContextTokens = (): number =>
     resolveAskAiWriterContext(options.getWriterContextTokens?.())
@@ -582,7 +590,7 @@ export function registerChatIpc(
       }
       const rewritten = await streamAskAiWriter({
         baseUrl: ollamaManager.getBaseUrl(),
-        model: process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaProvider.getModel(),
+        model: writerModel,
         question: result.conversation
           ? (result.conversation.question ?? question)
           : result.recheck
@@ -1176,7 +1184,9 @@ export function registerChatIpc(
     const releaseInteractiveRequest = ollamaManager.beginInteractiveRequest?.()
     let releaseGenerationPriority: (() => void) | undefined
     try {
-      releaseGenerationPriority = await acquireGenerationPriority(question)
+      releaseGenerationPriority = await conversationHolds.begin(_event.sender?.id ?? 0, () =>
+        acquireGenerationPriority(question)
+      )
       const session = getChatSession(chatSessions, _event.sender?.id ?? 0)
       const result = await answerWithExperiment({
         question,
@@ -1201,6 +1211,23 @@ export function registerChatIpc(
       releaseInteractiveRequest?.()
     }
   })
+
+  ipcMain.handle('chat:activity', (event, typedAt: number): void => {
+    conversationHolds.activity(event.sender.id, typedAt)
+  })
+  ipcMain.handle('chat:close', (event): void => {
+    conversationHolds.close(event.sender.id)
+  })
+  ipcMain.handle(
+    'chat:notes-work',
+    async (): Promise<Array<{ meetingId: string; title: string }>> => {
+      const ids = options.getPendingNotesIds?.() ?? []
+      if (ids.length === 0) return []
+      const inventory = await meetingIndex.listInventory()
+      const titles = new Map(inventory.map((meeting) => [meeting.meetingId, meeting.title]))
+      return ids.map((meetingId) => ({ meetingId, title: titles.get(meetingId) ?? meetingId }))
+    }
+  )
 
   ipcMain.handle('chat:new', (event): void => {
     const session = getChatSession(chatSessions, event.sender.id)
@@ -1231,7 +1258,7 @@ export function registerChatIpc(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaProvider.getModel(),
+            model: writerModel,
             prompt: ' ',
             stream: false,
             keep_alive: CHAT_OLLAMA_KEEP_ALIVE,
@@ -1277,7 +1304,9 @@ export function registerChatIpc(
 
       try {
         const scopedIds = normalizeMeetingScope(scopedMeetingIds)
-        releaseGenerationPriority = await acquireGenerationPriority(question, controller.signal)
+        releaseGenerationPriority = await conversationHolds.begin(sender.id, () =>
+          acquireGenerationPriority(question, controller.signal)
+        )
         const normalizedHistory = normalizeChatHistory(history)
         const language = resolveChatReplyLanguage(
           question,
@@ -1477,7 +1506,9 @@ export function registerChatIpc(
       let releaseGenerationPriority: (() => void) | undefined
 
       try {
-        releaseGenerationPriority = await acquireGenerationPriority(question, controller.signal)
+        releaseGenerationPriority = await conversationHolds.begin(sender.id, () =>
+          acquireGenerationPriority(question, controller.signal)
+        )
         const normalizedHistory = normalizeChatHistory(history)
         const language = resolveChatReplyLanguage(
           question,
@@ -1570,6 +1601,7 @@ export function registerChatIpc(
       }
     }
   )
+  return () => conversationHolds.closeAll()
 }
 
 function normalizeMeetingScope(ids: unknown): string[] | undefined {

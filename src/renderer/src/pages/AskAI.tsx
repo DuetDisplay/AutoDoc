@@ -57,6 +57,10 @@ export function AskAI(): ReactElement {
     clearMessages
   } = useChatStore()
   const [loading, setLoading] = useState(false)
+  const [notesWork, setNotesWork] = useState<Array<{ meetingId: string; title: string }>>([])
+  const activitySentAtRef = useRef(-10_000)
+  const lastTypedAtRef = useRef(0)
+  const typingTimerRef = useRef<number | null>(null)
   const [ollamaReady, setOllamaReady] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -114,7 +118,46 @@ export function AskAI(): ReactElement {
   }, [refreshOllamaReady])
 
   useEffect(() => {
+    let active = true
+    let version = 0
+    const refresh = async (): Promise<void> => {
+      const current = ++version
+      try {
+        const work = await window.electronAPI.invoke('chat:notes-work')
+        if (active && current === version) setNotesWork(work ?? [])
+      } catch {
+        // A later queue event or poll refreshes transient filesystem failures.
+      }
+    }
+    void refresh()
+    const unsubscribe = window.electronAPI.on('segmentation:status-changed', () => void refresh())
+    const timer = window.setInterval(() => void refresh(), 2000)
     return () => {
+      active = false
+      window.clearInterval(timer)
+      unsubscribe()
+    }
+  }, [])
+
+  const reportTyping = (): void => {
+    const now = Date.now()
+    lastTypedAtRef.current = now
+    const report = (): void => {
+      if (typingTimerRef.current !== null) window.clearTimeout(typingTimerRef.current)
+      typingTimerRef.current = null
+      activitySentAtRef.current = Date.now()
+      void window.electronAPI.invoke('chat:activity', lastTypedAtRef.current)
+    }
+    const remaining = 10_000 - (now - activitySentAtRef.current)
+    if (remaining <= 0) report()
+    else if (typingTimerRef.current === null)
+      typingTimerRef.current = window.setTimeout(report, remaining)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current !== null) window.clearTimeout(typingTimerRef.current)
+      void window.electronAPI.invoke('chat:close')
       const activeRequestId = activeRequestIdRef.current
       if (activeRequestId) {
         void window.electronAPI.invoke('chat:cancel', activeRequestId)
@@ -403,6 +446,15 @@ export function AskAI(): ReactElement {
         }
       />
 
+      {notesWork.length > 0 && (
+        <div className="px-6 pt-3" role="status" data-ask-ai-notes-banner>
+          <p className="rounded-xl border border-border bg-bg-accent px-3 py-2 text-[12px] leading-relaxed text-ink-muted [overflow-wrap:anywhere]">
+            {notesWork.length === 1
+              ? t('askAi.notesPendingOne', { title: notesWork[0].title })
+              : t('askAi.notesPendingMany', { count: notesWork.length })}
+          </p>
+        </div>
+      )}
       {meetingScope && (
         <div className="px-6 pt-3" role="group" aria-label={t('askAi.scope')}>
           <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-sage/40 bg-sage/5 px-3 py-1.5 text-[12px] text-ink">
@@ -580,7 +632,10 @@ export function AskAI(): ReactElement {
             ref={inputRef}
             rows={1}
             value={draftInput}
-            onChange={(e) => setDraftInput(e.target.value)}
+            onChange={(e) => {
+              setDraftInput(e.target.value)
+              reportTyping()
+            }}
             onKeyDown={handleKeyDown}
             aria-label={t('askAi.placeholder')}
             placeholder={t('askAi.placeholder')}

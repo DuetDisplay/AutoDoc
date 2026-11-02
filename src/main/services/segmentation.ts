@@ -234,7 +234,15 @@ export class SegmentationService {
       if (released) return
       released = true
       this.interactiveHolds = Math.max(0, this.interactiveHolds - 1)
-      if (this.interactiveHolds === 0) void this.processNext()
+      if (this.interactiveHolds === 0) {
+        if (this.queue.length > 0)
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes resuming after interactive conversation',
+            meetingId: this.queue[0]
+          })
+        void this.processNext()
+      }
     }
     try {
       signal?.throwIfAborted()
@@ -269,6 +277,10 @@ export class SegmentationService {
 
   hasActiveOrQueuedWork(): boolean {
     return this.processing || this.activeJobId !== null || this.queue.length > 0
+  }
+
+  getPendingMeetingIds(): string[] {
+    return [...new Set([...(this.activeJobId ? [this.activeJobId] : []), ...this.queue])]
   }
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {

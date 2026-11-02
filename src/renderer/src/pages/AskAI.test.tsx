@@ -601,3 +601,53 @@ describe('AskAI', () => {
     )
   })
 })
+
+describe('Ask AI conversation notes banner and activity', () => {
+  beforeEach(() => {
+    resetRendererStores()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  })
+  afterEach(() => vi.useRealTimers())
+  it('shows active or queued notes by title, handles several meetings, and hides when idle', async () => {
+    let work = [{ meetingId: 'active', title: 'Synthetic launch review' }]
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    api.setHandler('chat:notes-work', () => work)
+    render(<AskAI />)
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Notes for Synthetic launch review are still being made.'
+    )
+    work = [...work, { meetingId: 'queued', title: 'Synthetic planning' }]
+    act(() => api.emit('segmentation:status-changed', { meetingId: 'queued', status: 'queued' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Notes for 2 meetings are still being made.'
+      )
+    )
+    work = []
+    act(() => api.emit('segmentation:status-changed', { meetingId: 'active', status: 'complete' }))
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+  })
+  it('reports typing at most once every ten seconds, keeps its last keystroke time, and closes on unmount', async () => {
+    vi.useFakeTimers()
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    const { unmount } = render(<AskAI />)
+    await act(async () => {})
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'a' } })
+    const first = Date.now()
+    expect(api.invoke.mock.calls.filter(([name]) => name === 'chat:activity')).toEqual([
+      ['chat:activity', first]
+    ])
+    await act(async () => vi.advanceTimersByTimeAsync(9000))
+    fireEvent.change(input, { target: { value: 'ab' } })
+    const last = Date.now()
+    expect(api.invoke.mock.calls.filter(([name]) => name === 'chat:activity')).toHaveLength(1)
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(api.invoke.mock.calls.filter(([name]) => name === 'chat:activity')).toEqual([
+      ['chat:activity', first],
+      ['chat:activity', last]
+    ])
+    unmount()
+    expect(api.invoke).toHaveBeenCalledWith('chat:close')
+  })
+})
