@@ -228,7 +228,7 @@ export async function streamAskAiWriter(params: {
     : ''
   const originalRequestRules = params.conversation ? `${nameRule} ${languageRule}` : ''
   const languageInSystem = Boolean(
-    params.conversation && process.env.AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM === '1'
+    params.conversation && process.env.AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM !== '0'
   )
   const requestRules = languageInSystem ? nameRule : originalRequestRules
   const baseSystem = params.conversation

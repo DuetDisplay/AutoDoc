@@ -45,14 +45,14 @@ async function writerBody(index: number) {
   return bodies[0]
 }
 const provider = () => ({ model: 'test', isAvailable: vi.fn(async () => false), embed: vi.fn() })
-it('keeps default writer request bytes identical to the pre-lever source', async () => {
+it('keeps =0 writer request bytes identical to the pre-lever source', async () => {
   for (const key of [
     'AUTODOC_ASK_AI_MAX_PASSAGES',
-    'AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM',
     'AUTODOC_ASK_AI_EMBEDDING_MODEL',
     'AUTODOC_ASK_AI_WRITER_MODEL'
   ])
     vi.stubEnv(key, undefined)
+  vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '0')
   for (let i = 0; i < leverWriterCases().length; i++)
     expect(await writerBody(i)).toBe(baseline.writerBodies[i])
 })
@@ -83,7 +83,7 @@ it('keeps retrieval bytes identical when the passage flag is unset, and raises o
 })
 it('moves only the unchanged reply-language sentence to the end of system, retaining names, tools and packing', async () => {
   for (const index of [0, 1, 2]) {
-    vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', undefined)
+    vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '0')
     const control = JSON.parse(await writerBody(index))
     vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '1')
     const changed = JSON.parse(await writerBody(index))
@@ -99,6 +99,30 @@ it('moves only the unchanged reply-language sentence to the end of system, retai
     if (index === 1) expect(changed.messages[1].content).toContain('without transliteration: Atlas')
   }
 })
+it.each(['darwin', 'win32', 'linux'] as const)(
+  'ships Windows L request bytes by default on %s, with only its tested sentence move',
+  async (platform) => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+    try {
+      for (const index of [0, 1, 2]) {
+        const expected = JSON.parse(baseline.writerBodies[index])
+        const context = expected.messages[1].content as string
+        const marker = index === 2 ? 'Respond in the user' : 'Default reply language:'
+        const start = context.lastIndexOf(marker)
+        expect(start).toBeGreaterThan(0)
+        expected.messages[0].content += ' ' + context.slice(start)
+        expected.messages[1].content = context.slice(0, start - 1)
+        vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', undefined)
+        expect(await writerBody(index)).toBe(JSON.stringify(expected))
+        vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '1')
+        expect(await writerBody(index)).toBe(JSON.stringify(expected))
+      }
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  }
+)
 it('retains the default embedding bytes and uses a distinct model cache identity for E4', async () => {
   const bodies: string[] = []
   vi.stubGlobal(

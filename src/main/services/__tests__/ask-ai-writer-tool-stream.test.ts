@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 import { streamAskAiWriter } from '../ask-ai-writer'
 import { ASK_AI_WRITER_TOOLS } from '../ask-ai-writer-tools'
@@ -35,6 +35,8 @@ const params = {
   numCtx: 4096,
   onChunk: vi.fn()
 }
+// These frozen baselines cover the explicit rollback layout.
+beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '0'))
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
