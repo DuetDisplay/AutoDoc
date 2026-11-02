@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+vi.mock('../mac-processing-profile', () => ({ macUsesAskAiAppendFollowups: () => false }))
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 import { logAutodocEvent } from '../autodoc-log'
 import {

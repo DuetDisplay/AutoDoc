@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import baseline from './fixtures/windows-levers-defaults.json'
 import { leverWriterCases, leverMeetings } from './windows-levers-fixtures'
+vi.mock('../mac-processing-profile', () => ({ macUsesAskAiAppendFollowups: () => false }))
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 vi.mock('../crypto', () => ({
   decryptJSON: vi.fn(async () => {

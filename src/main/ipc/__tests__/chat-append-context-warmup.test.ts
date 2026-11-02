@@ -8,13 +8,24 @@ vi.mock('../../services/autodoc-log', () => ({
   logAutodocFailure: vi.fn()
 }))
 import { ipcMain } from 'electron'
-import { registerChatIpc } from '../chat-ipc'
+const hardware = vi.hoisted(() => ({ qualifies: false }))
+vi.mock('../../services/mac-processing-profile', () => ({
+  macUsesAskAiAppendFollowups: () => hardware.qualifies
+}))
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
-async function warmup(append: string | undefined, context: string | undefined) {
+async function warmup(
+  append: string | undefined,
+  context: string | undefined,
+  qualifies = false,
+  failLoad = false
+) {
+  vi.resetModules()
+  hardware.qualifies = qualifies
+  const { registerChatIpc } = await import('../chat-ipc')
   vi.clearAllMocks()
   vi.stubEnv('AUTODOC_ASK_AI_APPEND_FOLLOWUPS', append)
   vi.stubEnv('AUTODOC_ASK_AI_APPEND_NUM_CTX', context)
@@ -23,6 +34,8 @@ async function warmup(append: string | undefined, context: string | undefined) {
     'fetch',
     vi.fn(async (_url: unknown, init?: RequestInit) => {
       requests.push(JSON.parse(String(init?.body)))
+      if (failLoad && requests.length === 1)
+        return new Response('failed to load model: out of memory', { status: 500 })
       return { ok: true }
     })
   )
@@ -43,6 +56,7 @@ async function warmup(append: string | undefined, context: string | undefined) {
   )
   const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'chat:warmup')![1]
   await handler({} as never)
+  if (failLoad) await handler({} as never)
   return requests
 }
 it('leaves the exact warmup bytes unchanged unless both experiment settings are enabled', async () => {
@@ -54,4 +68,17 @@ it('leaves the exact warmup bytes unchanged unless both experiment settings are 
   expect(on[0].options.num_ctx).toBe(8192)
   on[0].options.num_ctx = 4096
   expect(JSON.stringify(on)).toBe(JSON.stringify(old))
+})
+
+it('uses the same tested 8192 warmup on qualifying hardware and preserves all other bytes', async () => {
+  const old = await warmup(undefined, undefined)
+  const next = await warmup(undefined, undefined, true)
+  expect(next).toEqual(
+    old.map((request) => ({ ...request, options: { ...request.options, num_ctx: 8192 } }))
+  )
+  expect(await warmup('0', undefined, true)).toEqual(old)
+})
+it('retries a warmup load failure once and retains the session fallback for later warmups', async () => {
+  const requests = await warmup(undefined, undefined, true, true)
+  expect(requests.map((request) => request.options.num_ctx)).toEqual([8192, 4096, 4096])
 })

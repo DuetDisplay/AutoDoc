@@ -1,3 +1,4 @@
+import { useAskAiAppendFollowups, withAskAiWriterLoadFallback } from './ask-ai-writer-session'
 import {
   ASK_AI_WRITER_TOOLS,
   ASK_AI_WRITER_TOOL_INSTRUCTIONS,
@@ -169,7 +170,7 @@ ${chatLanguageInstruction(language)}
 Answer:`
 }
 
-export async function streamAskAiWriter(params: {
+export interface AskAiWriterParams {
   baseUrl: string
   model: string
   question: string
@@ -186,7 +187,26 @@ export async function streamAskAiWriter(params: {
   }
   onChunk: (delta: string) => void
   signal?: AbortSignal
-}): Promise<string> {
+}
+
+export async function streamAskAiWriter(params: AskAiWriterParams): Promise<string> {
+  return withAskAiWriterLoadFallback(
+    params.numCtx ?? ASK_AI_WRITER_NUM_CTX,
+    () => streamAskAiWriterAttempt(params),
+    () => {
+      if (!params.append) return
+      const state = params.append.state
+      delete state.requestMessages
+      delete state.answerMessage
+      delete state.replyLanguage
+      state.references = {}
+      state.residentIds = []
+      state.nextNumber = 1
+    }
+  )
+}
+
+async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<string> {
   let firstTokenMs: number | null = null
   const { numCtx, packingNumCtx } = appendWriterContexts(params.numCtx ?? ASK_AI_WRITER_NUM_CTX)
   const nativeApi = process.env.AUTODOC_ASK_AI_WRITER_API === 'openai'
@@ -246,9 +266,7 @@ export async function streamAskAiWriter(params: {
   const budgetSystem =
     baseSystem + originalRequestRules + (toolsEnabled ? ` ${ASK_AI_WRITER_TOOL_INSTRUCTIONS}` : '')
   const packingSystem = budgetSystem + (toolsEnabled ? JSON.stringify(ASK_AI_WRITER_TOOLS) : '')
-  const appendEnabled = Boolean(
-    process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1' && params.append && toolsEnabled
-  )
+  const appendEnabled = Boolean(useAskAiAppendFollowups() && params.append && toolsEnabled)
   const packedBlocks: PackedWriterBlock[] = []
   const conversationInput = params.conversation
     ? buildConversationWriterInput(
@@ -308,7 +326,8 @@ export async function streamAskAiWriter(params: {
           tools: ASK_AI_WRITER_TOOLS,
           numCtx,
           reserveTokens: toolReserve,
-          fresh: params.conversation.history.length === 0
+          fresh: params.conversation.history.length === 0,
+          replyLanguage: params.conversation.replyLanguage ?? params.language
         })
       : null
   if (append) {
@@ -354,7 +373,7 @@ export async function streamAskAiWriter(params: {
         })
       }
     )
-    if (!res.ok) throw new Error(`Ollama returned ${res.status}`)
+    if (!res.ok) throw new Error(`Ollama returned ${res.status}: ${await res.text()}`)
     if (!res.body) throw new Error('Ollama returned an empty stream')
 
     const reader = res.body.getReader()

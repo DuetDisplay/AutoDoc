@@ -1,16 +1,16 @@
+import { askAiAppendContext } from './ask-ai-writer-session'
 import { createHash } from 'crypto'
 import { conversationTokens } from './ask-ai-conversation'
 import type { AskAiExcerpt } from './ask-ai-answer'
 import type { ChatSourceCard } from './ask-ai-citations'
 import type { WriterToolCall } from './ask-ai-writer-tools'
 
-/** Experiment only: enlarge the runtime/cache, retaining today's evidence packing. */
+/** Enlarge the tested runtime/cache while retaining today's evidence packing. */
 export function appendWriterContexts(normalNumCtx: number): {
   numCtx: number
   packingNumCtx: number
 } {
-  return process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1' &&
-    process.env.AUTODOC_ASK_AI_APPEND_NUM_CTX === '8192'
+  return askAiAppendContext() === 8192
     ? { numCtx: 8192, packingNumCtx: 4096 }
     : { numCtx: normalNumCtx, packingNumCtx: normalNumCtx }
 }
@@ -27,6 +27,7 @@ interface PassageReference {
   source?: ChatSourceCard
 }
 export interface AppendWriterState {
+  replyLanguage?: string
   requestMessages?: AppendWriterMessage[]
   answerMessage?: AppendWriterMessage
   references: Record<string, PassageReference>
@@ -82,6 +83,7 @@ export function prepareAppendWriterRequest(params: {
   numCtx: number
   reserveTokens: number
   fresh: boolean
+  replyLanguage?: string
 }): {
   messages: AppendWriterMessage[]
   sources: ChatSourceCard[]
@@ -127,8 +129,8 @@ export function prepareAppendWriterRequest(params: {
       { role: 'user', content: contextWith(newBlocks) + params.rules + '\n\n' + params.question }
     ]
     if (
-      estimateAppendRequestTokens(appended, params.tools) <=
-      params.numCtx - params.reserveTokens
+      base.replyLanguage === params.replyLanguage &&
+      estimateAppendRequestTokens(appended, params.tools) <= params.numCtx - params.reserveTokens
     ) {
       messages = appended
       residentIds = [...new Set([...base.residentIds, ...newBlocks.map((block) => block.id)])]
@@ -155,6 +157,7 @@ export function prepareAppendWriterRequest(params: {
     layout,
     estimatedTokens: estimateAppendRequestTokens(messages, params.tools),
     commit: (sentMessages, answer) => {
+      params.state.replyLanguage = params.replyLanguage
       params.state.requestMessages = wireCopy(sentMessages)
       params.state.answerMessage = { role: 'assistant', content: answer }
       params.state.references = references

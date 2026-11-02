@@ -1,3 +1,7 @@
+import {
+  useAskAiAppendFollowups,
+  withAskAiWriterLoadFallback
+} from '../services/ask-ai-writer-session'
 import { executeWriterTool } from '../services/ask-ai-writer-tools'
 import {
   recentConversation,
@@ -290,7 +294,7 @@ export function registerChatIpc(
         (params.session as ChatConversationState).lastReplyLanguage
       )
       const conversation = {
-        ...(process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1'
+        ...(useAskAiAppendFollowups()
           ? {
               appendState: ((params.session as ChatConversationState).appendWriterState ??=
                 createAppendWriterState())
@@ -586,7 +590,7 @@ export function registerChatIpc(
             : chatReplyRequest(question).question,
         excerpts: result.excerpts ?? [],
         conversation: result.conversation,
-        ...(process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1' && result.conversation?.appendState
+        ...(useAskAiAppendFollowups() && result.conversation?.appendState
           ? {
               append: {
                 state: result.conversation.appendState,
@@ -1222,22 +1226,25 @@ export function registerChatIpc(
         await passageIndex.prepare(await meetingIndex.listMeetings(), options.canWarmup)
       if (options.canWarmup && !(await options.canWarmup()))
         return { warmed: false, reason: 'busy' }
-      const res = await fetch(`${ollamaManager.getBaseUrl()}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaProvider.getModel(),
-          prompt: ' ',
-          stream: false,
-          keep_alive: CHAT_OLLAMA_KEEP_ALIVE,
-          options: {
-            num_predict: 1,
-            temperature: 0,
-            num_ctx: appendWriterContexts(writerContextTokens()).numCtx
-          }
+      return await withAskAiWriterLoadFallback(writerContextTokens(), async () => {
+        const res = await fetch(`${ollamaManager.getBaseUrl()}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaProvider.getModel(),
+            prompt: ' ',
+            stream: false,
+            keep_alive: CHAT_OLLAMA_KEEP_ALIVE,
+            options: {
+              num_predict: 1,
+              temperature: 0,
+              num_ctx: appendWriterContexts(writerContextTokens()).numCtx
+            }
+          })
         })
+        if (!res.ok) throw new Error(`Ollama returned ${res.status}: ${await res.text()}`)
+        return { warmed: true }
       })
-      return { warmed: res.ok }
     } catch {
       return { warmed: false, reason: 'unavailable' }
     }
@@ -1379,8 +1386,7 @@ export function registerChatIpc(
           return
         }
         applyAskAiAnswerToSession(session as AskAiSession, result)
-        if (process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS !== '1')
-          emitSources(sender, requestId, result.sources)
+        if (!useAskAiAppendFollowups()) emitSources(sender, requestId, result.sources)
         let writerSources: ChatSourceCard[] | undefined
         let streamed = false
         const rewritten = await maybeRewriteAnswer(
@@ -1491,8 +1497,7 @@ export function registerChatIpc(
           signal: controller.signal
         })
         applyAskAiAnswerToSession(session as AskAiSession, result)
-        if (process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS !== '1')
-          emitSources(sender, requestId, result.sources)
+        if (!useAskAiAppendFollowups()) emitSources(sender, requestId, result.sources)
         let writerSources: ChatSourceCard[] | undefined
         let streamed = false
         const rewritten = await maybeRewriteAnswer(

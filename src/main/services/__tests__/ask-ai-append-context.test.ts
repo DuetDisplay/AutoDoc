@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
+vi.mock('../mac-processing-profile', () => ({ macUsesAskAiAppendFollowups: () => false }))
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 import { streamAskAiWriter } from '../ask-ai-writer'
 import { createAppendWriterState } from '../ask-ai-append'

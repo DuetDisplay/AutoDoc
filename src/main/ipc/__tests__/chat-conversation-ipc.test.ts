@@ -126,8 +126,13 @@ it('passes arbitrary turns and original language instructions through one writer
       (message) => message.role === 'user' && message.content.includes('Current user request:')
     )?.content
   ).toContain('Reply in French.')
-  expect(second[0]).toEqual(requests[0].messages[0])
-  expect(second[1].content).toContain('French')
+  expect(second[0].content).toBe(
+    requests[0].messages[0].content.replace(
+      'Default reply language: English.',
+      'Default reply language: French.'
+    )
+  )
+  expect(second[1].content).not.toContain('Default reply language:')
   expect(second.find((message) => message.content.includes('Meeting evidence'))?.content).toContain(
     'earlier search match'
   )
