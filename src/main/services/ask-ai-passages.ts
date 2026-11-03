@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { useAskAiAppendFollowups } from './ask-ai-writer-session'
 import { mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import { decryptJSON, encryptJSON } from './crypto'
@@ -503,7 +504,7 @@ export class AskAiPassages {
         }))
       ),
       excerpts: picked.map((p) => ({
-        ...(process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1' ? { passageId: p.key } : {}),
+        ...(useAskAiAppendFollowups() ? { passageId: p.key } : {}),
         meetingId: p.meetingId,
         title: p.title,
         date: p.date,

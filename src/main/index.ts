@@ -318,6 +318,7 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 let ollamaManager: OllamaManager | null = null
 let ollamaPostWakeScheduler: ReturnType<typeof createOllamaPostWakeScheduler> | null = null
 let shutdownTranscriptionWorker: (() => void) | null = null
+let shutdownAskAiConversationHolds: () => void = () => {}
 let isQuitting = false
 let prepareRecordingQuit: () => Promise<void> = async () => {}
 let getUpdateInstallBlockReason: () => string | undefined = () =>
@@ -1403,7 +1404,8 @@ app.whenReady().then(async () => {
     beginInteractiveRequest: () => managedOllamaManager.beginInteractiveRequest(),
     waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
-    getBaseUrl: () => managedOllamaManager.getBaseUrl()
+    getBaseUrl: () => managedOllamaManager.getBaseUrl(),
+    getModel: () => managedOllamaManager.getModel()
   }
   const segmentationService = new SegmentationService(
     notesOllamaProvider,
@@ -2331,7 +2333,7 @@ app.whenReady().then(async () => {
   )
   const meetingIndex = new MeetingIndexService(recordingService.getRecordingsBaseDir())
   registerSearchIpc(recordingService.getRecordingsBaseDir(), meetingIndex)
-  const releaseAskAiConversationHolds = registerChatIpc(
+  shutdownAskAiConversationHolds = registerChatIpc(
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
@@ -2339,7 +2341,6 @@ app.whenReady().then(async () => {
     () => prefsStore.getMeetingLanguage(),
     {
       meetingIndex,
-      writerModel: DEFAULT_OLLAMA_MODEL,
       getWriterContextTokens: () => notesOllamaProvider.getGenerationContextTokens(),
       getPendingNotesIds: () => segmentationService.getPendingMeetingIds(),
       isProcessing: () =>
@@ -2362,7 +2363,7 @@ app.whenReady().then(async () => {
         localProcessingCoordinator.getActiveKind() == null
     }
   )
-  app.on('will-quit', releaseAskAiConversationHolds)
+  app.on('will-quit', shutdownAskAiConversationHolds)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()
@@ -2545,6 +2546,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', (event) => {
   if (!safeQuit.beforeQuit(event)) return
   isQuitting = true
+  shutdownAskAiConversationHolds()
   ollamaPostWakeScheduler?.cancel()
   ollamaManager?.stop()
   shutdownTranscriptionWorker?.()
@@ -2554,6 +2556,7 @@ app.on('before-quit', (event) => {
   'before-quit-for-update',
   () => {
     isQuitting = true
+    shutdownAskAiConversationHolds()
     ollamaPostWakeScheduler?.cancel()
   }
 )

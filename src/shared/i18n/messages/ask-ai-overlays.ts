@@ -13,9 +13,9 @@ export const askAiOverlays: Record<
     'askAi.searchAll': 'Alle Besprechungen durchsuchen',
     'askAi.askMeeting': 'Zu dieser Besprechung fragen',
     'askAi.notesPendingOne':
-      'Die Notizen für {title} werden noch erstellt. Wenn Sie jetzt die KI befragen, dauert es etwas länger.',
+      'Die Notizen für {title} werden noch erstellt. Wenn Sie jetzt die KI befragen, verzögert sich die Fertigstellung der Notizen etwas.',
     'askAi.notesPendingMany':
-      'Die Notizen für {count} Besprechungen werden noch erstellt. Wenn Sie jetzt die KI befragen, dauert es etwas länger.',
+      'Die Notizen für {count} Besprechungen werden noch erstellt. Wenn Sie jetzt die KI befragen, verzögert sich die Fertigstellung der Notizen etwas.',
     'askAi.countAll': 'alle gespeicherten Aufnahmen',
     'askAi.countAttached': 'angehängte gespeicherte Aufnahmen',
     'askAi.countNoFilters': 'keine Filter',

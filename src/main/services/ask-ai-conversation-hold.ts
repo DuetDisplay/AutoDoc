@@ -1,9 +1,14 @@
+import type { WebContents } from 'electron'
+
+type ConversationOwner = Pick<WebContents, 'id' | 'on' | 'removeListener' | 'isDestroyed'>
 interface ConversationHold {
   pending: Promise<void>
   release?: () => void
   answers: number
   lastActivity: number
   closed: boolean
+  resumeOnClose: boolean
+  cleanup?: () => void
   timer?: ReturnType<typeof setTimeout>
 }
 
@@ -11,21 +16,53 @@ interface ConversationHold {
 export class AskAiConversationHolds {
   private holds = new Map<number, ConversationHold>()
   private readonly quietMs = 60_000
+  private stopped = false
 
   async begin(
-    owner: number,
+    sender: ConversationOwner | number,
     acquire: () => Promise<(() => void) | undefined>
   ): Promise<() => void> {
+    const owner = typeof sender === 'number' ? sender : sender.id
+    if (this.stopped || (typeof sender !== 'number' && sender.isDestroyed?.()))
+      throw new DOMException('Ask AI closed', 'AbortError')
     let hold = this.holds.get(owner)
     if (!hold) {
-      hold = { pending: Promise.resolve(), answers: 0, lastActivity: Date.now(), closed: false }
+      hold = {
+        pending: Promise.resolve(),
+        answers: 0,
+        lastActivity: Date.now(),
+        closed: false,
+        resumeOnClose: true
+      }
       const created = hold
       this.holds.set(owner, created)
+      if (typeof sender !== 'number' && sender.on) {
+        const close = () => this.closeHold(owner, created)
+        const navigate = (details: { isMainFrame: boolean }) => {
+          if (details.isMainFrame) close()
+        }
+        const navigateInPage = (_event: unknown, _url: string, isMainFrame: boolean) => {
+          if (isMainFrame) close()
+        }
+        sender.on('destroyed', close)
+        sender.on('render-process-gone', close)
+        sender.on('did-start-navigation', navigate)
+        sender.on('did-navigate-in-page', navigateInPage)
+        created.cleanup = () => {
+          sender.removeListener('destroyed', close)
+          sender.removeListener('render-process-gone', close)
+          sender.removeListener('did-start-navigation', navigate)
+          sender.removeListener('did-navigate-in-page', navigateInPage)
+        }
+      }
       created.pending = Promise.resolve()
-        .then(acquire)
+        .then(() => {
+          if (created.closed) throw new DOMException('Ask AI closed', 'AbortError')
+          return acquire()
+        })
         .then((release) => {
           if (created.closed) {
-            release?.()
+            if (created.resumeOnClose) release?.()
             throw new DOMException('Ask AI closed', 'AbortError')
           }
           created.release = release
@@ -71,6 +108,12 @@ export class AskAiConversationHolds {
     for (const [owner, hold] of this.holds) this.closeHold(owner, hold)
   }
 
+  /** At will-quit Ollama may already be stopped. Never restart queued notes. */
+  shutdown(): void {
+    this.stopped = true
+    for (const [owner, hold] of this.holds) this.closeHold(owner, hold, false)
+  }
+
   private schedule(owner: number, hold: ConversationHold): void {
     clearTimeout(hold.timer)
     if (hold.closed || hold.answers > 0) return
@@ -84,12 +127,14 @@ export class AskAiConversationHolds {
     hold.timer.unref?.()
   }
 
-  private closeHold(owner: number, hold: ConversationHold): void {
+  private closeHold(owner: number, hold: ConversationHold, resume = true): void {
     if (hold.closed) return
     hold.closed = true
+    hold.resumeOnClose = resume
     clearTimeout(hold.timer)
+    hold.cleanup?.()
     if (this.holds.get(owner) === hold) this.holds.delete(owner)
-    hold.release?.()
+    if (resume) hold.release?.()
     hold.release = undefined
   }
 }

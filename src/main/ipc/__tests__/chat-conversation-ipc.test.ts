@@ -1,3 +1,7 @@
+vi.mock('../../services/mac-processing-profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/mac-processing-profile')>()),
+  macUsesAskAiAppendFollowups: () => false
+}))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/autodoc-conversation-test' },
@@ -90,7 +94,8 @@ it('passes arbitrary turns and original language instructions through one writer
     {
       waitUntilReady: vi.fn(async () => undefined),
       isServerRunning: vi.fn(async () => true),
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     calendar as never,
@@ -195,7 +200,8 @@ it('does not drop correct retrieved evidence when the writer cites the wrong sou
     {
       waitUntilReady: vi.fn(async () => undefined),
       isServerRunning: vi.fn(async () => true),
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     { fetchAllRecentEvents: async () => [], fetchAllUpcomingEvents: async () => [] } as never,

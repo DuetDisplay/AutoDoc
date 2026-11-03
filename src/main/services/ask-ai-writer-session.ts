@@ -1,5 +1,6 @@
 import { macUsesAskAiAppendFollowups } from './mac-processing-profile'
 import { logAutodocEvent } from './autodoc-log'
+import { isOllamaModelLoadFailureError } from './ollama-model-load-failure'
 
 // Hardware is sampled once, just like the stable notes hardware tier. Runtime
 // pressure must never move the writer between contexts during a conversation.
@@ -22,7 +23,8 @@ export function askAiAppendContext(): number | null {
 export async function withAskAiWriterLoadFallback<T>(
   normalNumCtx: number,
   operation: () => Promise<T>,
-  resetAppend?: () => void
+  resetAppend?: () => void,
+  canRetry: () => boolean = () => true
 ): Promise<T> {
   const expanded = askAiAppendContext() === 8192 && normalNumCtx < 8192
   try {
@@ -31,8 +33,12 @@ export async function withAskAiWriterLoadFallback<T>(
     const reason = error instanceof Error ? error.message : String(error)
     if (
       !expanded ||
-      !/(?:failed to load|unable to load|error loading|loading model.*failed|model.*requires more.*memory|out of memory|unable to allocate|cannot allocate)/iu.test(
-        reason
+      !canRetry() ||
+      !(
+        isOllamaModelLoadFailureError(error) ||
+        /(?:failed to load|unable to load|error loading|loading model.*failed|model.*requires more.*memory|out of memory|unable to allocate|cannot allocate|llama runner process has terminated)/iu.test(
+          reason
+        )
       )
     )
       throw error

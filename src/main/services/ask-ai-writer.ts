@@ -190,9 +190,17 @@ export interface AskAiWriterParams {
 }
 
 export async function streamAskAiWriter(params: AskAiWriterParams): Promise<string> {
+  let streamed = false
+  const attemptParams = {
+    ...params,
+    onChunk: (delta: string) => {
+      if (delta.length > 0) streamed = true
+      params.onChunk(delta)
+    }
+  }
   return withAskAiWriterLoadFallback(
     params.numCtx ?? ASK_AI_WRITER_NUM_CTX,
-    () => streamAskAiWriterAttempt(params),
+    () => streamAskAiWriterAttempt(attemptParams),
     () => {
       if (!params.append) return
       const state = params.append.state
@@ -202,7 +210,9 @@ export async function streamAskAiWriter(params: AskAiWriterParams): Promise<stri
       state.references = {}
       state.residentIds = []
       state.nextNumber = 1
-    }
+      params.append.onPrepared?.(params.append.sources)
+    },
+    () => !streamed
   )
 }
 

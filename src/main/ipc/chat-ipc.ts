@@ -21,6 +21,8 @@ import {
   localizeRecordingList
 } from '../services/chat-language'
 import { join } from 'path'
+import { stat } from 'fs/promises'
+import { readMetadata } from '../services/calendar-matcher'
 import type { OllamaProvider } from '../services/llm'
 import type { CalendarEvent, ChatCountSummary } from '../../shared/types'
 import type { CalendarManager } from '../services/calendar-manager'
@@ -36,7 +38,11 @@ import {
   scoreTextRelevance,
   sortMeetingsByQuestion
 } from '../services/chat-retrieval'
-import { normalizeRecordingSearchText } from '../services/recording-title'
+import {
+  buildRecordingTitle,
+  getRecordingDisplayCalendarTitle,
+  normalizeRecordingSearchText
+} from '../services/recording-title'
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
 import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
 import { runAskAiAgent, type AgentToolDeps } from '../services/ask-ai-agent'
@@ -169,6 +175,7 @@ interface OllamaRuntime {
   waitUntilReady(): Promise<void>
   isServerRunning(): Promise<boolean>
   getBaseUrl(): string
+  getModel(): string
 }
 
 interface ChatStreamPayload {
@@ -219,13 +226,12 @@ export function registerChatIpc(
     acquireGenerationPriority?: (signal?: AbortSignal) => Promise<(() => void) | undefined>
     getPendingNotesIds?: () => string[]
     getWriterContextTokens?: () => number
-    writerModel?: string
   } = {}
 ): () => void {
-  // Notes may select a different model on the shared Mac provider. Capture the
-  // Ask AI writer independently so notes retries cannot change a conversation.
-  const writerModel =
-    process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? options.writerModel ?? ollamaProvider.getModel()
+  // Resolve at request time: hardware selection and legacy fallback can change
+  // after registration. The shared notes provider may have a test-only override.
+  const writerModel = (): string =>
+    process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaManager.getModel()
   const conversationHolds = new AskAiConversationHolds()
   const meetingIndex = options.meetingIndex ?? new MeetingIndexService(recordingsBaseDir)
   const writerContextTokens = (): number =>
@@ -590,7 +596,7 @@ export function registerChatIpc(
       }
       const rewritten = await streamAskAiWriter({
         baseUrl: ollamaManager.getBaseUrl(),
-        model: writerModel,
+        model: writerModel(),
         question: result.conversation
           ? (result.conversation.question ?? question)
           : result.recheck
@@ -1186,7 +1192,7 @@ export function registerChatIpc(
     const releaseInteractiveRequest = ollamaManager.beginInteractiveRequest?.()
     let releaseGenerationPriority: (() => void) | undefined
     try {
-      releaseGenerationPriority = await conversationHolds.begin(_event.sender?.id ?? 0, () =>
+      releaseGenerationPriority = await conversationHolds.begin(_event.sender ?? 0, () =>
         acquireGenerationPriority(question)
       )
       const session = getChatSession(chatSessions, _event.sender?.id ?? 0)
@@ -1227,7 +1233,26 @@ export function registerChatIpc(
       if (ids.length === 0) return []
       const inventory = await meetingIndex.listInventory()
       const titles = new Map(inventory.map((meeting) => [meeting.meetingId, meeting.title]))
-      return ids.map((meetingId) => ({ meetingId, title: titles.get(meetingId) ?? meetingId }))
+      return Promise.all(
+        ids.map(async (meetingId) => {
+          const indexedTitle = titles.get(meetingId)
+          if (indexedTitle) return { meetingId, title: indexedTitle }
+          const dir = join(recordingsBaseDir, meetingId)
+          const metadata = await readMetadata(dir).catch(() => null)
+          const startedAt = metadata
+            ? new Date(metadata.startedAt).getTime()
+            : (await stat(join(dir, 'mic.webm')).catch(() => null))?.birthtimeMs ??
+              (await stat(dir).catch(() => null))?.birthtimeMs ?? NaN
+          return {
+            meetingId,
+            title: buildRecordingTitle(
+              metadata,
+              startedAt,
+              getRecordingDisplayCalendarTitle(metadata, null)
+            )
+          }
+        })
+      )
     }
   )
 
@@ -1260,7 +1285,7 @@ export function registerChatIpc(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: writerModel,
+            model: writerModel(),
             prompt: ' ',
             stream: false,
             keep_alive: CHAT_OLLAMA_KEEP_ALIVE,
@@ -1306,7 +1331,7 @@ export function registerChatIpc(
 
       try {
         const scopedIds = normalizeMeetingScope(scopedMeetingIds)
-        releaseGenerationPriority = await conversationHolds.begin(sender.id, () =>
+        releaseGenerationPriority = await conversationHolds.begin(sender, () =>
           acquireGenerationPriority(question, controller.signal)
         )
         const normalizedHistory = normalizeChatHistory(history)
@@ -1508,7 +1533,7 @@ export function registerChatIpc(
       let releaseGenerationPriority: (() => void) | undefined
 
       try {
-        releaseGenerationPriority = await conversationHolds.begin(sender.id, () =>
+        releaseGenerationPriority = await conversationHolds.begin(sender, () =>
           acquireGenerationPriority(question, controller.signal)
         )
         const normalizedHistory = normalizeChatHistory(history)
@@ -1603,7 +1628,7 @@ export function registerChatIpc(
       }
     }
   )
-  return () => conversationHolds.closeAll()
+  return () => conversationHolds.shutdown()
 }
 
 function normalizeMeetingScope(ids: unknown): string[] | undefined {

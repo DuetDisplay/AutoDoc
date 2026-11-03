@@ -45,13 +45,13 @@ async function warmup(
     {
       waitUntilReady: async () => {},
       isServerRunning: async () => true,
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => writerModel ?? 'test'
     } as never,
     { getModel: () => (writerModel ? 'llama3.2:3b' : 'test') } as never,
     {} as never,
     () => 'en',
     {
-      writerModel,
       getWriterContextTokens: () => 4096,
       meetingIndex: { ensureLoaded: async () => {}, listMeetings: async () => [] } as never
     }

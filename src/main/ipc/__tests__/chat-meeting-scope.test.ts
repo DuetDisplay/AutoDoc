@@ -1,3 +1,7 @@
+vi.mock('../../services/mac-processing-profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/mac-processing-profile')>()),
+  macUsesAskAiAppendFollowups: () => false
+}))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/autodoc-scope-unit' },
@@ -47,7 +51,8 @@ function setup() {
     {
       waitUntilReady: async () => {},
       isServerRunning: async () => true,
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => 'qwen3:4b-instruct'
     },
     { getModel: () => 'qwen3:4b-instruct' } as never,
     calendar as never,

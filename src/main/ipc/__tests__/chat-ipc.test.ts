@@ -1,3 +1,7 @@
+vi.mock('../../services/mac-processing-profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/mac-processing-profile')>()),
+  macUsesAskAiAppendFollowups: () => false
+}))
 import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -288,7 +292,8 @@ describe('chat meeting retrieval helpers', () => {
         {
           waitUntilReady: vi.fn(),
           isServerRunning: vi.fn(),
-          getBaseUrl: () => 'http://localhost:11434'
+          getBaseUrl: () => 'http://localhost:11434',
+          getModel: () => 'fake-model'
         },
         { getModel: () => 'fake-model' } as never,
         { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
@@ -333,7 +338,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
@@ -366,7 +372,8 @@ describe('chat meeting retrieval helpers', () => {
         {
           waitUntilReady: vi.fn(),
           isServerRunning: vi.fn(),
-          getBaseUrl: () => 'http://localhost:11434'
+          getBaseUrl: () => 'http://localhost:11434',
+          getModel: () => 'fake-model'
         },
         { getModel: () => 'fake-model' } as never,
         { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
@@ -441,7 +448,8 @@ describe('chat meeting retrieval helpers', () => {
         {
           waitUntilReady: vi.fn(),
           isServerRunning: vi.fn(),
-          getBaseUrl: () => 'http://localhost:11434'
+          getBaseUrl: () => 'http://localhost:11434',
+          getModel: () => 'fake-model'
         },
         { getModel: () => 'fake-model' } as never,
         {
@@ -481,7 +489,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady,
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -532,7 +541,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady,
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -559,7 +569,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -595,7 +606,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady,
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -650,7 +662,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady,
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -692,7 +705,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -749,7 +763,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady,
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -827,7 +842,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady,
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {
@@ -893,7 +909,8 @@ describe('chat meeting retrieval helpers', () => {
       {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
+        getBaseUrl: () => 'http://localhost:11434',
+        getModel: () => 'fake-model'
       },
       { getModel: () => 'fake-model' } as never,
       {

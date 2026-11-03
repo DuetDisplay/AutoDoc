@@ -185,3 +185,106 @@ it('retries an 8192 load failure once at the prior context, disables append sess
       .mock.calls.filter(([entry]) => entry.message.includes('append disabled'))
   ).toHaveLength(1)
 })
+
+it.each([
+  'llama runner process has terminated',
+  'model requires more system memory',
+  'failed to load model from /synthetic/model.gguf'
+])('retries the recognized load failure before answer text: %s', async (reason) => {
+  const writer = await tier('darwin', 'arm64', 24),
+    contexts: number[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: unknown, init: RequestInit) => {
+      contexts.push(JSON.parse(String(init.body)).options.num_ctx)
+      if (contexts.length === 1) return new Response(reason, { status: 500 })
+      return new Response(JSON.stringify(final) + '\n')
+    })
+  )
+  await writer.streamAskAiWriter({ ...frozen[1].turns[0].params, onChunk: () => {} })
+  expect(contexts).toEqual([8192, 4096])
+})
+it('honors the shared typed model-load failure classification even without matching message text', async () => {
+  await tier('darwin', 'arm64', 24)
+  const { withAskAiWriterLoadFallback } = await import('../ask-ai-writer-session')
+  const { createOllamaModelLoadFailedError } = await import('../ollama-model-load-failure')
+  const operation = vi
+    .fn()
+    .mockRejectedValueOnce(createOllamaModelLoadFailedError('Unavailable model file'))
+    .mockResolvedValueOnce('ok')
+  await expect(withAskAiWriterLoadFallback(4096, operation)).resolves.toBe('ok')
+  expect(operation).toHaveBeenCalledTimes(2)
+})
+it('never retries a runner failure after answer text has streamed', async () => {
+  const writer = await tier('darwin', 'arm64', 24),
+    fetcher = vi.fn(async () => {
+      let sent = false
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (!sent) {
+              sent = true
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify({ message: { content: 'Partial answer' } }) + '\n'
+                )
+              )
+            } else controller.error(Error('llama runner process has terminated'))
+          }
+        })
+      )
+    }),
+    chunk = vi.fn()
+  vi.stubGlobal('fetch', fetcher)
+  await expect(
+    writer.streamAskAiWriter({ ...frozen[1].turns[0].params, onChunk: chunk })
+  ).rejects.toThrow('llama runner process has terminated')
+  expect(chunk).toHaveBeenCalledWith('Partial answer')
+  expect(fetcher).toHaveBeenCalledOnce()
+  expect((await import('../ask-ai-writer-session')).useAskAiAppendFollowups()).toBe(true)
+})
+it('restores non-append source numbering before a load-failure retry', async () => {
+  const writer = await tier('darwin', 'arm64', 24)
+  const { createAppendWriterState } = await import('../ask-ai-append')
+  const state = createAppendWriterState(),
+    prepared: any[] = [],
+    contexts: number[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: unknown, init: RequestInit) => {
+      contexts.push(JSON.parse(String(init.body)).options.num_ctx)
+      if (contexts.length === 2)
+        return new Response('llama runner process has terminated', { status: 500 })
+      return new Response(JSON.stringify(final) + '\n')
+    })
+  )
+  const sources = (params: any) =>
+    params.excerpts.map((e: any, i: number) => ({
+      n: i + 1,
+      meetingId: e.meetingId,
+      title: e.title,
+      quote: e.text,
+      startMs: 0,
+      category: e.kind
+    }))
+  const first = frozen[1].turns[0].params,
+    second = frozen[1].turns[1].params
+  await writer.streamAskAiWriter({
+    ...first,
+    executeTool: async () => ({}),
+    onChunk: () => {},
+    append: { state, sources: sources(first) }
+  })
+  const originalSources = sources(second)
+  await writer.streamAskAiWriter({
+    ...second,
+    executeTool: async () => ({}),
+    onChunk: () => {},
+    append: { state, sources: originalSources, onPrepared: (cards) => prepared.push(cards) }
+  })
+  expect(contexts).toEqual([8192, 8192, 4096])
+  expect(prepared).toHaveLength(2)
+  expect(prepared[0].map((card: any) => card.n)).toContain(3)
+  expect(prepared[1]).toEqual(originalSources)
+  expect(prepared[1].map((card: any) => card.n)).toEqual([1, 2])
+})

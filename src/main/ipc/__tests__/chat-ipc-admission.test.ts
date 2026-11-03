@@ -20,7 +20,8 @@ function register(canWarmup: () => boolean, waitUntilReady = vi.fn(async () => u
     {
       waitUntilReady,
       isServerRunning: vi.fn(async () => true),
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     {} as never,
@@ -80,7 +81,8 @@ it('the retained legacy native counts use every inventory record without inferen
     {
       waitUntilReady: vi.fn(),
       isServerRunning: vi.fn(),
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     {} as never,
@@ -167,7 +169,8 @@ it('the default writer counts all104 inventory records with one native tool roun
     {
       waitUntilReady: async () => {},
       isServerRunning: async () => true,
-      getBaseUrl: () => 'http://localhost:11434'
+      getBaseUrl: () => 'http://localhost:11434',
+      getModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     { fetchAllRecentEvents: async () => [], fetchAllUpcomingEvents: async () => [] } as never,

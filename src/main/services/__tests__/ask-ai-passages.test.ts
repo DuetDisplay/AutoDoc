@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AskAiPassages } from '../ask-ai-passages'
 import { directEvidenceAnswer } from '../ask-ai-evidence'
 import type { IndexedMeeting } from '../meeting-index'
+const hardware = vi.hoisted(() => ({ append: false }))
+vi.mock('../mac-processing-profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../mac-processing-profile')>()),
+  macUsesAskAiAppendFollowups: () => hardware.append
+}))
 vi.mock('../crypto', () => ({
   decryptJSON: vi.fn(async () => {
     throw Error('Missing derived test cache')
@@ -328,3 +333,27 @@ it.each([2, 20])(
     expect(result?.sources?.some((source) => source.meetingId === 'meeting-0')).toBe(true)
   }
 )
+
+it('adds passage IDs on the qualifying tier default without an environment opt-in', async () => {
+  vi.resetModules()
+  hardware.append = true
+  vi.stubEnv('AUTODOC_ASK_AI_APPEND_FOLLOWUPS', undefined)
+  const { AskAiPassages: DefaultPassages } = await import('../ask-ai-passages')
+  const index = new DefaultPassages(
+    { model: 'test', isAvailable: async () => false, embed: vi.fn() },
+    '/unused'
+  )
+  const result = await index.retrieveConversation(
+    'Who owns Atlas migration?',
+    [fixture()],
+    [],
+    undefined,
+    undefined,
+    undefined,
+    () => false
+  )
+  expect(result?.excerpts?.length).toBeGreaterThan(0)
+  for (const excerpt of result!.excerpts!) expect(excerpt.passageId).toBeTruthy()
+  hardware.append = false
+  vi.resetModules()
+})
