@@ -1,3 +1,5 @@
+import { logAutodocFailure } from './autodoc-log'
+
 /** Holds Electron's quit until the renderer and recording finalization have settled. */
 export class SafeQuitCoordinator {
   private ready = false
@@ -22,7 +24,11 @@ export class SafeQuitCoordinator {
 
   beforeQuit(event: { preventDefault: () => void }): boolean {
     if (this.ready) {
-      this.options.onQuitAllowed?.()
+      try {
+        this.options.onQuitAllowed?.()
+      } catch (error) {
+        logAutodocFailure({ area: 'app', message: 'quit-allowed hook failed', error })
+      }
       return true
     }
     event.preventDefault()

@@ -831,7 +831,7 @@ describe('chat meeting retrieval helpers', () => {
       'Third listed fixture notes'
     )
 
-    expect(waitUntilReady).toHaveBeenCalledTimes(4)
+    expect(waitUntilReady).not.toHaveBeenCalled()
   })
 
   it('answers unmatched questions extractively without calling Ollama', async () => {

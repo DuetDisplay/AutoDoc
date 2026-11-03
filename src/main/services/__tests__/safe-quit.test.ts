@@ -3,6 +3,21 @@ import { SafeQuitCoordinator } from '../safe-quit'
 import { AskAiConversationHolds } from '../ask-ai-conversation-hold'
 
 describe('safe quit', () => {
+  it('lets the quit proceed when onQuitAllowed throws', () => {
+    const coordinator = new SafeQuitCoordinator({
+      prepare: vi.fn(),
+      quit: vi.fn(),
+      onQuitAllowed: () => {
+        throw new Error('hook failed')
+      },
+      onError: vi.fn()
+    })
+    const event = { preventDefault: vi.fn() }
+    coordinator.allowQuit()
+    expect(coordinator.beforeQuit(event)).toBe(true)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+  })
+
   it('prevents repeated quits until capture and finalization finish', async () => {
     let finish!: () => void
     const prepare = vi.fn(

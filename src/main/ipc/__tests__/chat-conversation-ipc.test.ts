@@ -227,3 +227,105 @@ it('does not drop correct retrieved evidence when the writer cites the wrong sou
   // The deliberately wrong [2] points to Vale. It must not erase Ridge.
   expect(requests[1].messages[1].content).toContain('Ridge has a budget of $40.')
 })
+
+function readinessHarness(runtime: {
+  waitUntilReady: () => Promise<void>
+  isServerRunning: () => Promise<boolean>
+}) {
+  const meeting = {
+    meetingId: 'fable',
+    title: 'Fable workshop',
+    date: 0,
+    signature: 'a',
+    dir: '/unused',
+    sourceName: 'Fable',
+    noteEntries: [
+      {
+        id: 'x',
+        title: 'Overview',
+        topic: null,
+        content: 'The Fable recovery code is marigold.',
+        owner: null,
+        deadline: null,
+        category: 'information',
+        sources: []
+      }
+    ],
+    transcriptChunks: []
+  }
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [] }) }
+    return {
+      ok: true,
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(
+            new TextEncoder().encode(
+              JSON.stringify({ message: { content: 'The code is marigold [1].' } }) + '\n'
+            )
+          )
+          c.close()
+        }
+      })
+    }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  registerChatIpc(
+    '/tmp/no-readiness-recordings',
+    { ...runtime, getBaseUrl: () => 'http://localhost:11434', getAskAiModel: () => 'test' },
+    { getModel: () => 'test' } as never,
+    { fetchAllRecentEvents: async () => [], fetchAllUpcomingEvents: async () => [] } as never,
+    () => 'en',
+    {
+      meetingIndex: {
+        ensureLoaded: vi.fn(),
+        listMeetings: async () => [meeting],
+        listInventory: async () => [meeting]
+      } as never
+    }
+  )
+  const handler = (name: string) =>
+    vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === name)![1]
+  return { fetchMock, handler, sender: { id: 41, send: vi.fn() } }
+}
+
+it('waits for Ollama readiness before a writer-bound request streams', async () => {
+  const waitUntilReady = vi.fn(async () => undefined)
+  const { fetchMock, handler, sender } = readinessHarness({
+    waitUntilReady,
+    isServerRunning: async () => true
+  })
+  await handler('chat:send-stream')({ sender } as never, 'a', 'Summarize Fable')
+  expect(waitUntilReady).toHaveBeenCalled()
+  const writerCall = fetchMock.mock.calls.findIndex(([url]) => url.endsWith('/api/chat'))
+  expect(writerCall).toBeGreaterThanOrEqual(0)
+  expect(waitUntilReady.mock.invocationCallOrder[0]).toBeLessThan(
+    fetchMock.mock.invocationCallOrder[writerCall]
+  )
+  expect(sender.send).toHaveBeenCalledWith('chat:done', expect.objectContaining({ requestId: 'a' }))
+})
+
+it('cancels promptly while waiting for readiness and never calls the writer', async () => {
+  const { fetchMock, handler, sender } = readinessHarness({
+    waitUntilReady: () => new Promise<void>(() => {}),
+    isServerRunning: async () => false
+  })
+  const pending = handler('chat:send-stream')({ sender } as never, 'a', 'Summarize Fable')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await handler('chat:cancel')({ sender } as never, 'a')
+  await pending
+  expect(sender.send).toHaveBeenCalledWith('chat:canceled', { requestId: 'a' })
+  expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/api/chat'))).toBe(false)
+})
+
+it('reports the reconnecting message when the server is down after the conversation wait', async () => {
+  const { handler, sender } = readinessHarness({
+    waitUntilReady: async () => undefined,
+    isServerRunning: async () => false
+  })
+  await handler('chat:send-stream')({ sender } as never, 'a', 'Summarize Fable')
+  expect(sender.send).toHaveBeenCalledWith('chat:error', {
+    requestId: 'a',
+    error: 'Local AI is reconnecting. Please try again shortly.'
+  })
+})

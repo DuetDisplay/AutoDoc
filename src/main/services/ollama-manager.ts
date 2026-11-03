@@ -350,6 +350,9 @@ export class OllamaManager extends EventEmitter {
   private intentionalKillReasons = new WeakMap<ChildProcess, OllamaKillReason>()
   private model: string
   private askAiModel: string
+  // Chosen by the hardware profile in selectPreferredModel only; unlike preferredModel,
+  // per-job notes overrides and downgrades never touch it.
+  private profileModel: string
   private preferredModel: string
   private resolveModel: PreferredModelResolver | null
   private retainLowSpecModel: () => boolean | Promise<boolean>
@@ -381,6 +384,7 @@ export class OllamaManager extends EventEmitter {
       typeof modelOrOptions === 'string' ? { model: modelOrOptions } : (modelOrOptions ?? {})
     this.model = options.model ?? DEFAULT_OLLAMA_MODEL
     this.preferredModel = this.model
+    this.profileModel = this.model
     this.askAiModel = this.model
     this.resolveModel = options.resolveModel ?? null
     this.retainLowSpecModel = options.retainLowSpecModel ?? (() => false)
@@ -659,8 +663,19 @@ export class OllamaManager extends EventEmitter {
     if (!preferredModel) return
 
     this.preferredModel = preferredModel
+    this.profileModel = preferredModel
     this.askAiModel = preferredModel
     this.setModel(preferredModel)
+  }
+
+  /**
+   * Ask AI moves to the profile model once it is installed, whichever caller (startup or a
+   * later notes job) installed it. Any other model leaves Ask AI where it is.
+   */
+  private adoptAskAiModel(installedModel: string): boolean {
+    if (installedModel !== this.profileModel || this.askAiModel === installedModel) return false
+    this.askAiModel = installedModel
+    return true
   }
 
   private getModelsDir(): string {
@@ -948,8 +963,10 @@ export class OllamaManager extends EventEmitter {
     }
     this.assertStartEpoch(epoch)
     if (plan.usingLegacyFallback) {
-      void this.pullWindowsPreferredInBackground(plan, epoch, startup)
+      void this.pullWindowsPreferredInBackground(plan, epoch)
     } else {
+      // The profile model is installed, so Ask AI can leave any legacy model before cleanup.
+      if (preferred === this.profileModel) this.adoptAskAiModel(plan.activeModel)
       await this.scheduleNotesCleanup(preferred, epoch)
     }
     this.assertStartEpoch(epoch)
@@ -1066,8 +1083,7 @@ export class OllamaManager extends EventEmitter {
 
   private async pullWindowsPreferredInBackground(
     plan: NotesModelMigrationPlan,
-    epoch: number,
-    startup = false
+    epoch: number
   ): Promise<void> {
     try {
       this.assertStartEpoch(epoch)
@@ -1077,8 +1093,9 @@ export class OllamaManager extends EventEmitter {
         throw new Error(`Ollama notes model setup failed: '${plan.pullModel}' is not installed`)
       this.assertStartEpoch(epoch)
       if (this.preferredModel === plan.pullModel) this.setModel(plan.pullModel)
-      if (startup) this.askAiModel = plan.pullModel
-      await this.scheduleNotesCleanup(plan.pullModel, epoch)
+      // Ask AI no longer pins the legacy model, so rerun cleanup for the current notes model.
+      const adopted = this.adoptAskAiModel(plan.pullModel)
+      await this.scheduleNotesCleanup(adopted ? this.preferredModel : plan.pullModel, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
       logAutodocFailure({
@@ -1105,6 +1122,7 @@ export class OllamaManager extends EventEmitter {
         this.pendingNotesCleanup ??= { preferredModel, epoch }
         return
       }
+      if (isModelInstalled([this.askAiModel], model)) continue
       if (isModelInstalled(installedModels, model)) {
         await this.deleteModel(model)
         this.assertStartEpoch(epoch)

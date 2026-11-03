@@ -286,7 +286,7 @@ export function registerChatIpc(
         history.length === 0 && named.size === 0 && !params.scopedMeetingIds?.length
       let prefetched: AskAiAnswer | null = null
       if (unanchoredInitial) {
-        await waitForOllama(ollamaManager)
+        await waitForOllama(ollamaManager, params.signal)
         try {
           prefetched = await passageIndex.retrieveConversation(
             params.question,
@@ -588,8 +588,15 @@ export function registerChatIpc(
     if (!shouldRewriteAskAiAnswer(result) || (!result.conversation && !result.excerpts?.length)) {
       return localizeDirectAnswer(result.content, language, signal)
     }
+    // Extractive answers never wait: with no server running they return as-is.
+    if (!result.conversation && !(await ollamaManager.isServerRunning())) return result.content
     try {
-      await waitForOllama(ollamaManager)
+      try {
+        await waitForOllama(ollamaManager, signal)
+      } catch (error) {
+        if (isAbortError(error) || signal?.aborted || !result.conversation) throw error
+        throw new Error('Local AI is reconnecting. Please try again shortly.')
+      }
       if (!(await ollamaManager.isServerRunning())) {
         if (result.conversation)
           throw new Error('Local AI is reconnecting. Please try again shortly.')
@@ -1159,7 +1166,7 @@ export function registerChatIpc(
     if (language === 'en') return answer
     const countAnswer = localizeRecordingCount(answer, language)
     if (countAnswer) return countAnswer
-    await waitForOllama(ollamaManager)
+    await waitForOllama(ollamaManager, signal)
     return completeOllamaChat({
       baseUrl: ollamaManager.getBaseUrl(),
       model: writerModel(),
@@ -1242,8 +1249,9 @@ export function registerChatIpc(
           const metadata = await readMetadata(dir).catch(() => null)
           const startedAt = metadata
             ? new Date(metadata.startedAt).getTime()
-            : (await stat(join(dir, 'mic.webm')).catch(() => null))?.birthtimeMs ??
-              (await stat(dir).catch(() => null))?.birthtimeMs ?? NaN
+            : ((await stat(join(dir, 'mic.webm')).catch(() => null))?.birthtimeMs ??
+              (await stat(dir).catch(() => null))?.birthtimeMs ??
+              NaN)
           return {
             meetingId,
             title: buildRecordingTitle(
@@ -1346,7 +1354,7 @@ export function registerChatIpc(
         normalizedHistoryLength = normalizedHistory.length
 
         const runAgentTurn = async (): Promise<void> => {
-          await waitForOllama(ollamaManager)
+          await waitForOllama(ollamaManager, controller.signal)
           const agentResult = await runAskAiAgent({
             baseUrl: ollamaManager.getBaseUrl(),
             model: writerModel(),
@@ -1402,7 +1410,7 @@ export function registerChatIpc(
             return
           }
 
-          await waitForOllama(ollamaManager)
+          await waitForOllama(ollamaManager, controller.signal)
           let content = ''
           await streamOllamaChat({
             baseUrl: ollamaManager.getBaseUrl(),
@@ -2443,10 +2451,24 @@ function formatPlanTimeRangeLabel(
   }
 }
 
-async function waitForOllama(ollamaManager: OllamaRuntime): Promise<void> {
+async function waitForOllama(ollamaManager: OllamaRuntime, signal?: AbortSignal): Promise<void> {
   try {
-    await ollamaManager.waitUntilReady()
-  } catch {
+    if (!signal) await ollamaManager.waitUntilReady()
+    else {
+      signal.throwIfAborted()
+      let onAbort!: () => void
+      const aborted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+      })
+      try {
+        await Promise.race([ollamaManager.waitUntilReady(), aborted])
+      } finally {
+        signal.removeEventListener('abort', onAbort)
+      }
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error
     const running = await ollamaManager.isServerRunning()
     if (!running) throw new Error('Ollama is not running. Please start Ollama and try again.')
   }
