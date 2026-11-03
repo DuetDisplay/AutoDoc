@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Eelistad tumedamat ilmet? Lülita sisse tume režiim.",
   "announcement.done": "Valmis",
   "announcement.meetingLanguageBody": "Transkriptsioonid ja märkmed toetavad nüüd {count} keelt!",
-  "announcement.meetingLanguageDescription": "Valige koosolekutel räägitav keel. Uued transkriptsioonid ja märkmed koostatakse selles keeles."
+  "announcement.meetingLanguageDescription": "Valige koosolekutel räägitav keel. Uued transkriptsioonid ja märkmed koostatakse selles keeles.",
+  "askAi.indexingProgress": "Koosolekute ettevalmistamine tehisintellekti jaoks ({percent}%). Võite juba küsida, kuid kuni ettevalmistus lõpeb, võivad vastustest mõned üksikasjad puududa.",
+  "askAi.indexingPaused": "Koosolekute ettevalmistamine tehisintellekti jaoks on salvestamise või märkmete koostamise ajaks peatatud ({percent}% valmis). Võite endiselt küsida, kuid kuni ettevalmistus lõpeb, võivad vastustest mõned üksikasjad puududa."
 }

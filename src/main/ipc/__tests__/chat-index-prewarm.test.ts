@@ -221,3 +221,17 @@ it('starts at launch or after notes only for a used cache; first open and model 
   cleanup.indexChanged('model', DEFAULT_OLLAMA_EMBEDDING_MODEL)
   expect(state.request).toHaveBeenCalledTimes(3)
 })
+
+it('queries initial status, pushes structural status and unsubscribes when Ask AI closes', async () => {
+  const web = sender()
+  state.status = { state: 'preparing', percent: 12, significant: true }
+  expect(await handler('chat:index-status')({ sender: web } as never)).toEqual(state.status)
+  const next: AskAiIndexStatus = { state: 'paused', percent: 13, significant: true }
+  state.options!.onChange(next)
+  expect(web.send).toHaveBeenLastCalledWith('chat:index-status-changed', next)
+  expect(Object.keys(next).sort()).toEqual(['percent', 'significant', 'state'])
+  await handler('chat:close')({ sender: web } as never)
+  web.send.mockClear()
+  state.options!.onChange({ ...next, state: 'ready', percent: 100 })
+  expect(web.send).not.toHaveBeenCalled()
+})

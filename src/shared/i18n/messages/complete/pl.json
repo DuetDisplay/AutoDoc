@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Wolisz ciemniejszy wygląd? Włącz tryb ciemny.",
   "announcement.done": "Gotowe",
   "announcement.meetingLanguageBody": "Transkrypcje i notatki są teraz dostępne w {count} językach!",
-  "announcement.meetingLanguageDescription": "Wybierz język używany podczas spotkań. Nowe transkrypcje i notatki będą tworzone w tym języku."
+  "announcement.meetingLanguageDescription": "Wybierz język używany podczas spotkań. Nowe transkrypcje i notatki będą tworzone w tym języku.",
+  "askAi.indexingProgress": "Przygotowywanie spotkań dla AI ({percent}%). Możesz już zadawać pytania, ale do zakończenia przygotowań w odpowiedziach może brakować niektórych szczegółów.",
+  "askAi.indexingPaused": "Przygotowywanie spotkań dla AI jest wstrzymane na czas nagrywania lub tworzenia notatek (ukończono {percent}%). Nadal możesz zadawać pytania, ale do zakończenia przygotowań w odpowiedziach może brakować niektórych szczegółów."
 }

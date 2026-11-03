@@ -1,3 +1,4 @@
+import type { AskAiIndexStatus } from '../shared/ask-ai-index-status'
 import type { ChatCountSummary } from '../shared/types'
 import type { SpeechLicenseNotice } from '../shared/speech-licenses'
 import type { MemoryFailure } from '../shared/memory-failure'
@@ -263,6 +264,7 @@ export interface IpcInvokeEvents {
     scopedMeetingIds?: string[],
     searchAll?: boolean
   ]
+  'chat:index-status': []
   'chat:warmup': []
   'chat:select-recording-stream': [
     requestId: string,
@@ -453,6 +455,7 @@ export interface IpcInvokeReturns {
   'chat:notes-work': Array<{ meetingId: string; title: string }>
   'chat:cancel': void
   'chat:send-stream': void
+  'chat:index-status': AskAiIndexStatus
   'chat:warmup': { warmed: boolean; reason?: string }
   'chat:select-recording-stream': void
   'detection:dismiss': void
@@ -510,6 +513,7 @@ export interface IpcInvokeReturns {
 }
 
 export interface IpcOnEvents {
+  'chat:index-status-changed': [status: AskAiIndexStatus]
   'recording:prepare-to-quit': [requestId: string]
   'recording:status-changed': [state: RecordingState]
   'recording:entry-updated': [payload: { meetingId: string }]

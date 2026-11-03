@@ -1464,6 +1464,10 @@ export function registerChatIpc(
       })
     return warmupPromise
   }
+  ipcMain.handle('chat:index-status', (event): AskAiIndexStatus => {
+    openIndexPage(event?.sender)
+    return indexPrewarm?.snapshot() ?? idleStatus()
+  })
   ipcMain.handle('chat:warmup', async (event): Promise<{ warmed: boolean; reason?: string }> => {
     const wasUnavailable = indexPrewarm?.unavailable
     openIndexPage(event?.sender)

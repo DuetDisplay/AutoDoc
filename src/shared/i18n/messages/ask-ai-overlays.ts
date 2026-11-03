@@ -6,6 +6,11 @@ export const askAiOverlays: Record<
   Partial<Record<keyof typeof en, string>>
 > = {
   de: {
+    'askAi.indexingProgress':
+      'Ihre Besprechungen werden für die KI vorbereitet ({percent} %). Sie können schon Fragen stellen, aber bis zum Abschluss fehlen in den Antworten möglicherweise einige Details.',
+    'askAi.indexingPaused':
+      'Die Vorbereitung Ihrer Besprechungen für die KI pausiert, während eine Aufnahme läuft oder Notizen erstellt werden ({percent} % abgeschlossen). Sie können weiterhin Fragen stellen, aber bis zum Abschluss fehlen in den Antworten möglicherweise einige Details.',
+
     'askAi.scope': 'Besprechungsauswahl',
     'askAi.onlyMeeting': 'Nur diese Besprechung: {title}',
     'askAi.removeScope': 'Besprechungsauswahl entfernen',
@@ -27,6 +32,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'Filterdetails nicht verfügbar'
   },
   ja: {
+    'askAi.indexingProgress':
+      'AIに質問できるよう会議を準備しています（{percent}%）。今すぐ質問できますが、準備が終わるまでは回答に一部の詳細が含まれない場合があります。',
+    'askAi.indexingPaused':
+      '録音中またはノートの作成中のため、AIに質問するための会議の準備を一時停止しています（{percent}%完了）。引き続き質問できますが、準備が終わるまでは回答に一部の詳細が含まれない場合があります。',
+
     'askAi.scope': '対象の会議',
     'askAi.onlyMeeting': 'この会議のみ：{title}',
     'askAi.removeScope': '会議の指定を解除',
@@ -48,6 +58,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '条件の詳細を表示できません'
   },
   'zh-Hans': {
+    'askAi.indexingProgress':
+      '正在为 AI 问答准备会议（{percent}%）。现在即可提问，但在准备完成前，回答可能会遗漏一些细节。',
+    'askAi.indexingPaused':
+      '录音或笔记生成期间，AI 问答的会议准备工作已暂停（已完成 {percent}%）。仍可提问，但在准备完成前，回答可能会遗漏一些细节。',
+
     'askAi.scope': '会议范围',
     'askAi.onlyMeeting': '仅此会议：{title}',
     'askAi.removeScope': '移除会议范围',
@@ -67,6 +82,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '筛选详情不可用'
   },
   ko: {
+    'askAi.indexingProgress':
+      'AI 질문을 위해 회의를 준비하고 있습니다({percent}%). 지금 질문할 수 있지만, 준비가 끝날 때까지 답변에서 일부 세부 정보가 빠질 수 있습니다.',
+    'askAi.indexingPaused':
+      '녹음 또는 노트 작성 중에는 AI 질문을 위한 회의 준비가 일시 중지됩니다({percent}% 완료). 계속 질문할 수 있지만, 준비가 끝날 때까지 답변에서 일부 세부 정보가 빠질 수 있습니다.',
+
     'askAi.scope': '회의 범위',
     'askAi.onlyMeeting': '이 회의만: {title}',
     'askAi.removeScope': '회의 범위 해제',
@@ -88,6 +108,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '필터 세부 정보를 사용할 수 없음'
   },
   fr: {
+    'askAi.indexingProgress':
+      'Préparation de vos réunions pour l’IA ({percent} %). Vous pouvez déjà poser des questions, mais les réponses risquent de manquer de détails tant que la préparation n’est pas terminée.',
+    'askAi.indexingPaused':
+      'La préparation de vos réunions pour l’IA est en pause pendant un enregistrement ou la création de notes ({percent} % terminé). Vous pouvez toujours poser des questions, mais les réponses risquent de manquer de détails tant que la préparation n’est pas terminée.',
+
     'askAi.scope': 'Périmètre de réunion',
     'askAi.onlyMeeting': 'Cette réunion uniquement : {title}',
     'askAi.removeScope': 'Retirer le périmètre de réunion',
@@ -109,6 +134,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'détails des filtres indisponibles'
   },
   es: {
+    'askAi.indexingProgress':
+      'Preparando sus reuniones para la IA ({percent} %). Ya puede preguntar, pero las respuestas podrían omitir algunos detalles hasta que termine la preparación.',
+    'askAi.indexingPaused':
+      'La preparación de sus reuniones para la IA está en pausa mientras se graba o se crean notas ({percent} % completado). Puede seguir preguntando, pero las respuestas podrían omitir algunos detalles hasta que termine la preparación.',
+
     'askAi.scope': 'Ámbito de reunión',
     'askAi.onlyMeeting': 'Solo esta reunión: {title}',
     'askAi.removeScope': 'Quitar el ámbito de reunión',
@@ -130,6 +160,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detalles del filtro no disponibles'
   },
   it: {
+    'askAi.indexingProgress':
+      'Preparazione delle riunioni per l’IA ({percent}%). Puoi già fare domande, ma le risposte potrebbero tralasciare alcuni dettagli finché la preparazione non sarà completata.',
+    'askAi.indexingPaused':
+      'La preparazione delle riunioni per l’IA è in pausa durante una registrazione o la creazione delle note ({percent}% completato). Puoi continuare a fare domande, ma le risposte potrebbero tralasciare alcuni dettagli finché la preparazione non sarà completata.',
+
     'askAi.scope': 'Ambito della riunione',
     'askAi.onlyMeeting': 'Solo questa riunione: {title}',
     'askAi.removeScope': 'Rimuovi l’ambito della riunione',
@@ -151,6 +186,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'dettagli dei filtri non disponibili'
   },
   pt: {
+    'askAi.indexingProgress':
+      'A preparar as suas reuniões para a IA ({percent}%). Já pode fazer perguntas, mas as respostas podem omitir alguns detalhes até a preparação terminar.',
+    'askAi.indexingPaused':
+      'A preparação das suas reuniões para a IA está em pausa durante uma gravação ou a criação de notas ({percent}% concluído). Pode continuar a fazer perguntas, mas as respostas podem omitir alguns detalhes até a preparação terminar.',
+
     'askAi.scope': 'Âmbito da reunião',
     'askAi.onlyMeeting': 'Apenas esta reunião: {title}',
     'askAi.removeScope': 'Remover o âmbito da reunião',
@@ -172,6 +212,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detalhes dos filtros indisponíveis'
   },
   ru: {
+    'askAi.indexingProgress':
+      'Подготовка встреч для ИИ ({percent}%). Вы уже можете задавать вопросы, но до завершения подготовки в ответах могут отсутствовать некоторые подробности.',
+    'askAi.indexingPaused':
+      'Подготовка встреч для ИИ приостановлена на время записи или создания заметок (готово {percent}%). Вы по-прежнему можете задавать вопросы, но до завершения подготовки в ответах могут отсутствовать некоторые подробности.',
+
     'askAi.scope': 'Область поиска по встречам',
     'askAi.onlyMeeting': 'Только эта встреча: {title}',
     'askAi.removeScope': 'Снять ограничение по встрече',
@@ -193,6 +238,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'сведения о фильтрах недоступны'
   },
   uk: {
+    'askAi.indexingProgress':
+      'Підготовка зустрічей для ШІ ({percent}%). Уже можна ставити запитання, але до завершення підготовки у відповідях можуть бути відсутні деякі подробиці.',
+    'askAi.indexingPaused':
+      'Підготовку зустрічей для ШІ призупинено на час запису або створення нотаток (готово {percent}%). Ви й далі можете ставити запитання, але до завершення підготовки у відповідях можуть бути відсутні деякі подробиці.',
+
     'askAi.scope': 'Область пошуку зустрічей',
     'askAi.onlyMeeting': 'Лише ця зустріч: {title}',
     'askAi.removeScope': 'Зняти обмеження за зустріччю',
@@ -214,6 +264,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'відомості про фільтри недоступні'
   },
   bg: {
+    'askAi.indexingProgress':
+      'Срещите ви се подготвят за AI ({percent}%). Можете да задавате въпроси още сега, но в отговорите може да липсват някои подробности, докато подготовката приключи.',
+    'askAi.indexingPaused':
+      'Подготовката на срещите ви за AI е на пауза, докато се прави запис или се създават бележки ({percent}% готово). Все още можете да задавате въпроси, но в отговорите може да липсват някои подробности, докато подготовката приключи.',
+
     'askAi.scope': 'Обхват на срещата',
     'askAi.onlyMeeting': 'Само тази среща: {title}',
     'askAi.removeScope': 'Премахване на обхвата на срещата',
@@ -235,6 +290,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'подробностите за филтрите не са налични'
   },
   hr: {
+    'askAi.indexingProgress':
+      'Priprema sastanaka za AI ({percent} %). Već možete postavljati pitanja, ali dok priprema ne završi, u odgovorima mogu nedostajati pojedinosti.',
+    'askAi.indexingPaused':
+      'Priprema sastanaka za AI pauzirana je tijekom snimanja ili izrade bilježaka ({percent} % dovršeno). I dalje možete postavljati pitanja, ali dok priprema ne završi, u odgovorima mogu nedostajati pojedinosti.',
+
     'askAi.scope': 'Opseg sastanka',
     'askAi.onlyMeeting': 'Samo ovaj sastanak: {title}',
     'askAi.removeScope': 'Ukloni opseg sastanka',
@@ -256,6 +316,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'pojedinosti filtara nisu dostupne'
   },
   cs: {
+    'askAi.indexingProgress':
+      'Příprava schůzek pro AI ({percent} %). Ptát se můžete už teď, ale do dokončení přípravy mohou v odpovědích chybět některé podrobnosti.',
+    'askAi.indexingPaused':
+      'Příprava schůzek pro AI je během nahrávání nebo vytváření poznámek pozastavena ({percent} % hotovo). Stále se můžete ptát, ale do dokončení přípravy mohou v odpovědích chybět některé podrobnosti.',
+
     'askAi.scope': 'Rozsah schůzky',
     'askAi.onlyMeeting': 'Pouze tato schůzka: {title}',
     'askAi.removeScope': 'Zrušit omezení na schůzku',
@@ -277,6 +342,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrů nejsou k dispozici'
   },
   da: {
+    'askAi.indexingProgress':
+      'Dine møder gøres klar til AI ({percent} %). Du kan spørge nu, men svarene kan mangle nogle detaljer, indtil forberedelsen er færdig.',
+    'askAi.indexingPaused':
+      'Klargøringen af dine møder til AI er sat på pause, mens der optages eller laves noter ({percent} % færdig). Du kan stadig spørge, men svarene kan mangle nogle detaljer, indtil forberedelsen er færdig.',
+
     'askAi.scope': 'Mødeafgrænsning',
     'askAi.onlyMeeting': 'Kun dette møde: {title}',
     'askAi.removeScope': 'Fjern mødeafgrænsning',
@@ -298,6 +368,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filteroplysninger er ikke tilgængelige'
   },
   nl: {
+    'askAi.indexingProgress':
+      'Uw vergaderingen worden voorbereid voor AI ({percent}%). U kunt al vragen stellen, maar de antwoorden kunnen details missen totdat de voorbereiding klaar is.',
+    'askAi.indexingPaused':
+      'De voorbereiding van uw vergaderingen voor AI is gepauzeerd tijdens een opname of het maken van notities ({percent}% voltooid). U kunt vragen blijven stellen, maar de antwoorden kunnen details missen totdat de voorbereiding klaar is.',
+
     'askAi.scope': 'Vergaderbereik',
     'askAi.onlyMeeting': 'Alleen deze vergadering: {title}',
     'askAi.removeScope': 'Vergaderbereik verwijderen',
@@ -319,6 +394,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filterdetails niet beschikbaar'
   },
   et: {
+    'askAi.indexingProgress':
+      'Koosolekute ettevalmistamine tehisintellekti jaoks ({percent}%). Võite juba küsida, kuid kuni ettevalmistus lõpeb, võivad vastustest mõned üksikasjad puududa.',
+    'askAi.indexingPaused':
+      'Koosolekute ettevalmistamine tehisintellekti jaoks on salvestamise või märkmete koostamise ajaks peatatud ({percent}% valmis). Võite endiselt küsida, kuid kuni ettevalmistus lõpeb, võivad vastustest mõned üksikasjad puududa.',
+
     'askAi.scope': 'Koosoleku ulatus',
     'askAi.onlyMeeting': 'Ainult see koosolek: {title}',
     'askAi.removeScope': 'Eemalda koosoleku piirang',
@@ -340,6 +420,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtri üksikasjad pole saadaval'
   },
   fi: {
+    'askAi.indexingProgress':
+      'Kokouksiasi valmistellaan tekoälyä varten ({percent} %). Voit kysyä jo nyt, mutta vastauksista voi puuttua yksityiskohtia, kunnes valmistelu on valmis.',
+    'askAi.indexingPaused':
+      'Kokousten valmistelu tekoälyä varten on keskeytetty tallennuksen tai muistiinpanojen laatimisen ajaksi ({percent} % valmiina). Voit silti kysyä, mutta vastauksista voi puuttua yksityiskohtia, kunnes valmistelu on valmis.',
+
     'askAi.scope': 'Kokouksen rajaus',
     'askAi.onlyMeeting': 'Vain tämä kokous: {title}',
     'askAi.removeScope': 'Poista kokousrajaus',
@@ -361,6 +446,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'suodattimen tietoja ei ole saatavilla'
   },
   el: {
+    'askAi.indexingProgress':
+      'Προετοιμασία των συναντήσεών σας για την AI ({percent}%). Μπορείτε ήδη να κάνετε ερωτήσεις, αλλά μέχρι να ολοκληρωθεί η προετοιμασία ίσως λείπουν ορισμένες λεπτομέρειες από τις απαντήσεις.',
+    'askAi.indexingPaused':
+      'Η προετοιμασία των συναντήσεών σας για την AI έχει διακοπεί προσωρινά όσο γίνεται εγγραφή ή δημιουργούνται σημειώσεις ({percent}% ολοκληρώθηκε). Μπορείτε να συνεχίσετε να κάνετε ερωτήσεις, αλλά μέχρι να ολοκληρωθεί η προετοιμασία ίσως λείπουν ορισμένες λεπτομέρειες από τις απαντήσεις.',
+
     'askAi.scope': 'Πεδίο σύσκεψης',
     'askAi.onlyMeeting': 'Μόνο αυτή η σύσκεψη: {title}',
     'askAi.removeScope': 'Κατάργηση περιορισμού σύσκεψης',
@@ -382,6 +472,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'οι λεπτομέρειες φίλτρων δεν είναι διαθέσιμες'
   },
   hu: {
+    'askAi.indexingProgress':
+      'Megbeszélések előkészítése az AI számára ({percent}%). Már most is kérdezhet, de az előkészítés végéig egyes részletek hiányozhatnak a válaszokból.',
+    'askAi.indexingPaused':
+      'A megbeszélések AI számára történő előkészítése szünetel a felvétel vagy a jegyzetkészítés idejére ({percent}% kész). Továbbra is kérdezhet, de az előkészítés végéig egyes részletek hiányozhatnak a válaszokból.',
+
     'askAi.scope': 'Értekezlet hatóköre',
     'askAi.onlyMeeting': 'Csak ez az értekezlet: {title}',
     'askAi.removeScope': 'Értekezletszűrés eltávolítása',
@@ -403,6 +498,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'a szűrő részletei nem érhetők el'
   },
   lv: {
+    'askAi.indexingProgress':
+      'Notiek sapulču sagatavošana MI ({percent}%). Jau varat uzdot jautājumus, taču līdz sagatavošanas beigām atbildēs var trūkt dažu detaļu.',
+    'askAi.indexingPaused':
+      'Sapulču sagatavošana MI ir apturēta ierakstīšanas vai piezīmju veidošanas laikā ({percent}% pabeigti). Joprojām varat uzdot jautājumus, taču līdz sagatavošanas beigām atbildēs var trūkt dažu detaļu.',
+
     'askAi.scope': 'Sanāksmes tvērums',
     'askAi.onlyMeeting': 'Tikai šī sanāksme: {title}',
     'askAi.removeScope': 'Noņemt sanāksmes ierobežojumu',
@@ -424,6 +524,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtra informācija nav pieejama'
   },
   lt: {
+    'askAi.indexingProgress':
+      'Ruošiami susitikimai DI ({percent} %). Jau galite klausti, tačiau kol pasiruošimas nebaigtas, atsakymuose gali trūkti kai kurių detalių.',
+    'askAi.indexingPaused':
+      'Susitikimų ruošimas DI pristabdytas, kol įrašoma arba kuriami užrašai ({percent} % baigta). Vis dar galite klausti, tačiau kol pasiruošimas nebaigtas, atsakymuose gali trūkti kai kurių detalių.',
+
     'askAi.scope': 'Susitikimo aprėptis',
     'askAi.onlyMeeting': 'Tik šis susitikimas: {title}',
     'askAi.removeScope': 'Pašalinti susitikimo apribojimą',
@@ -445,6 +550,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtro informacija nepasiekiama'
   },
   pl: {
+    'askAi.indexingProgress':
+      'Przygotowywanie spotkań dla AI ({percent}%). Możesz już zadawać pytania, ale do zakończenia przygotowań w odpowiedziach może brakować niektórych szczegółów.',
+    'askAi.indexingPaused':
+      'Przygotowywanie spotkań dla AI jest wstrzymane na czas nagrywania lub tworzenia notatek (ukończono {percent}%). Nadal możesz zadawać pytania, ale do zakończenia przygotowań w odpowiedziach może brakować niektórych szczegółów.',
+
     'askAi.scope': 'Zakres spotkania',
     'askAi.onlyMeeting': 'Tylko to spotkanie: {title}',
     'askAi.removeScope': 'Usuń ograniczenie do spotkania',
@@ -466,6 +576,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'szczegóły filtrów są niedostępne'
   },
   ro: {
+    'askAi.indexingProgress':
+      'Se pregătesc întâlnirile pentru AI ({percent}%). Puteți pune deja întrebări, dar răspunsurile pot omite unele detalii până la finalizarea pregătirii.',
+    'askAi.indexingPaused':
+      'Pregătirea întâlnirilor pentru AI este întreruptă cât timp se înregistrează sau se creează notițe ({percent}% finalizat). Puteți pune în continuare întrebări, dar răspunsurile pot omite unele detalii până la finalizarea pregătirii.',
+
     'askAi.scope': 'Domeniul întâlnirii',
     'askAi.onlyMeeting': 'Doar această întâlnire: {title}',
     'askAi.removeScope': 'Elimină restricția la întâlnire',
@@ -487,6 +602,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detaliile filtrelor nu sunt disponibile'
   },
   sk: {
+    'askAi.indexingProgress':
+      'Príprava stretnutí pre AI ({percent} %). Pýtať sa môžete už teraz, ale do dokončenia prípravy môžu v odpovediach chýbať niektoré podrobnosti.',
+    'askAi.indexingPaused':
+      'Príprava stretnutí pre AI je počas nahrávania alebo vytvárania poznámok pozastavená ({percent} % hotovo). Stále sa môžete pýtať, ale do dokončenia prípravy môžu v odpovediach chýbať niektoré podrobnosti.',
+
     'askAi.scope': 'Rozsah schôdze',
     'askAi.onlyMeeting': 'Iba táto schôdza: {title}',
     'askAi.removeScope': 'Zrušiť obmedzenie na schôdzu',
@@ -508,6 +628,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrov nie sú k dispozícii'
   },
   sl: {
+    'askAi.indexingProgress':
+      'Priprava sestankov za AI ({percent} %). Vprašanja lahko postavljate že zdaj, vendar lahko do konca priprave v odgovorih manjkajo nekatere podrobnosti.',
+    'askAi.indexingPaused':
+      'Priprava sestankov za AI je začasno ustavljena med snemanjem ali ustvarjanjem zapiskov ({percent} % končano). Še vedno lahko postavljate vprašanja, vendar lahko do konca priprave v odgovorih manjkajo nekatere podrobnosti.',
+
     'askAi.scope': 'Obseg sestanka',
     'askAi.onlyMeeting': 'Samo ta sestanek: {title}',
     'askAi.removeScope': 'Odstrani omejitev na sestanek',
@@ -529,6 +654,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrov niso na voljo'
   },
   sv: {
+    'askAi.indexingProgress':
+      'Förbereder dina möten för AI ({percent} %). Du kan fråga redan nu, men svaren kan sakna vissa detaljer tills förberedelsen är klar.',
+    'askAi.indexingPaused':
+      'Förberedelsen av dina möten för AI är pausad medan en inspelning eller anteckningar pågår ({percent} % klart). Du kan fortfarande fråga, men svaren kan sakna vissa detaljer tills förberedelsen är klar.',
+
     'askAi.scope': 'Mötesavgränsning',
     'askAi.onlyMeeting': 'Endast detta möte: {title}',
     'askAi.removeScope': 'Ta bort mötesavgränsning',

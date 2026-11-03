@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Pidätkö tummemmasta ulkoasusta? Ota tumma tila käyttöön.",
   "announcement.done": "Valmis",
   "announcement.meetingLanguageBody": "Litteroinnit ja muistiinpanot tukevat nyt {count} kieltä!",
-  "announcement.meetingLanguageDescription": "Valitse kokouksissasi puhuttu kieli. Uudet litteroinnit ja muistiinpanot tehdään tällä kielellä."
+  "announcement.meetingLanguageDescription": "Valitse kokouksissasi puhuttu kieli. Uudet litteroinnit ja muistiinpanot tehdään tällä kielellä.",
+  "askAi.indexingProgress": "Kokouksiasi valmistellaan tekoälyä varten ({percent} %). Voit kysyä jo nyt, mutta vastauksista voi puuttua yksityiskohtia, kunnes valmistelu on valmis.",
+  "askAi.indexingPaused": "Kokousten valmistelu tekoälyä varten on keskeytetty tallennuksen tai muistiinpanojen laatimisen ajaksi ({percent} % valmiina). Voit silti kysyä, mutta vastauksista voi puuttua yksityiskohtia, kunnes valmistelu on valmis."
 }

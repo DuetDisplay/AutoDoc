@@ -8,6 +8,7 @@ import {
   type ReactElement
 } from 'react'
 import { renderNoteMarkup } from '../components/NoteMarkup'
+import { AskAiIndexNotice } from '../components/AskAiIndexNotice'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore, type MeetingChatScope, type Message } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
@@ -460,6 +461,7 @@ export function AskAI(): ReactElement {
         }
       />
 
+      <AskAiIndexNotice />
       {notesWork.length > 0 && (
         <div className="px-6 pt-3" role="status" data-ask-ai-notes-banner>
           <p className="rounded-xl border border-border bg-bg-accent px-3 py-2 text-[12px] leading-relaxed text-ink-muted [overflow-wrap:anywhere]">

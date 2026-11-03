@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Sötétebb megjelenést szeretne? Kapcsolja be a sötét módot.",
   "announcement.done": "Kész",
   "announcement.meetingLanguageBody": "Az átiratok és a jegyzetek mostantól {count} nyelvet támogatnak!",
-  "announcement.meetingLanguageDescription": "Válassza ki a megbeszéléseken használt nyelvet. Az új átiratok és jegyzetek ezen a nyelven készülnek."
+  "announcement.meetingLanguageDescription": "Válassza ki a megbeszéléseken használt nyelvet. Az új átiratok és jegyzetek ezen a nyelven készülnek.",
+  "askAi.indexingProgress": "Megbeszélések előkészítése az AI számára ({percent}%). Már most is kérdezhet, de az előkészítés végéig egyes részletek hiányozhatnak a válaszokból.",
+  "askAi.indexingPaused": "A megbeszélések AI számára történő előkészítése szünetel a felvétel vagy a jegyzetkészítés idejére ({percent}% kész). Továbbra is kérdezhet, de az előkészítés végéig egyes részletek hiányozhatnak a válaszokból."
 }

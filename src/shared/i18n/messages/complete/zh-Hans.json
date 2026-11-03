@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "喜欢更暗的外观？开启深色模式吧。",
   "announcement.done": "完成",
   "announcement.meetingLanguageBody": "转录和笔记现已支持 {count} 种语言！",
-  "announcement.meetingLanguageDescription": "选择会议中使用的语言。新的转录和笔记将使用此语言。"
+  "announcement.meetingLanguageDescription": "选择会议中使用的语言。新的转录和笔记将使用此语言。",
+  "askAi.indexingProgress": "正在为 AI 问答准备会议（{percent}%）。现在即可提问，但在准备完成前，回答可能会遗漏一些细节。",
+  "askAi.indexingPaused": "录音或笔记生成期间，AI 问答的会议准备工作已暂停（已完成 {percent}%）。仍可提问，但在准备完成前，回答可能会遗漏一些细节。"
 }

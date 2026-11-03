@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Vous préférez un affichage plus sombre ? Activez le mode sombre.",
   "announcement.done": "Terminé",
   "announcement.meetingLanguageBody": "Les transcriptions et les notes sont désormais disponibles en {count} langues !",
-  "announcement.meetingLanguageDescription": "Choisissez la langue parlée pendant vos réunions. Les nouvelles transcriptions et notes utiliseront cette langue."
+  "announcement.meetingLanguageDescription": "Choisissez la langue parlée pendant vos réunions. Les nouvelles transcriptions et notes utiliseront cette langue.",
+  "askAi.indexingProgress": "Préparation de vos réunions pour l’IA ({percent} %). Vous pouvez déjà poser des questions, mais les réponses risquent de manquer de détails tant que la préparation n’est pas terminée.",
+  "askAi.indexingPaused": "La préparation de vos réunions pour l’IA est en pause pendant un enregistrement ou la création de notes ({percent} % terminé). Vous pouvez toujours poser des questions, mais les réponses risquent de manquer de détails tant que la préparation n’est pas terminée."
 }

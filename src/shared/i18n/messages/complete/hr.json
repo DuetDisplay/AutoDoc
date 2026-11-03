@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Želite tamniji izgled? Uključite tamni način rada.",
   "announcement.done": "Gotovo",
   "announcement.meetingLanguageBody": "Transkripti i bilješke sada podržavaju {count} jezika!",
-  "announcement.meetingLanguageDescription": "Odaberite jezik koji se govori na vašim sastancima. Novi transkripti i bilješke bit će na tom jeziku."
+  "announcement.meetingLanguageDescription": "Odaberite jezik koji se govori na vašim sastancima. Novi transkripti i bilješke bit će na tom jeziku.",
+  "askAi.indexingProgress": "Priprema sastanaka za AI ({percent} %). Već možete postavljati pitanja, ali dok priprema ne završi, u odgovorima mogu nedostajati pojedinosti.",
+  "askAi.indexingPaused": "Priprema sastanaka za AI pauzirana je tijekom snimanja ili izrade bilježaka ({percent} % dovršeno). I dalje možete postavljati pitanja, ali dok priprema ne završi, u odgovorima mogu nedostajati pojedinosti."
 }

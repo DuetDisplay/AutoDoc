@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Föredrar du ett mörkare utseende? Slå på mörkt läge.",
   "announcement.done": "Klart",
   "announcement.meetingLanguageBody": "Transkriptioner och anteckningar stöder nu {count} språk!",
-  "announcement.meetingLanguageDescription": "Välj det språk som talas på dina möten. Nya transkriptioner och anteckningar kommer att använda detta språk."
+  "announcement.meetingLanguageDescription": "Välj det språk som talas på dina möten. Nya transkriptioner och anteckningar kommer att använda detta språk.",
+  "askAi.indexingProgress": "Förbereder dina möten för AI ({percent} %). Du kan fråga redan nu, men svaren kan sakna vissa detaljer tills förberedelsen är klar.",
+  "askAi.indexingPaused": "Förberedelsen av dina möten för AI är pausad medan en inspelning eller anteckningar pågår ({percent} % klart). Du kan fortfarande fråga, men svaren kan sakna vissa detaljer tills förberedelsen är klar."
 }

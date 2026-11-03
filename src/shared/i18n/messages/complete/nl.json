@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Liever een donkerder uiterlijk? Schakel de donkere modus in.",
   "announcement.done": "Gereed",
   "announcement.meetingLanguageBody": "Transcripties en notities ondersteunen nu {count} talen!",
-  "announcement.meetingLanguageDescription": "Kies de taal die tijdens je vergaderingen wordt gesproken. Nieuwe transcripties en notities gebruiken deze taal."
+  "announcement.meetingLanguageDescription": "Kies de taal die tijdens je vergaderingen wordt gesproken. Nieuwe transcripties en notities gebruiken deze taal.",
+  "askAi.indexingProgress": "Uw vergaderingen worden voorbereid voor AI ({percent}%). U kunt al vragen stellen, maar de antwoorden kunnen details missen totdat de voorbereiding klaar is.",
+  "askAi.indexingPaused": "De voorbereiding van uw vergaderingen voor AI is gepauzeerd tijdens een opname of het maken van notities ({percent}% voltooid). U kunt vragen blijven stellen, maar de antwoorden kunnen details missen totdat de voorbereiding klaar is."
 }

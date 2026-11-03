@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Uprednostňujete tmavší vzhľad? Zapnite tmavý režim.",
   "announcement.done": "Hotovo",
   "announcement.meetingLanguageBody": "Prepisy a poznámky teraz podporujú {count} jazykov!",
-  "announcement.meetingLanguageDescription": "Vyberte jazyk, ktorým sa hovorí na vašich stretnutiach. Nové prepisy a poznámky budú v tomto jazyku."
+  "announcement.meetingLanguageDescription": "Vyberte jazyk, ktorým sa hovorí na vašich stretnutiach. Nové prepisy a poznámky budú v tomto jazyku.",
+  "askAi.indexingProgress": "Príprava stretnutí pre AI ({percent} %). Pýtať sa môžete už teraz, ale do dokončenia prípravy môžu v odpovediach chýbať niektoré podrobnosti.",
+  "askAi.indexingPaused": "Príprava stretnutí pre AI je počas nahrávania alebo vytvárania poznámok pozastavená ({percent} % hotovo). Stále sa môžete pýtať, ale do dokončenia prípravy môžu v odpovediach chýbať niektoré podrobnosti."
 }
