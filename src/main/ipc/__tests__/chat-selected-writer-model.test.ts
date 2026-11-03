@@ -71,15 +71,16 @@ const handler = (name: string) =>
 function register(
   getModel: () => string,
   base = '/tmp/no-selected-writer',
-  pending: string[] = []
+  pending: string[] = [],
+  waitUntilReady: () => Promise<void> = async () => {}
 ) {
   disposers.push(
     registerChatIpc(
       base,
       {
-        getModel,
+        getAskAiModel: getModel,
         getBaseUrl: () => 'http://localhost:11434',
-        waitUntilReady: async () => {},
+        waitUntilReady,
         isServerRunning: async () => true
       },
       { getModel: () => 'notes-only-override' } as never,
@@ -89,6 +90,7 @@ function register(
         getPendingNotesIds: () => pending,
         meetingIndex: {
           ensureLoaded: async () => {},
+          invalidate: () => {},
           listMeetings: async () => [meeting],
           listInventory: async () => [meeting]
         } as never
@@ -155,4 +157,67 @@ it('uses recording titles for queued meetings not yet present in the index, neve
     meetingId: 'missing-uuid',
     title: buildRecordingTitle(null, NaN, null)
   })
+})
+
+it('waits for startup selection before sending a conversation writer request, even if the serve is already running', async () => {
+  let selected = 'not-selected-yet',
+    ready!: () => void
+  const gate = new Promise<void>((resolve) => {
+    ready = resolve
+  })
+  const wait = vi.fn(() => gate),
+    requests: any[] = []
+  register(() => selected, '/tmp/readiness-model', [], wait)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/tags')) return new Response(JSON.stringify({ models: [] }))
+      requests.push(JSON.parse(String(init?.body)))
+      return new Response(JSON.stringify({ message: { content: 'Mira [1].' }, done: true }) + '\n')
+    })
+  )
+  const sender = { id: 9, send: vi.fn() }
+  const answer = handler('chat:send-stream')(
+    { sender } as never,
+    'startup',
+    'Who owns Atlas migration?'
+  )
+  await vi.waitFor(() => expect(wait).toHaveBeenCalled())
+  expect(requests).toHaveLength(0)
+  selected = 'llama3.2:3b'
+  ready()
+  await answer
+  expect(requests.map((request) => request.model)).toEqual(['llama3.2:3b'])
+})
+it('uses the Ask AI manager selection in the rollback agent with a decoy shared provider', async () => {
+  vi.stubEnv('AUTODOC_ASK_AI_MODE', 'agent')
+  vi.resetModules()
+  vi.clearAllMocks()
+  const { registerChatIpc: registerAgent } = await import('../chat-ipc')
+  const requests: any[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)))
+      return new Response(JSON.stringify({ message: { content: 'Agent answer.' } }))
+    })
+  )
+  disposers.push(
+    registerAgent(
+      '/tmp/agent-model',
+      {
+        getBaseUrl: () => 'http://localhost:11434',
+        getAskAiModel: () => 'llama3.2:3b',
+        waitUntilReady: async () => {},
+        isServerRunning: async () => true
+      },
+      { getModel: () => 'decoy-provider-model' } as never,
+      {} as never
+    )
+  )
+  const sender = { id: 10, send: vi.fn() }
+  await handler('chat:send-stream')({ sender } as never, 'agent', 'Who owns Atlas migration?')
+  expect(requests.length).toBeGreaterThan(0)
+  expect(requests.every((request) => request.model === 'llama3.2:3b')).toBe(true)
+  expect(sender.send.mock.calls.some(([channel]) => channel === 'chat:done')).toBe(true)
 })

@@ -327,6 +327,7 @@ let prepareIdleUpdateInstall: () => void = () => {}
 let cancelIdleUpdateInstall: () => void = () => {}
 const safeQuit = new SafeQuitCoordinator({
   prepare: () => prepareRecordingQuit(),
+  onQuitAllowed: () => shutdownAskAiConversationHolds(),
   quit: () => app.quit(),
   onError: (error) => {
     isQuitting = false
@@ -1405,7 +1406,7 @@ app.whenReady().then(async () => {
     waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     getBaseUrl: () => managedOllamaManager.getBaseUrl(),
-    getModel: () => managedOllamaManager.getModel()
+    getAskAiModel: () => managedOllamaManager.getAskAiModel()
   }
   const segmentationService = new SegmentationService(
     notesOllamaProvider,
@@ -2546,7 +2547,6 @@ app.whenReady().then(async () => {
 app.on('before-quit', (event) => {
   if (!safeQuit.beforeQuit(event)) return
   isQuitting = true
-  shutdownAskAiConversationHolds()
   ollamaPostWakeScheduler?.cancel()
   ollamaManager?.stop()
   shutdownTranscriptionWorker?.()
@@ -2556,7 +2556,6 @@ app.on('before-quit', (event) => {
   'before-quit-for-update',
   () => {
     isQuitting = true
-    shutdownAskAiConversationHolds()
     ollamaPostWakeScheduler?.cancel()
   }
 )

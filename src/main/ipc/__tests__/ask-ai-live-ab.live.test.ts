@@ -162,7 +162,7 @@ describe.skipIf(!LIVE)(`Ask AI live A/B (${LABEL})`, () => {
         waitUntilReady: vi.fn().mockResolvedValue(undefined),
         isServerRunning: vi.fn().mockResolvedValue(true),
         getBaseUrl: () => BASE_URL,
-        getModel: () => MODEL
+        getAskAiModel: () => MODEL
       } as never,
       { getModel: () => MODEL } as never,
       {

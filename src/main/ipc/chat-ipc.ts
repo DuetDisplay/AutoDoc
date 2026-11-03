@@ -175,7 +175,7 @@ interface OllamaRuntime {
   waitUntilReady(): Promise<void>
   isServerRunning(): Promise<boolean>
   getBaseUrl(): string
-  getModel(): string
+  getAskAiModel(): string
 }
 
 interface ChatStreamPayload {
@@ -216,7 +216,7 @@ export { extractQuestionTerms, scoreMeetingRelevance, sortMeetingsByQuestion }
 export function registerChatIpc(
   recordingsBaseDir: string,
   ollamaManager: OllamaRuntime,
-  ollamaProvider: OllamaProvider,
+  _ollamaProvider: OllamaProvider,
   calendarManager: CalendarManager,
   getMeetingLanguage: () => unknown = () => 'en',
   options: {
@@ -231,7 +231,7 @@ export function registerChatIpc(
   // Resolve at request time: hardware selection and legacy fallback can change
   // after registration. The shared notes provider may have a test-only override.
   const writerModel = (): string =>
-    process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaManager.getModel()
+    process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaManager.getAskAiModel()
   const conversationHolds = new AskAiConversationHolds()
   const meetingIndex = options.meetingIndex ?? new MeetingIndexService(recordingsBaseDir)
   const writerContextTokens = (): number =>
@@ -589,6 +589,7 @@ export function registerChatIpc(
       return localizeDirectAnswer(result.content, language, signal)
     }
     try {
+      await waitForOllama(ollamaManager)
       if (!(await ollamaManager.isServerRunning())) {
         if (result.conversation)
           throw new Error('Local AI is reconnecting. Please try again shortly.')
@@ -846,7 +847,7 @@ export function registerChatIpc(
       await waitForOllama(ollamaManager)
       const plan = await buildChatRetrievalPlan({
         baseUrl: ollamaManager.getBaseUrl(),
-        model: ollamaProvider.getModel(),
+        model: writerModel(),
         question,
         history,
         signal
@@ -1161,7 +1162,7 @@ export function registerChatIpc(
     await waitForOllama(ollamaManager)
     return completeOllamaChat({
       baseUrl: ollamaManager.getBaseUrl(),
-      model: ollamaProvider.getModel(),
+      model: writerModel(),
       messages: [
         {
           role: 'system',
@@ -1348,7 +1349,7 @@ export function registerChatIpc(
           await waitForOllama(ollamaManager)
           const agentResult = await runAskAiAgent({
             baseUrl: ollamaManager.getBaseUrl(),
-            model: ollamaProvider.getModel(),
+            model: writerModel(),
             question,
             history: normalizedHistory,
             language,
@@ -1405,7 +1406,7 @@ export function registerChatIpc(
           let content = ''
           await streamOllamaChat({
             baseUrl: ollamaManager.getBaseUrl(),
-            model: ollamaProvider.getModel(),
+            model: writerModel(),
             question,
             context,
             history: normalizedHistory,

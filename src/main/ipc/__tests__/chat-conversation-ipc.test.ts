@@ -95,7 +95,7 @@ it('passes arbitrary turns and original language instructions through one writer
       waitUntilReady: vi.fn(async () => undefined),
       isServerRunning: vi.fn(async () => true),
       getBaseUrl: () => 'http://localhost:11434',
-      getModel: () => 'test'
+      getAskAiModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     calendar as never,
@@ -201,7 +201,7 @@ it('does not drop correct retrieved evidence when the writer cites the wrong sou
       waitUntilReady: vi.fn(async () => undefined),
       isServerRunning: vi.fn(async () => true),
       getBaseUrl: () => 'http://localhost:11434',
-      getModel: () => 'test'
+      getAskAiModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     { fetchAllRecentEvents: async () => [], fetchAllUpcomingEvents: async () => [] } as never,

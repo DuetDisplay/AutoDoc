@@ -79,7 +79,7 @@ it('keeps display references out of retrieval carry, combines cited cards, and r
       waitUntilReady: vi.fn(async () => undefined),
       isServerRunning: vi.fn(async () => true),
       getBaseUrl: () => 'http://localhost:11434',
-      getModel: () => 'test'
+      getAskAiModel: () => 'test'
     },
     { getModel: () => 'test' } as never,
     { fetchAllRecentEvents: async () => [], fetchAllUpcomingEvents: async () => [] } as never,

@@ -29,9 +29,13 @@ function deferred() {
   return { promise, resolve }
 }
 
-function fixture(models: string[], retainSmall = false) {
+function fixture(models: string[], retainSmall = false, profileModel?: string) {
   const installed = new Set(models)
-  const manager = new OllamaManager({ model: SMALL, retainLowSpecModel: () => retainSmall })
+  const manager = new OllamaManager({
+    model: SMALL,
+    retainLowSpecModel: () => retainSmall,
+    ...(profileModel ? { resolveModel: async () => profileModel } : {})
+  })
   vi.spyOn(manager, 'start').mockResolvedValue(undefined)
   vi.spyOn(manager, 'isServerRunning').mockResolvedValue(true)
   vi.spyOn(manager, 'listInstalledModels').mockImplementation(async () => [...installed])
@@ -197,4 +201,30 @@ describe('notes model readiness', () => {
     await rejected
     expect(remove).not.toHaveBeenCalled()
   })
+})
+
+
+it('keeps the profile-selected Ask AI model when a real Windows manager prepares another notes model', async () => {
+  const { manager } = fixture([SMALL,QWEN],true,QWEN)
+  await manager.startAndPull()
+  expect(manager.getAskAiModel()).toBe(QWEN)
+  expect((await manager.ensureNotesModelReady(SMALL)).activeModel).toBe(SMALL)
+  expect(manager.getModel()).toBe(SMALL)
+  expect(manager.getAskAiModel()).toBe(QWEN)
+})
+it('keeps startup legacy through a notes downgrade, then changes Ask AI to Qwen when its pull completes', async () => {
+  const { manager, installed, pull, remove } = fixture([LEGACY,SMALL],true,QWEN)
+  const gate=deferred()
+  pull.mockImplementation(async model=>{await gate.promise;installed.add(model!)})
+  await manager.startAndPull()
+  expect(manager.getAskAiModel()).toBe(LEGACY)
+  manager.beginNotesGeneration()
+  await manager.ensureNotesModelReady(SMALL)
+  expect(manager.getModel()).toBe(SMALL)
+  expect(manager.getAskAiModel()).toBe(LEGACY)
+  await manager.endNotesGeneration()
+  expect(remove).not.toHaveBeenCalledWith(LEGACY)
+  gate.resolve()
+  await vi.waitFor(()=>expect(manager.getAskAiModel()).toBe(QWEN))
+  expect(manager.getModel()).toBe(SMALL)
 })

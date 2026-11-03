@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SafeQuitCoordinator } from '../safe-quit'
+import { AskAiConversationHolds } from '../ask-ai-conversation-hold'
 
 describe('safe quit', () => {
   it('prevents repeated quits until capture and finalization finish', async () => {
@@ -38,4 +39,33 @@ describe('safe quit', () => {
     coordinator.beforeQuit(event)
     await vi.waitFor(() => expect(quit).toHaveBeenCalledTimes(1))
   })
+})
+
+it('keeps Ask AI holds usable after failed update preflight and shuts them down only on an allowed before-quit', async () => {
+  const holds = new AskAiConversationHolds(),
+    resume = vi.fn(),
+    quit = vi.fn()
+  const shutdown = vi.fn(() => holds.shutdown())
+  const safeQuit = new SafeQuitCoordinator({
+    prepare: async () => {},
+    quit,
+    onError: vi.fn(),
+    onQuitAllowed: shutdown
+  })
+  const end = await holds.begin(1, async () => resume)
+  // prepareForInstall / before-quit-for-update do not actually allow app exit.
+  safeQuit.allowQuit()
+  expect(shutdown).not.toHaveBeenCalled()
+  safeQuit.cancelPreparedQuit() // onInstallFailed
+  const again = await holds.begin(1, async () => resume)
+  const event = { preventDefault: vi.fn() }
+  expect(safeQuit.beforeQuit(event)).toBe(false)
+  expect(shutdown).not.toHaveBeenCalled()
+  await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+  expect(safeQuit.beforeQuit(event)).toBe(true)
+  expect(shutdown).toHaveBeenCalledOnce()
+  end()
+  again()
+  expect(resume).not.toHaveBeenCalled()
+  await expect(holds.begin(2, async () => resume)).rejects.toMatchObject({ name: 'AbortError' })
 })

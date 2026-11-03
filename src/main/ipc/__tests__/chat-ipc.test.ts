@@ -293,9 +293,9 @@ describe('chat meeting retrieval helpers', () => {
           waitUntilReady: vi.fn(),
           isServerRunning: vi.fn(),
           getBaseUrl: () => 'http://localhost:11434',
-          getModel: () => 'fake-model'
+          getAskAiModel: () => 'fake-model'
         },
-        { getModel: () => 'fake-model' } as never,
+        { getModel: () => 'decoy-provider-model' } as never,
         { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
         () => language
       )
@@ -310,6 +310,7 @@ describe('chat meeting retrieval helpers', () => {
       expect(fetchMock).not.toHaveBeenCalled()
       expect(await send({} as never, `Hello. Reply in ${label}.`)).toBe(answer)
       const request = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(request.model).toBe('fake-model')
       expect(request.messages[0].content).toContain(`entire answer in ${label}`)
       expect(request.messages[1].content).toBe(english)
       expect(request.messages[0].content).toContain('Preserve every fact, number')
@@ -339,9 +340,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
       () => 'es'
     )
@@ -373,9 +374,9 @@ describe('chat meeting retrieval helpers', () => {
           waitUntilReady: vi.fn(),
           isServerRunning: vi.fn(),
           getBaseUrl: () => 'http://localhost:11434',
-          getModel: () => 'fake-model'
+          getAskAiModel: () => 'fake-model'
         },
-        { getModel: () => 'fake-model' } as never,
+        { getModel: () => 'decoy-provider-model' } as never,
         { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
         () => 'en'
       )
@@ -449,9 +450,9 @@ describe('chat meeting retrieval helpers', () => {
           waitUntilReady: vi.fn(),
           isServerRunning: vi.fn(),
           getBaseUrl: () => 'http://localhost:11434',
-          getModel: () => 'fake-model'
+          getAskAiModel: () => 'fake-model'
         },
-        { getModel: () => 'fake-model' } as never,
+        { getModel: () => 'decoy-provider-model' } as never,
         {
           fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
           fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
@@ -464,6 +465,8 @@ describe('chat meeting retrieval helpers', () => {
       const sender = { id: 501, send: vi.fn() }
       await send({ sender } as never, 'req-ja', '予算について教えて')
       const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+      expect(requests.length).toBeGreaterThan(1)
+      expect(requests.every(request => request.model === 'fake-model')).toBe(true)
       const answer = requests.find((request) => request.stream)
       expect(answer).toBeDefined()
       expect(answer.messages[0].content).toContain('entire answer in Japanese')
@@ -490,9 +493,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents,
         fetchAllUpcomingEvents
@@ -542,9 +545,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue([event]),
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
@@ -570,9 +573,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn(),
         fetchAllUpcomingEvents: vi.fn()
@@ -607,9 +610,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents,
         fetchAllUpcomingEvents
@@ -663,9 +666,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue(events),
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
@@ -706,9 +709,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
@@ -764,9 +767,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
@@ -828,7 +831,7 @@ describe('chat meeting retrieval helpers', () => {
       'Third listed fixture notes'
     )
 
-    expect(waitUntilReady).not.toHaveBeenCalled()
+    expect(waitUntilReady).toHaveBeenCalledTimes(4)
   })
 
   it('answers unmatched questions extractively without calling Ollama', async () => {
@@ -843,9 +846,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
@@ -910,9 +913,9 @@ describe('chat meeting retrieval helpers', () => {
         waitUntilReady: vi.fn(),
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434',
-        getModel: () => 'fake-model'
+        getAskAiModel: () => 'fake-model'
       },
-      { getModel: () => 'fake-model' } as never,
+      { getModel: () => 'decoy-provider-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])

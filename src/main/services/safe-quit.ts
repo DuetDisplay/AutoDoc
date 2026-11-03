@@ -7,6 +7,7 @@ export class SafeQuitCoordinator {
     private readonly options: {
       prepare: () => Promise<void>
       quit: () => void
+      onQuitAllowed?: () => void
       onError: (error: unknown) => void
     }
   ) {}
@@ -20,7 +21,10 @@ export class SafeQuitCoordinator {
   }
 
   beforeQuit(event: { preventDefault: () => void }): boolean {
-    if (this.ready) return true
+    if (this.ready) {
+      this.options.onQuitAllowed?.()
+      return true
+    }
     event.preventDefault()
     if (this.pending) return false
     this.pending = true

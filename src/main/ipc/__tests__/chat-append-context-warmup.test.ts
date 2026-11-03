@@ -46,7 +46,7 @@ async function warmup(
       waitUntilReady: async () => {},
       isServerRunning: async () => true,
       getBaseUrl: () => 'http://localhost:11434',
-      getModel: () => writerModel ?? 'test'
+      getAskAiModel: () => writerModel ?? 'test'
     } as never,
     { getModel: () => (writerModel ? 'llama3.2:3b' : 'test') } as never,
     {} as never,

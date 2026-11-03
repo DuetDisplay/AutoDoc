@@ -52,7 +52,7 @@ function setup() {
       waitUntilReady: async () => {},
       isServerRunning: async () => true,
       getBaseUrl: () => 'http://localhost:11434',
-      getModel: () => 'qwen3:4b-instruct'
+      getAskAiModel: () => 'qwen3:4b-instruct'
     },
     { getModel: () => 'qwen3:4b-instruct' } as never,
     calendar as never,

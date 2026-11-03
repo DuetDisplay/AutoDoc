@@ -349,6 +349,7 @@ export class OllamaManager extends EventEmitter {
   // the process exit with code 1, so the exit handler uses this to tell those apart from crashes.
   private intentionalKillReasons = new WeakMap<ChildProcess, OllamaKillReason>()
   private model: string
+  private askAiModel: string
   private preferredModel: string
   private resolveModel: PreferredModelResolver | null
   private retainLowSpecModel: () => boolean | Promise<boolean>
@@ -380,6 +381,7 @@ export class OllamaManager extends EventEmitter {
       typeof modelOrOptions === 'string' ? { model: modelOrOptions } : (modelOrOptions ?? {})
     this.model = options.model ?? DEFAULT_OLLAMA_MODEL
     this.preferredModel = this.model
+    this.askAiModel = this.model
     this.resolveModel = options.resolveModel ?? null
     this.retainLowSpecModel = options.retainLowSpecModel ?? (() => false)
   }
@@ -459,6 +461,11 @@ export class OllamaManager extends EventEmitter {
 
   getModel(): string {
     return this.model
+  }
+
+  /** Profile/startup selection, independent of per-job notes overrides. */
+  getAskAiModel(): string {
+    return this.askAiModel
   }
 
   getNotesAccelerator(): OllamaAccelerator {
@@ -652,6 +659,7 @@ export class OllamaManager extends EventEmitter {
     if (!preferredModel) return
 
     this.preferredModel = preferredModel
+    this.askAiModel = preferredModel
     this.setModel(preferredModel)
   }
 
@@ -852,7 +860,7 @@ export class OllamaManager extends EventEmitter {
 
   private async prepareNotesModels(epoch: number): Promise<void> {
     if (IS_WIN) {
-      await this.ensureNotesModelReady(this.preferredModel, epoch)
+      await this.prepareNotesModel(this.preferredModel, epoch, true)
       return
     }
 
@@ -862,12 +870,14 @@ export class OllamaManager extends EventEmitter {
     this.assertStartEpoch(epoch)
     const plan = resolveNotesModelMigration({ preferredModel: preferred, installedModels })
     this.setModel(plan.activeModel)
+    this.askAiModel = plan.activeModel
     this.emit('notes-model-plan', plan)
 
     if (plan.pullBeforeReady) {
       await this.pullModel(plan.pullModel, epoch)
       this.assertStartEpoch(epoch)
       this.setModel(plan.pullModel)
+      this.askAiModel = plan.pullModel
       await this.deleteLeftoverModels(plan, epoch)
       this.assertStartEpoch(epoch)
       return
@@ -901,7 +911,11 @@ export class OllamaManager extends EventEmitter {
     return promise
   }
 
-  private async prepareNotesModel(preferred: string, epoch: number): Promise<ReadyNotesModel> {
+  private async prepareNotesModel(
+    preferred: string,
+    epoch: number,
+    startup = false
+  ): Promise<ReadyNotesModel> {
     // An idle cleanup may already have submitted a delete. Finish it before
     // approving any model for a newly started job.
     await this.notesCleanupPromise
@@ -913,6 +927,7 @@ export class OllamaManager extends EventEmitter {
       installedModels
     })
     if (this.preferredModel === preferred) this.setModel(plan.activeModel)
+    if (startup) this.askAiModel = plan.activeModel
     this.emit('notes-model-plan', plan)
     logAutodocEvent({
       area: 'ollama',
@@ -924,6 +939,7 @@ export class OllamaManager extends EventEmitter {
       await this.pullNotesModel(plan.pullModel, epoch)
       this.assertStartEpoch(epoch)
       if (this.preferredModel === preferred) this.setModel(plan.pullModel)
+      if (startup) this.askAiModel = plan.pullModel
     }
     // Verify the *active* model even when a pull stream ended successfully.
     if (!(await this.hasModel(plan.activeModel))) {
@@ -932,7 +948,7 @@ export class OllamaManager extends EventEmitter {
     }
     this.assertStartEpoch(epoch)
     if (plan.usingLegacyFallback) {
-      void this.pullWindowsPreferredInBackground(plan, epoch)
+      void this.pullWindowsPreferredInBackground(plan, epoch, startup)
     } else {
       await this.scheduleNotesCleanup(preferred, epoch)
     }
@@ -1032,6 +1048,7 @@ export class OllamaManager extends EventEmitter {
       await this.pullModel(plan.pullModel, epoch)
       this.assertStartEpoch(epoch)
       this.setModel(plan.pullModel)
+      this.askAiModel = plan.pullModel
       const installedModels = await this.listInstalledModels()
       this.assertStartEpoch(epoch)
       const next = resolveNotesModelMigration({ preferredModel: plan.pullModel, installedModels })
@@ -1049,7 +1066,8 @@ export class OllamaManager extends EventEmitter {
 
   private async pullWindowsPreferredInBackground(
     plan: NotesModelMigrationPlan,
-    epoch: number
+    epoch: number,
+    startup = false
   ): Promise<void> {
     try {
       this.assertStartEpoch(epoch)
@@ -1059,6 +1077,7 @@ export class OllamaManager extends EventEmitter {
         throw new Error(`Ollama notes model setup failed: '${plan.pullModel}' is not installed`)
       this.assertStartEpoch(epoch)
       if (this.preferredModel === plan.pullModel) this.setModel(plan.pullModel)
+      if (startup) this.askAiModel = plan.pullModel
       await this.scheduleNotesCleanup(plan.pullModel, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
@@ -1077,6 +1096,8 @@ export class OllamaManager extends EventEmitter {
     preferredModel?: string
   ): Promise<void> {
     for (const model of plan.leftoverModels) {
+      // A notes job may use another model while Ask AI still uses startup legacy.
+      if (isModelInstalled([this.askAiModel], model)) continue
       const installedModels = await this.listInstalledModels()
       this.assertStartEpoch(epoch)
       if (IS_WIN && preferredModel !== this.preferredModel) return
