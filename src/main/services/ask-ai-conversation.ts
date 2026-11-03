@@ -15,6 +15,8 @@ export interface AskAiConversation {
   inventoryCount: number
   /** Newest-first `Title (YYYY-MM-DD)` entries; set only for unscoped conversations. */
   recordings?: string
+  /** First turn whose search found no single matching meeting (breadth-first evidence). */
+  spanning?: boolean
   calendar?: string
   focusedMeetingIds?: string[]
   scopedMeetingIds?: string[]
@@ -96,7 +98,10 @@ export function buildConversationWriterInput(
     : ''
   const scope = conversation.history.length
     ? '\nUse the exchange to resolve the current subject; previous answers are not evidence.'
-    : '\nNEW CONVERSATION. No prior subject. Identify the subject from the request, not from search results. Ask which meeting/topic if unspecified.'
+    : '\nNEW CONVERSATION. No prior subject. Identify the subject from the request, not from search results. Ask which meeting/topic if unspecified.' +
+      (conversation.spanning
+        ? ' Search found no single matching meeting: the evidence is the best passage from each of several meetings. If the request has a topic, answer across these meetings and name the meeting for each point. If it names no topic or meeting, ask which one instead of guessing.'
+        : '')
   const current = `If evidence is missing, express uncertainty; an unrecorded decision is not a definite negative.\nCurrent user request: ${clipConversationText(question, Math.min(500, numCtx * 0.18))}`
   const history = recentConversation(
     conversation.history,

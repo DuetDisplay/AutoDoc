@@ -433,8 +433,10 @@ export class AskAiPassages {
         lexicalConfident ||
         (score >= 0.65 && margin >= 0.22)
     }
-    // A first question with no subject anchor and no confident match is treated as
-    // spanning meetings: admit every meeting clearing the absolute floors and pick breadth-first.
+    // A first question with no subject anchor and no confident match is treated as spanning
+    // meetings: every ranked meeting is eligible and picking is breadth-first, so the writer sees
+    // the most relevant passage of each of the top meetings and judges relevance itself. An
+    // absolute similarity floor dropped meetings whose multi-fact passages matched only weakly.
     const carried = new Set(named.size ? [] : carriedIds.slice(0, 2))
     const broad = !retrievalConfidence.confident && !named.size && !carried.size && !history.length
     // Previous results affect ranking, not unconditional factual eligibility.
@@ -446,8 +448,7 @@ export class AskAiPassages {
     )
     for (const p of passages) {
       const score = lexical(`${p.title} ${p.text}`, terms)
-      if (score >= Math.max(2.5, bestLexical * 0.7) || (broad && score >= 2.5))
-        eligible.add(p.meetingId)
+      if (score >= Math.max(2.5, bestLexical * 0.7)) eligible.add(p.meetingId)
       // Preserve a real contextual match when embeddings are unavailable;
       // membership in the previous result set alone is never sufficient.
       if (
@@ -474,12 +475,12 @@ export class AskAiPassages {
         const newTopic = cosine(p, vectors[0]) >= bestPrior + 0.12
         if (
           contextualRelevant ||
-          (currentRelevant && (!history.length || !priorIds.length || newTopic)) ||
-          (broad && cosine(p, vectors[0]) >= 0.4)
+          (currentRelevant && (!history.length || !priorIds.length || newTopic))
         )
           eligible.add(p.meetingId)
       }
     }
+    if (broad) for (const { p } of ranked.values()) eligible.add(p.meetingId)
     const ordered = [...ranked.values()].sort((a, b) => b.score - a.score)
     // Experiment only: preserve the normal cap unless explicitly requested.
     const maxPassages = process.env.AUTODOC_ASK_AI_MAX_PASSAGES === '12' ? 12 : 8

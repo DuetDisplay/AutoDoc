@@ -81,6 +81,24 @@ describe('bounded conversational context', () => {
       conversationTokens(line.slice('Saved recordings, newest first: '.length))
     ).toBeLessThanOrEqual(Math.min(160, 2048 * 0.08))
   })
+  it('tells a first turn without a dominant meeting to answer across meetings or ask, only when flagged', () => {
+    const base = { history: [], inventoryCount: 3 }
+    const without = buildConversationWriterPrompt('Risks?', [], base, 2048, 'Ground facts.')
+    const spanning = buildConversationWriterPrompt(
+      'Risks?',
+      [],
+      { ...base, spanning: true },
+      2048,
+      'Ground facts.'
+    )
+    expect(without).not.toContain('no single matching meeting')
+    expect(spanning).toBe(
+      without.replace(
+        'Ask which meeting/topic if unspecified.',
+        'Ask which meeting/topic if unspecified. Search found no single matching meeting: the evidence is the best passage from each of several meetings. If the request has a topic, answer across these meetings and name the meeting for each point. If it names no topic or meeting, ask which one instead of guessing.'
+      )
+    )
+  })
   it('reserves output and instructions within the existing smallest context', () => {
     const system = 'Rules '.repeat(80)
     const prompt = buildConversationWriterPrompt(

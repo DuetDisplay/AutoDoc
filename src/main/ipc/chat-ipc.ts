@@ -465,7 +465,10 @@ export function registerChatIpc(
           : (retrieved?.primaryMeetingIds ?? []),
         conversation: {
           ...conversation,
-          calendar: params.scopedMeetingIds?.length ? undefined : conversationCalendarCache?.text
+          calendar: params.scopedMeetingIds?.length ? undefined : conversationCalendarCache?.text,
+          ...(unanchoredInitial && !params.searchAll && !retrieved?.retrievalConfidence?.confident
+            ? { spanning: true }
+            : {})
         }
       }
     }
