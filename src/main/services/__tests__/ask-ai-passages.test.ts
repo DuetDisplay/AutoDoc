@@ -38,7 +38,10 @@ it('changes only passage-ID metadata when append is enabled, preserving retrieva
   ).passages(meetings)
   for (const excerpt of on!.excerpts!)
     expect(actualPassages.find((p) => p.key === excerpt.passageId)?.text).toBe(excerpt.text)
-  const withoutIds = { ...on, excerpts: on!.excerpts!.map(({ passageId, ...excerpt }) => excerpt) }
+  const withoutIds = {
+    ...on,
+    excerpts: on!.excerpts!.map(({ passageId: _passageId, ...excerpt }) => excerpt)
+  }
   expect(JSON.stringify(withoutIds)).toBe(JSON.stringify(off))
 })
 

@@ -204,6 +204,7 @@ cleanup_trace_env() {
   launchctl unsetenv AUTODOC_INSTALL_POLICY_TRACE >/dev/null 2>&1 || true
   launchctl unsetenv AUTODOC_INSTALL_POLICY_TRACE_FILE >/dev/null 2>&1 || true
   launchctl unsetenv AUTODOC_TEST_USER_DATA_DIR >/dev/null 2>&1 || true
+  launchctl unsetenv AUTODOC_TEST_MODE >/dev/null 2>&1 || true
 }
 on_exit_cleanup() {
   remove_smoke_build_artifacts
@@ -382,6 +383,11 @@ vlog "LOOSE_OLDER=$LOOSE_OLDER"
 vlog "LOOSE_NEWER=$LOOSE_NEWER"
 [[ -f "$DMG_OLDER" ]] && vlog "DMG_OLDER ok: $DMG_OLDER" || vlog "DMG_OLDER missing (install_smoke_copy will use loose bundle): $DMG_OLDER"
 [[ -f "$DMG_NEWER" ]] && vlog "DMG_NEWER ok: $DMG_NEWER" || vlog "DMG_NEWER missing: $DMG_NEWER"
+# Packaged builds intentionally ignore a test path without an explicit test runtime.
+# Cover both LaunchServices (open) and the direct-binary fallback.
+export AUTODOC_TEST_MODE=1
+export AUTODOC_TEST_USER_DATA_DIR="$USER_DATA_DIR"
+launchctl setenv AUTODOC_TEST_MODE "1" >/dev/null 2>&1 || true
 launchctl setenv AUTODOC_TEST_USER_DATA_DIR "$USER_DATA_DIR" >/dev/null 2>&1 || true
 vlog "Smoke userData path: $USER_DATA_DIR"
 
@@ -408,9 +414,9 @@ stop_all_autodoc() {
   killall -9 AutoDoc 2>/dev/null || true
   sleep 1
   # Remove stale Electron single-instance lock so the next launch acquires a fresh lock
-  rm -f "$HOME/Library/Application Support/autodoc/SingletonLock" 2>/dev/null || true
-  rm -f "$HOME/Library/Application Support/autodoc/SingletonSocket" 2>/dev/null || true
-  rm -f "$HOME/Library/Application Support/autodoc/SingletonCookie" 2>/dev/null || true
+  rm -f "${USER_DATA_DIR}/SingletonLock" 2>/dev/null || true
+  rm -f "${USER_DATA_DIR}/SingletonSocket" 2>/dev/null || true
+  rm -f "${USER_DATA_DIR}/SingletonCookie" 2>/dev/null || true
 }
 
 # Unsigned/adhoc local builds often fail to start via `open`; fall back to the binary.

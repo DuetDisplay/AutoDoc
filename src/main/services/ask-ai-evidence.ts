@@ -52,6 +52,7 @@ export function evidenceTerms(question: string): string[] {
 export function matchesEvidenceFacet(question: string, text: string, title: string): boolean {
   const facet = questionFacet(question)
   if (!facet?.test(text)) return false
+  // eslint-disable-next-line no-control-regex -- This intentionally tests the complete ASCII range.
   if (/[^\x00-\x7F]/u.test(question)) return true
   const generic = new Set([
     'owns',

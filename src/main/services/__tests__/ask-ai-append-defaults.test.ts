@@ -89,14 +89,19 @@ async function sequence(writer: typeof import('../ask-ai-writer'), scenario: any
   return requests
 }
 it.each([
-  ['darwin', 'arm64', 8, false],
-  ['darwin', 'arm64', 24, true],
-  ['darwin', 'x64', 16, false],
-  ['win32', 'x64', 16, false],
-  ['linux', 'x64', 24, false]
+  ['darwin', 'arm64', 8, false, 'Mac 8 GB'],
+  ['darwin', 'arm64', 24, true, 'Mac 16 GB+'],
+  ['darwin', 'x64', 16, false, 'Intel Mac'],
+  ['win32', 'x64', 16, false, 'Windows NVIDIA'],
+  ['win32', 'x64', 16, false, 'Windows integrated Vulkan'],
+  ['win32', 'x64', 16, false, 'Windows CPU'],
+  ['linux', 'x64', 24, false, 'Linux']
 ] as const)(
-  'keeps frozen requests on %s/%s/%s GiB (Append-8k=%s), plus only W1',
-  async (platform, arch, memory, qualifies) => {
+  'keeps frozen requests on %s/%s/%s GiB (Append-8k=%s, %s), plus only W1',
+  async (platform, arch, memory, qualifies, backend) => {
+    // Acceleration changes the backend, never the frozen writer request.
+    vi.stubEnv('AUTODOC_OLLAMA_VULKAN', backend.includes('Vulkan') ? '1' : '0')
+    vi.stubEnv('CUDA_VISIBLE_DEVICES', backend.includes('NVIDIA') ? '0' : '-1')
     const writer = await tier(platform, arch, memory)
     for (const scenario of frozen) {
       // The off arm is today's layout; the on arm is the tested append layout.
