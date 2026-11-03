@@ -20,6 +20,7 @@ import { selectMacProcessingProfile } from '../../services/mac-processing-profil
 import { selectWindowsProcessingProfile } from '../../services/windows-processing-profile'
 import { DEFAULT_OLLAMA_MODEL, LEGACY_OLLAMA_MODEL } from '../../../shared/constants'
 import { buildRecordingTitle } from '../../services/recording-title'
+import { ASK_AI_WRITER_TOOLS } from '../../services/ask-ai-writer-tools'
 const mac = (memory: number, arm = true) =>
   selectMacProcessingProfile({
     platform: 'darwin',
@@ -139,6 +140,54 @@ it.each([
     selected = DEFAULT_OLLAMA_MODEL
     await handler('chat:warmup')({} as never)
     expect(requests.at(-1).model).toBe(DEFAULT_OLLAMA_MODEL)
+  }
+)
+it.each([
+  ['8 GB Mac', () => mac(8), false],
+  [
+    'low-spec Windows',
+    () =>
+      selectWindowsProcessingProfile(
+        { logicalProcessors: 4, totalMemoryGiB: 8, freeMemoryGiB: 4 },
+        'cpu'
+      ).notesModel,
+    false
+  ],
+  ['default Mac tier', () => mac(24), true]
+] as const)(
+  'offers native writer tools only on tiers whose model uses them: %s',
+  async (_name, select, tools) => {
+    register(select)
+    const requests: any[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/api/tags')) return new Response(JSON.stringify({ models: [] }))
+        requests.push({ url, ...JSON.parse(String(init?.body)) })
+        return new Response(
+          JSON.stringify({ message: { content: 'Mira owns Atlas migration [1].' }, done: true }) +
+            '\n'
+        )
+      })
+    )
+    await handler('chat:warmup')({} as never)
+    const sender = { id: 11, send: vi.fn() }
+    await handler('chat:send-stream')({ sender } as never, 'tools', 'Who owns Atlas migration?')
+    const [warmup, writer] = requests
+    // Warmup is a bare /api/generate prefix load on every tier, so it never carries tools.
+    expect(warmup.url).toMatch(/\/api\/generate$/)
+    expect(warmup).not.toHaveProperty('tools')
+    expect(writer.url).toMatch(/\/api\/chat$/)
+    expect(requests).toHaveLength(2)
+    if (tools) {
+      expect(writer.tools).toEqual(ASK_AI_WRITER_TOOLS)
+      expect(writer.messages[0].content).toContain('Use calculate')
+      expect(writer.messages.at(-1).role).toBe('user')
+    } else {
+      expect(writer).not.toHaveProperty('tools')
+      expect(writer.messages[0].content).not.toContain('Use calculate')
+      expect(writer.messages.at(-1)).toEqual({ role: 'assistant', content: 'Answer:' })
+    }
   }
 )
 it('uses recording titles for queued meetings not yet present in the index, never raw IDs', async () => {

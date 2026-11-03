@@ -112,38 +112,114 @@ function termsMatch(value: string, query: string): boolean {
     .filter(Boolean)
     .every((term) => normalized.includes(term))
 }
+export type ValidatedWriterToolCall =
+  | { tool: 'calculate'; result: Record<string, unknown> }
+  | { tool: 'count_recordings'; filter: Record<string, unknown>; from: number; through: number }
+/** Throws when the call is not a well-formed invocation of a declared tool. */
+export function validateWriterToolCall(
+  call: WriterToolCall,
+  evidence: string
+): ValidatedWriterToolCall {
+  const args = call.function.arguments
+  if (!args || typeof args !== 'object' || Array.isArray(args))
+    throw Error('Tool arguments must be an object')
+  const input = args as Record<string, unknown>
+  if (call.function.name === 'calculate')
+    return {
+      tool: 'calculate',
+      result: calculateValidatedEvidence(input.operation, input.values, evidence)
+    }
+  if (call.function.name !== 'count_recordings') throw Error('Unknown tool')
+  if (!input.filter || typeof input.filter !== 'object' || Array.isArray(input.filter))
+    throw Error('Supply a recording filter object')
+  const filter = input.filter as Record<string, unknown>
+  if (
+    Object.keys(filter).some(
+      (key) => !['from', 'through', 'title', 'participant', 'keyword', 'list'].includes(key)
+    )
+  )
+    throw Error('Unknown recording filter')
+  for (const key of ['from', 'through', 'title', 'participant', 'keyword'])
+    if (
+      filter[key] !== undefined &&
+      (typeof filter[key] !== 'string' || (filter[key] as string).length > 300)
+    )
+      throw Error('Invalid recording filter')
+  if (filter.list !== undefined && typeof filter.list !== 'boolean')
+    throw Error('Invalid list option')
+  const from = dateBoundary(filter.from, false),
+    through = dateBoundary(filter.through, true)
+  if (from >= through) throw Error('Invalid recording-date range')
+  return { tool: 'count_recordings', filter, from, through }
+}
+
+const DECLARED_TOOL_NAMES: readonly string[] = ASK_AI_WRITER_TOOLS.map((tool) => tool.function.name)
+
+// Reads a complete JSON string literal at `index`, or null when it is malformed or unterminated.
+function readJsonString(text: string, index: number): { value: string; end: number } | null {
+  if (text[index] !== '"') return null
+  for (let i = index + 1; i < text.length; i++) {
+    if (text[i] === '\\') i++
+    else if (text[i] === '"') {
+      try {
+        return { value: JSON.parse(text.slice(index, i + 1)) as string, end: i + 1 }
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Classifies model text that looks like a textual function call. `call` is a parseable call to a
+ * declared tool (still to be validated), `named` is text that names a declared tool but cannot be
+ * used, and null is anything else, which callers display unchanged.
+ */
+export function parseWriterToolText(
+  text: string
+): { kind: 'call'; call: WriterToolCall } | { kind: 'named'; name: string } | null {
+  let body = text.trim()
+  if (body.startsWith('<tool_call>')) body = body.slice('<tool_call>'.length).trim()
+  if (body.endsWith('</tool_call>')) body = body.slice(0, -'</tool_call>'.length).trim()
+  if (!body.startsWith('{')) return null
+  try {
+    const parsed = JSON.parse(body) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const object = parsed as Record<string, unknown>
+    if (typeof object.name !== 'string' || !DECLARED_TOOL_NAMES.includes(object.name)) return null
+    const args = object.parameters ?? object.arguments
+    return args === undefined
+      ? { kind: 'named', name: object.name }
+      : { kind: 'call', call: { function: { name: object.name, arguments: args } } }
+  } catch {
+    // Truncated or malformed: fall back to reading just the leading "name" member.
+  }
+  let i = 1
+  const skip = (): void => {
+    while (/\s/.test(body[i] ?? '')) i++
+  }
+  skip()
+  const key = readJsonString(body, i)
+  if (key?.value !== 'name') return null
+  i = key.end
+  skip()
+  if (body[i++] !== ':') return null
+  skip()
+  const value = readJsonString(body, i)
+  return value && DECLARED_TOOL_NAMES.includes(value.value)
+    ? { kind: 'named', name: value.value }
+    : null
+}
+
 export async function executeWriterTool(
   call: WriterToolCall,
   context: WriterToolContext
 ): Promise<Record<string, unknown>> {
   try {
-    const args = call.function.arguments
-    if (!args || typeof args !== 'object' || Array.isArray(args))
-      throw Error('Tool arguments must be an object')
-    const input = args as Record<string, unknown>
-    if (call.function.name === 'calculate')
-      return calculateValidatedEvidence(input.operation, input.values, context.evidence)
-    if (call.function.name !== 'count_recordings') throw Error('Unknown tool')
-    if (!input.filter || typeof input.filter !== 'object' || Array.isArray(input.filter))
-      throw Error('Supply a recording filter object')
-    const filter = input.filter as Record<string, unknown>
-    if (
-      Object.keys(filter).some(
-        (key) => !['from', 'through', 'title', 'participant', 'keyword', 'list'].includes(key)
-      )
-    )
-      throw Error('Unknown recording filter')
-    for (const key of ['from', 'through', 'title', 'participant', 'keyword'])
-      if (
-        filter[key] !== undefined &&
-        (typeof filter[key] !== 'string' || (filter[key] as string).length > 300)
-      )
-        throw Error('Invalid recording filter')
-    if (filter.list !== undefined && typeof filter.list !== 'boolean')
-      throw Error('Invalid list option')
-    const from = dateBoundary(filter.from, false),
-      through = dateBoundary(filter.through, true)
-    if (from >= through) throw Error('Invalid recording-date range')
+    const validated = validateWriterToolCall(call, context.evidence)
+    if (validated.tool === 'calculate') return validated.result
+    const { filter, from, through } = validated
     const inventory = await context.inventory()
     const keywordIds = filter.keyword
       ? new Set((await context.query(filter.keyword as string)).map((m) => m.meetingId))

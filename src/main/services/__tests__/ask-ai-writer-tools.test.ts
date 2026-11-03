@@ -5,7 +5,12 @@ import {
   evidenceNumericLiterals,
   numericLiteral
 } from '../ask-ai-calculations'
-import { executeWriterTool, type WriterToolContext } from '../ask-ai-writer-tools'
+import {
+  executeWriterTool,
+  parseWriterToolText,
+  validateWriterToolCall,
+  type WriterToolContext
+} from '../ask-ai-writer-tools'
 import type { MeetingInventoryEntry } from '../chat-retrieval'
 const calculate = (
   operation: string,
@@ -146,5 +151,54 @@ describe('native count filters over inventory and the existing lexical index', (
       )
     ).toMatchObject({ error: expect.stringMatching(/absent/) })
     expect(context.inventory).not.toHaveBeenCalled()
+  })
+})
+
+describe('tool calls written as text', () => {
+  it.each([
+    ['{"name":"count_recordings","parameters":{"filter":"{\\"a\\"'],
+    ['  { "name" : "calculate", "param'],
+    ['<tool_call>{"name":"calculate"}</tool_call>'],
+    ['{"name":"count_recordings","parameters":{"filter":{"list":true}}} and then some prose']
+  ])('recognises an unusable call to a declared tool: %s', (text) => {
+    expect(parseWriterToolText(text)).toMatchObject({ kind: 'named' })
+  })
+  it.each([
+    ['{"budget":18600}'],
+    ['{"name":"Mira"}'],
+    ['{"name":"count_rec'],
+    ['[1,2]'],
+    ['Mira.']
+  ])('leaves other text alone: %s', (text) => {
+    expect(parseWriterToolText(text)).toBeNull()
+  })
+  it('parses a complete call, with either parameters or arguments, and tag wrappers', () => {
+    const filter = { list: true }
+    for (const text of [
+      JSON.stringify({ name: 'count_recordings', parameters: { filter } }),
+      `<tool_call>${JSON.stringify({ name: 'count_recordings', arguments: { filter } })}</tool_call>`
+    ])
+      expect(parseWriterToolText(text)).toEqual({
+        kind: 'call',
+        call: { function: { name: 'count_recordings', arguments: { filter } } }
+      })
+  })
+  it('shares one validation with execution', async () => {
+    const bad = { function: { name: 'count_recordings', arguments: { filter: { list: 'false' } } } }
+    expect(() => validateWriterToolCall(bad, '')).toThrow('Invalid list option')
+    expect(() =>
+      validateWriterToolCall(
+        { function: { name: 'count_recordings', arguments: { filter: '{}' } } },
+        ''
+      )
+    ).toThrow('Supply a recording filter object')
+    expect(
+      validateWriterToolCall(
+        { function: { name: 'count_recordings', arguments: { filter: { list: true } } } },
+        ''
+      )
+    ).toMatchObject({ tool: 'count_recordings' })
+    const context = { evidence: '', inventory: vi.fn(), query: vi.fn() } as WriterToolContext
+    expect(await executeWriterTool(bad, context)).toEqual({ error: 'Invalid list option' })
   })
 })

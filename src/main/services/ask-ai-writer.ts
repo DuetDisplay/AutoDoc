@@ -2,6 +2,8 @@ import { useAskAiAppendFollowups, withAskAiWriterLoadFallback } from './ask-ai-w
 import {
   ASK_AI_WRITER_TOOLS,
   ASK_AI_WRITER_TOOL_INSTRUCTIONS,
+  parseWriterToolText,
+  validateWriterToolCall,
   type WriterToolCall
 } from './ask-ai-writer-tools'
 import { conversationTokens } from './ask-ai-conversation'
@@ -345,8 +347,23 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
     params.append?.onPrepared?.(append.sources)
   }
   let priorContent = ''
+  const toolEvidence = `${conversationInput?.context ?? prompt}\n${params.question}`
+  // Set when the model wrote an unusable function call as text: the remaining round is a plain
+  // request without tools, exactly like a tool-less writer.
+  let toolFallback = false
   for (let round = 0; round < (toolsEnabled ? 2 : 1); round++) {
     params.signal?.throwIfAborted()
+    const toolsOffered = toolsEnabled && !toolFallback
+    const requestMessages = toolFallback
+      ? [
+          {
+            ...messages[0],
+            content: baseSystem + (languageInSystem ? ` ${languageRule}` : '')
+          },
+          ...messages.slice(1),
+          { role: 'assistant', content: 'Answer:' }
+        ]
+      : messages
     const startedAt = performance.now()
     firstTokenMs = null
     const calls: WriterToolCall[] = []
@@ -358,8 +375,8 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
         signal: params.signal,
         body: JSON.stringify({
           model: params.model,
-          ...(chatApi ? { messages } : { system, prompt }),
-          ...(toolsEnabled ? { tools: ASK_AI_WRITER_TOOLS } : {}),
+          ...(chatApi ? { messages: requestMessages } : { system, prompt }),
+          ...(toolsOffered ? { tools: ASK_AI_WRITER_TOOLS } : {}),
           stream: true,
           think: false,
           ...(nativeApi
@@ -390,6 +407,17 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
     const decoder = new TextDecoder()
     let buffer = ''
     let answer = ''
+    // Text that opens like a function call is held back while tools are offered: models without
+    // reliable native calling write calls as content, and that must never reach the user.
+    // Updated inside consume(), so the union is declared via a cast to defeat flow narrowing.
+    let guard = (toolsOffered ? 'undecided' : 'open') as 'undecided' | 'held' | 'open'
+    let emitted = 0
+    const visible = (): boolean => !params.conversation?.subjectClarification || round > 0
+    const release = (): void => {
+      if (!visible() || emitted >= answer.length) return
+      params.onChunk(answer.slice(emitted))
+      emitted = answer.length
+    }
 
     const consume = (line: string): void => {
       const trimmed = line.trim().replace(/^data:\s*/, '')
@@ -466,7 +494,12 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
       if (!delta) return
       firstTokenMs ??= Math.round(performance.now() - startedAt)
       answer += delta
-      if (!params.conversation?.subjectClarification || round > 0) params.onChunk(delta)
+      if (guard === 'undecided') {
+        const lead = answer.trimStart()
+        if (lead.startsWith('{') || lead.startsWith('<tool_call>')) guard = 'held'
+        else if (lead && !'<tool_call>'.startsWith(lead)) guard = 'open'
+      }
+      if (guard === 'open') release()
     }
 
     while (true) {
@@ -478,16 +511,47 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
       for (const line of lines) consume(line)
     }
     if (buffer.trim()) consume(buffer)
+    const clarifying = round === 0 && Boolean(params.conversation?.subjectClarification)
+    let unusableTool: string | null = null
+    if (!calls.length && guard === 'held' && !clarifying) {
+      const textual = parseWriterToolText(answer)
+      if (textual?.kind === 'call') {
+        try {
+          validateWriterToolCall(textual.call, toolEvidence)
+          calls.push(textual.call)
+        } catch {
+          unusableTool = textual.call.function.name
+        }
+      } else if (textual) unusableTool = textual.name
+      // Structural facts only: never the question, answer or argument text.
+      if (textual)
+        logAutodocEvent({
+          area: 'chat',
+          message: 'Ask AI writer tool call written as text',
+          context: {
+            toolCallRecovered: calls.length > 0,
+            tool: textual.kind === 'call' ? textual.call.function.name : textual.name
+          }
+        })
+    }
+    if (unusableTool) {
+      if (round > 0) throw Error('The two-call writer limit was reached')
+      toolFallback = true
+      continue
+    }
     if (!calls.length) {
       if (append) params.signal?.throwIfAborted()
-      if (round === 0 && params.conversation?.subjectClarification) {
-        append?.commit(messages, params.conversation.subjectClarification)
-        return params.conversation.subjectClarification
+      if (clarifying) {
+        append?.commit(messages, params.conversation!.subjectClarification!)
+        return params.conversation!.subjectClarification!
       }
+      release()
       append?.commit(messages, answer)
       return (priorContent + answer).trim()
     }
-    if (!toolsEnabled || !params.executeTool)
+    // Held text was never shown; it must not become history either.
+    if (guard !== 'open' && visible()) answer = answer.slice(0, emitted)
+    if (!toolsOffered || !params.executeTool)
       throw Error('Native tools are unavailable for this writer')
     if (round > 0) throw Error('The two-call writer limit was reached')
     if (calls.length > 4) throw Error('Too many native tool calls in one batch')
@@ -495,10 +559,7 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
     messages.push({ role: 'assistant', content: answer, tool_calls: calls })
     for (const call of calls) {
       params.signal?.throwIfAborted()
-      let result = await params.executeTool(
-        call,
-        `${conversationInput?.context ?? prompt}\n${params.question}`
-      )
+      let result = await params.executeTool(call, toolEvidence)
       // Reserve room for the tool result and the second220-token answer without
       // changing the context setting. Counts stay exact when title lists are capped.
       const budget = Math.max(20, Math.floor(Math.max(40, toolReserve - 500) / calls.length))

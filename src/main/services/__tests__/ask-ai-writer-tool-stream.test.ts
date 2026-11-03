@@ -3,6 +3,7 @@ vi.mock('../mac-processing-profile', () => ({ macUsesAskAiAppendFollowups: () =>
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 import { streamAskAiWriter } from '../ask-ai-writer'
 import { ASK_AI_WRITER_TOOLS } from '../ask-ai-writer-tools'
+import { logAutodocEvent } from '../autodoc-log'
 function stream(frames: unknown[]) {
   return {
     ok: true,
@@ -176,5 +177,172 @@ describe('native streamed single-writer tools', () => {
       })
     ).rejects.toThrow()
     expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+  describe('tool calls written as text', () => {
+    const malformed =
+      '{"name":"count_recordings","parameters":{"filter":"{\\"from\\":\\"2026-10-01\\",\\"through\\":\\"2026-10-31\\",\\"title\\":\\"Harbor\\",\\"list\\":true}\\"}}'
+    const requestBodies = (fetcher: ReturnType<typeof vi.fn>): Record<string, any>[] =>
+      fetcher.mock.calls.map((args) => JSON.parse(String((args as [string, RequestInit])[1].body)))
+
+    it('never shows malformed tool JSON and answers from one tool-less request', async () => {
+      const fetcher = vi.fn(async () =>
+        fetcher.mock.calls.length === 1
+          ? stream([{ message: { content: malformed } }, { done: true }])
+          : stream([{ message: { content: 'Mira owns it [1].' } }, { done: true }])
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const executeTool = vi.fn()
+      const chunks: string[] = []
+      const answer = await streamAskAiWriter({
+        ...params,
+        executeTool,
+        onChunk: (c) => chunks.push(c)
+      })
+      expect(answer).toBe('Mira owns it [1].')
+      expect(chunks.join('')).toBe('Mira owns it [1].')
+      expect(chunks.join('')).not.toContain('count_recordings')
+      expect(executeTool).not.toHaveBeenCalled()
+      const bodies = requestBodies(fetcher)
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0].tools).toEqual(ASK_AI_WRITER_TOOLS)
+      expect(bodies[1]).not.toHaveProperty('tools')
+      expect(bodies[1].messages[0].content).not.toContain('Use calculate')
+      expect(bodies[1].messages.at(-1)).toEqual({ role: 'assistant', content: 'Answer:' })
+      expect(bodies[1].messages.slice(1, -1)).toEqual(bodies[0].messages.slice(1))
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ context: { toolCallRecovered: false, tool: 'count_recordings' } })
+      )
+    })
+    it('treats a truncated call to a declared tool as unusable', async () => {
+      const fetcher = vi.fn(async () =>
+        fetcher.mock.calls.length === 1
+          ? stream([{ message: { content: '{"name":"calculate","param' } }, { done: true }])
+          : stream([{ message: { content: 'Fine.' } }, { done: true }])
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const chunks: string[] = []
+      expect(
+        await streamAskAiWriter({ ...params, executeTool: vi.fn(), onChunk: (c) => chunks.push(c) })
+      ).toBe('Fine.')
+      expect(chunks).toEqual(['Fine.'])
+    })
+    it('executes valid textual calls like native calls', async () => {
+      const text = JSON.stringify({
+        name: 'calculate',
+        parameters: { operation: 'sum', values: ['0.1', '0.2'] }
+      })
+      const bodies: Record<string, any>[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string, init: RequestInit) => {
+          bodies.push(JSON.parse(String(init.body)))
+          return bodies.length === 1
+            ? stream([{ message: { content: text } }, { done: true }])
+            : stream([{ message: { content: 'The total is 0.3.' } }, { done: true }])
+        })
+      )
+      const executeTool = vi.fn(async () => ({ result: '0.3' }))
+      const chunks: string[] = []
+      expect(
+        await streamAskAiWriter({ ...params, executeTool, onChunk: (c) => chunks.push(c) })
+      ).toBe('The total is 0.3.')
+      expect(executeTool).toHaveBeenCalledTimes(1)
+      expect(executeTool).toHaveBeenCalledWith(
+        {
+          function: { name: 'calculate', arguments: { operation: 'sum', values: ['0.1', '0.2'] } }
+        },
+        expect.stringContaining('Amounts 0.1')
+      )
+      expect(bodies).toHaveLength(2)
+      expect(bodies[1].tools).toEqual(ASK_AI_WRITER_TOOLS)
+      expect(bodies[1].messages.at(-2)).toMatchObject({ role: 'assistant', content: '' })
+      expect(bodies[1].messages.at(-1)).toMatchObject({ role: 'tool', tool_name: 'calculate' })
+      expect(chunks.join('')).toBe('The total is 0.3.')
+    })
+    it('treats a schema-invalid textual call as unusable instead of executing it', async () => {
+      const text = JSON.stringify({
+        name: 'count_recordings',
+        parameters: { filter: { list: 'false' } }
+      })
+      const fetcher = vi.fn(async () =>
+        fetcher.mock.calls.length === 1
+          ? stream([{ message: { content: text } }, { done: true }])
+          : stream([{ message: { content: 'Mira.' } }, { done: true }])
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const executeTool = vi.fn()
+      expect(await streamAskAiWriter({ ...params, executeTool })).toBe('Mira.')
+      expect(executeTool).not.toHaveBeenCalled()
+      expect(requestBodies(fetcher)[1]).not.toHaveProperty('tools')
+    })
+    it('passes JSON that does not name a declared tool through unchanged', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => stream([{ message: { content: '{"budget":18600}' } }, { done: true }]))
+      )
+      const chunks: string[] = []
+      const executeTool = vi.fn()
+      expect(
+        await streamAskAiWriter({ ...params, executeTool, onChunk: (c) => chunks.push(c) })
+      ).toBe('{"budget":18600}')
+      expect(chunks.join('')).toBe('{"budget":18600}')
+      expect(executeTool).not.toHaveBeenCalled()
+    })
+    it('streams normal prose chunk by chunk before the stream ends', async () => {
+      let finish!: () => void
+      const gate = new Promise<void>((resolve) => (finish = resolve))
+      const encoder = new TextEncoder()
+      const frame = (value: unknown): Uint8Array => encoder.encode(JSON.stringify(value) + '\n')
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: true,
+          body: new ReadableStream({
+            async start(controller) {
+              controller.enqueue(frame({ message: { content: 'Mira ' } }))
+              controller.enqueue(frame({ message: { content: 'owns it.' } }))
+              await gate
+              controller.enqueue(frame({ done: true }))
+              controller.close()
+            }
+          })
+        }))
+      )
+      const chunks: string[] = []
+      const pending = streamAskAiWriter({
+        ...params,
+        executeTool: vi.fn(),
+        onChunk: (c) => chunks.push(c)
+      })
+      await vi.waitFor(() => expect(chunks).toEqual(['Mira ', 'owns it.']))
+      finish()
+      expect(await pending).toBe('Mira owns it.')
+    })
+    // Last on purpose: a load failure latches the module-level append fallback for the session.
+    it('does not count discarded tool text as streamed, so a model-load failure can still retry', async () => {
+      vi.stubEnv('AUTODOC_ASK_AI_APPEND_NUM_CTX', '8192')
+      vi.stubEnv('AUTODOC_ASK_AI_APPEND_FOLLOWUPS', '1')
+      let calls = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          calls++
+          if (calls === 1) return stream([{ message: { content: malformed } }, { done: true }])
+          if (calls === 2) throw new Error('llama runner process has terminated')
+          return stream([{ message: { content: 'Recovered.' } }, { done: true }])
+        })
+      )
+      const chunks: string[] = []
+      expect(
+        await streamAskAiWriter({
+          ...params,
+          numCtx: 4096,
+          executeTool: vi.fn(),
+          onChunk: (c) => chunks.push(c)
+        })
+      ).toBe('Recovered.')
+      expect(calls).toBe(3)
+      expect(chunks).toEqual(['Recovered.'])
+    })
   })
 })

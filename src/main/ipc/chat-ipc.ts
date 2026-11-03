@@ -60,7 +60,7 @@ import {
   streamAskAiWriter
 } from '../services/ask-ai-writer'
 import { AskAiPassages } from '../services/ask-ai-passages'
-import { useAskAiPassages } from '../services/ask-ai-policy'
+import { askAiWriterToolsSupported, useAskAiPassages } from '../services/ask-ai-policy'
 import { MeetingIndexService } from '../services/meeting-index'
 import { directEvidenceAnswer } from '../services/ask-ai-evidence'
 import { hasInventoryRequestCue } from '../services/ask-ai-inventory-intent'
@@ -621,7 +621,7 @@ export function registerChatIpc(
               }
             }
           : {}),
-        ...(result.conversation
+        ...(result.conversation && askAiWriterToolsSupported(writerModel())
           ? {
               executeTool: async (call, evidence) => {
                 const toolResult = await executeWriterTool(call, {
