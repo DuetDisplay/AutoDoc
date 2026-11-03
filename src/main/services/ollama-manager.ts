@@ -302,6 +302,7 @@ export const EARLY_EXIT_AFTER_READY_MS = 60_000
 // ~10 s (longer on slow GPUs or right after wake) discovering GPUs. /api/tags
 // does not answer meanwhile, so a healthy server looks dead. Give a serve the
 // app started itself time to finish before replacing it.
+const SERVE_ADOPTION_PROBE_TIMEOUT_MS = 10_000
 export const STARTING_SERVE_GRACE_MS = 60_000
 export const STARTING_SERVE_WAIT_MS = 30_000
 export const STARTING_SERVE_POLL_MS = 2_000
@@ -791,7 +792,7 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async isServerRunning(): Promise<boolean> {
+  async isServerRunning(timeoutMs = 2_000): Promise<boolean> {
     if (
       IS_WIN &&
       IS_TEST_RUNTIME &&
@@ -803,7 +804,7 @@ export class OllamaManager extends EventEmitter {
 
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
-        signal: AbortSignal.timeout(2000)
+        signal: AbortSignal.timeout(timeoutMs)
       })
       return res.ok
     } catch {
@@ -1233,13 +1234,15 @@ export class OllamaManager extends EventEmitter {
       let running: boolean | null = null
       let ownsPort: boolean | null = null
       let waitedForStart = false
-      if (!options.forceRespawn && isReadyServeProcess) {
-        running = await this.isServerRunning()
+      // resetReady() clears setup bookkeeping, not the live child. Confirm a busy
+      // owned serve before replacing it, regardless of that cached marker.
+      if (!options.forceRespawn) {
+        running = await this.isServerRunning(SERVE_ADOPTION_PROBE_TIMEOUT_MS)
         this.assertStartEpoch(epoch)
-        ownsPort =
-          !IS_WIN ||
-          (tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid))
-        if (running && ownsPort) {
+        ownsPort = tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid)
+        if (running && ownsPort && this.isCurrentLiveChild(tracked)) {
+          this.readyServeProcess = tracked
+          this.readyAtMs ??= Date.now()
           this.reapManagedLlamaServersOnce('adopt-existing-server')
           return
         }
@@ -1265,7 +1268,9 @@ export class OllamaManager extends EventEmitter {
           waitedForStart
         }
       })
-      const killed = await this.killProcessAndWait(tracked, 'replace-unadopted-server')
+      const killed =
+        !this.isCurrentLiveChild(tracked) ||
+        (await this.killProcessAndWait(tracked, 'replace-unadopted-server'))
       this.assertStartEpoch(epoch)
       if (!killed) {
         throw new Error(
@@ -1607,7 +1612,7 @@ export class OllamaManager extends EventEmitter {
     this.testServerRunning = false
   }
 
-  /** Clear cached ready state so the next startAndPull() actually restarts. */
+  /** Clear cached setup state so startAndPull() revalidates the runtime and models. */
   resetReady(): void {
     this.readyPromise = null
     this.readyServeProcess = null
@@ -1645,6 +1650,16 @@ export class OllamaManager extends EventEmitter {
 
   private getListeningPidsOnOllamaPort(): number[] {
     try {
+      if (!IS_WIN) {
+        return execSync(`lsof -ti tcp:${OLLAMA_PORT} -sTCP:LISTEN`, {
+          encoding: 'utf-8',
+          timeout: 5000
+        })
+          .trim()
+          .split(/\s+/)
+          .map(Number)
+          .filter((pid) => Number.isInteger(pid) && pid > 0)
+      }
       const output = execSync(`netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`, {
         encoding: 'utf-8',
         timeout: 5000

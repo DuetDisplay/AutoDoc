@@ -154,6 +154,63 @@ function mockServeOrTaskkill(
 }
 
 describe('OllamaManager start lifecycle', () => {
+  it('adopts a busy live owned serve after a short probe fails and resetReady clears its marker', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-busy-adopt-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const serve = createFakeProcess(4242)
+      spawnMock.mockReturnValue(createFakeProcess(5252))
+      const manager = new OllamaManager()
+      vi.spyOn(manager, 'ensureReady').mockResolvedValue(undefined)
+      vi.spyOn(manager as never, 'getListeningPidsOnOllamaPort').mockReturnValue([4242])
+      vi.spyOn(manager as never, 'reapManagedLlamaServersOnce').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'killManagedLlamaServers').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'killProcessOnPort').mockReturnValue(undefined)
+      const kill = vi.spyOn(manager as never, 'killProcessAndWait').mockResolvedValue(true)
+      Object.assign(manager, {
+        process: serve,
+        readyServeProcess: serve,
+        readyAtMs: Date.now() - 480_000
+      })
+      vi.useFakeTimers()
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
+        const controller = new AbortController()
+        setTimeout(() => controller.abort(), delay)
+        return controller.signal
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url, options) =>
+            new Promise((resolve, reject) => {
+              const timer = setTimeout(() => resolve({ ok: true }), 4_000)
+              options.signal.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(timer)
+                  reject(options.signal.reason)
+                },
+                { once: true }
+              )
+            })
+        )
+      )
+      const probe = manager.isServerRunning()
+      await vi.advanceTimersByTimeAsync(2_001)
+      await expect(probe).resolves.toBe(false)
+      manager.resetReady()
+      const restart = manager.start()
+      void restart.catch(() => {})
+      await vi.advanceTimersByTimeAsync(4_001)
+      expect(kill).not.toHaveBeenCalled()
+      expect(serveSpawnCalls(spawnMock)).toHaveLength(0)
+      await restart
+      expect((manager as unknown as { readyServeProcess: unknown }).readyServeProcess).toBe(serve)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('latches CPU for the process lifetime', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-latch-'))
     try {
