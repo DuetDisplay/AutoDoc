@@ -299,6 +299,11 @@ export function registerChatIpc(
       const unanchoredInitial =
         history.length === 0 && named.size === 0 && !params.scopedMeetingIds?.length
       let prefetched: AskAiAnswer | null = null
+      // Relevance order of the retrieved meetings, for clarification options.
+      let rankedIds: string[] = []
+      const onRanked = (ids: string[]): void => {
+        rankedIds = ids
+      }
       if (unanchoredInitial) {
         await waitForOllama(ollamaManager, params.signal)
         try {
@@ -309,7 +314,9 @@ export function registerChatIpc(
             [],
             undefined,
             params.signal,
-            () => !(options.isProcessing?.() ?? false)
+            () => !(options.isProcessing?.() ?? false),
+            [],
+            onRanked
           )
         } catch (error) {
           if (params.signal?.aborted) throw error
@@ -394,7 +401,8 @@ export function registerChatIpc(
                 params.scopedMeetingIds,
                 params.signal,
                 () => !(options.isProcessing?.() ?? false),
-                params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? []
+                params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? [],
+                onRanked
               )
       } catch (error) {
         if (params.signal?.aborted) throw error
@@ -411,7 +419,8 @@ export function registerChatIpc(
           params.scopedMeetingIds,
           params.signal,
           () => false,
-          params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? []
+          params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? [],
+          onRanked
         )
       }
       // Tool-capable writers (Qwen) ask for a missing subject themselves, and the SAME streamed
@@ -425,13 +434,7 @@ export function registerChatIpc(
         !retrieved?.retrievalConfidence?.confident &&
         !askAiWriterToolsSupported(writerModel())
       ) {
-        // Retrieval keeps only the top meeting in rank order; the rest arrive sorted by id.
-        const ids = [
-          ...new Set([
-            ...(retrieved?.primaryMeetingIds ?? []),
-            ...(retrieved?.selectedMeetingIds ?? [])
-          ])
-        ]
+        const ids = [...new Set([...(retrieved?.primaryMeetingIds ?? []), ...rankedIds])]
         const options = inventoryClarificationOptions(
           ids.flatMap((id) => {
             const item = inventory.find((entry) => entry.meetingId === id)

@@ -400,9 +400,21 @@ describe('multi-meeting retrieval breadth', () => {
 
   it('takes a passage from every relevant meeting when no meeting dominates a first question', async () => {
     const { meetings, index } = spread(diffuse)
-    const result = await index.retrieveConversation('What was raised overall?', meetings, [])
+    let ranked: string[] = []
+    const result = await index.retrieveConversation(
+      'What was raised overall?',
+      meetings,
+      [],
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      (ids) => (ranked = ids)
+    )
     expect(result?.retrievalConfidence?.confident).toBe(false)
     expect(new Set(result?.selectedMeetingIds)).toEqual(new Set(Object.keys(diffuse)))
+    expect(ranked).toEqual(['red', 'blue', 'green', 'amber'])
     expect(result?.excerpts?.length).toBe(8)
     expect(result?.excerpts?.filter((e) => e.meetingId === 'grey')).toEqual([])
   })

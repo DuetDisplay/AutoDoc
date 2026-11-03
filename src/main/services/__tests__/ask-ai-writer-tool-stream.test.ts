@@ -206,6 +206,26 @@ describe('native streamed single-writer tools', () => {
       ).toBe('Fine.')
       expect(chunks).toEqual(['Fine.'])
     })
+    it('retries without tools when the runtime rejects a native call, keeping streamed text', async () => {
+      const fetcher = vi.fn(async () =>
+        fetcher.mock.calls.length === 1
+          ? stream([
+              { message: { content: 'Checking. ' } },
+              {
+                error:
+                  'llama-server returned invalid tool call arguments: unexpected end of JSON input'
+              }
+            ])
+          : stream([{ message: { content: 'Two meetings.' } }, { done: true }])
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const chunks: string[] = []
+      expect(
+        await streamAskAiWriter({ ...params, executeTool: vi.fn(), onChunk: (c) => chunks.push(c) })
+      ).toBe('Checking. Two meetings.')
+      expect(chunks.join('')).toBe('Checking. Two meetings.')
+      expect(requestBodies(fetcher)[1]).not.toHaveProperty('tools')
+    })
     it('executes valid textual calls like native calls', async () => {
       const text = JSON.stringify({
         name: 'calculate',

@@ -412,6 +412,7 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
     // Updated inside consume(), so the union is declared via a cast to defeat flow narrowing.
     let guard = (toolsOffered ? 'undecided' : 'open') as 'undecided' | 'held' | 'open'
     let emitted = 0
+    let nativeToolError = false
     const release = (): void => {
       if (emitted >= answer.length) return
       params.onChunk(answer.slice(emitted))
@@ -444,7 +445,15 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
         }
         usage?: { prompt_tokens?: number; completion_tokens?: number }
       }
-      if (data.error) throw new Error(data.error)
+      if (data.error) {
+        // The runtime could not parse the model's native call (e.g. truncated JSON arguments).
+        // That is an unusable tool call, not a failed answer: retry once without tools.
+        if (toolsOffered && /tool call/i.test(data.error)) {
+          nativeToolError = true
+          return
+        }
+        throw new Error(data.error)
+      }
       for (const call of data.message?.tool_calls ?? []) {
         if (!call?.function || typeof call.function.name !== 'string')
           throw Error('Invalid native tool call')
@@ -531,6 +540,17 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
             tool: textual.kind === 'call' ? textual.call.function.name : textual.name
           }
         })
+    }
+    if (nativeToolError) {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'Ask AI writer native tool call rejected by runtime',
+        context: { toolCallCount: calls.length }
+      })
+      // Anything already streamed stays visible; the tool-less round continues after it.
+      priorContent += answer.slice(0, emitted)
+      calls.length = 0
+      unusableTool = 'native'
     }
     if (unusableTool) {
       if (round > 0) throw Error('The two-call writer limit was reached')

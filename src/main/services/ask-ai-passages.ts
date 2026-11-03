@@ -308,7 +308,8 @@ export class AskAiPassages {
     scopedIds?: string[],
     signal?: AbortSignal,
     canInfer: () => boolean = () => true,
-    carriedIds: string[] = []
+    carriedIds: string[] = [],
+    onRanked?: (meetingIds: string[]) => void
   ): Promise<AskAiAnswer | null> {
     signal?.throwIfAborted()
     const scoped = scopedIds?.length
@@ -525,6 +526,9 @@ export class AskAiPassages {
             picked[0]?.meetingId
         ].filter((id): id is string => Boolean(id))
     if (!picked.length) return null
+    // Pick order is relevance order; the sort below is for stable writer input only, and the
+    // returned object stays byte-identical, so the ranking is reported through a callback.
+    onRanked?.([...new Set(picked.map((p) => p.meetingId))])
     picked.sort(
       (a, b) =>
         a.meetingId.localeCompare(b.meetingId) ||
