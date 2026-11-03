@@ -63,6 +63,8 @@ export interface AskAiAnswer {
   retrievalConfidence?: { score: number; margin: number; lexicalAnchor: number; confident: boolean }
   conversation?: AskAiConversation
   alreadyLocalized?: boolean
+  /** The renderer shows "Search all meetings" on this clarification; it re-asks unscoped. */
+  offerSearchAll?: boolean
   recheck?: { question: string; priorAnswer: string }
   intent: AskAiIntent
   content: string
@@ -230,6 +232,17 @@ function answerFromQuery(
     case 'content':
       return answerContent(query, windowedMeetings, windowedInventory)
   }
+}
+
+/** Whole-library count/list from the authoritative inventory; no retrieval or model call. */
+export function answerInventoryIntent(
+  act: 'count' | 'list',
+  question: string,
+  inventory: MeetingInventoryItem[]
+): AskAiAnswer {
+  return act === 'count'
+    ? formatCount(inventory, parseAskAiQuestion(question))
+    : formatRecordingList(inventory, question)
 }
 
 export function applyAskAiAnswerToSession(session: AskAiSession, answer: AskAiAnswer): void {
@@ -717,11 +730,11 @@ function formatCompare(
   }
 }
 
-function formatClarification(
+export function inventoryClarificationOptions(
   matches: Array<{ item: MeetingInventoryItem; score: number }>,
   inventory: MeetingInventoryItem[]
-): AskAiAnswer {
-  const options = matches.map((match) => {
+): ChatClarificationOption[] {
+  return matches.map((match) => {
     const meeting = inventory.find((item) => item.meetingId === match.item.meetingId) ?? match.item
     return {
       meetingId: meeting.meetingId,
@@ -736,6 +749,13 @@ function formatClarification(
       score: match.score
     } satisfies ChatClarificationOption
   })
+}
+
+function formatClarification(
+  matches: Array<{ item: MeetingInventoryItem; score: number }>,
+  inventory: MeetingInventoryItem[]
+): AskAiAnswer {
+  const options = inventoryClarificationOptions(matches, inventory)
   const lines = options.map((option, index) => `${index + 1}. ${option.title} — ${option.subtitle}`)
   return {
     intent: 'clarify',

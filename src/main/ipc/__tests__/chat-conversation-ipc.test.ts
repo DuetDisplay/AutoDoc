@@ -12,6 +12,7 @@ vi.mock('../../services/autodoc-log', () => ({
   logAutodocFailure: vi.fn()
 }))
 import { ipcMain } from 'electron'
+import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 import { registerChatIpc } from '../chat-ipc'
 
 beforeEach(() => {
@@ -144,10 +145,142 @@ it('passes arbitrary turns and original language instructions through one writer
   expect(calendar.fetchAllRecentEvents).toHaveBeenCalledTimes(1)
   await handler('chat:new')({ sender } as never)
   await handler('chat:send-stream')({ sender } as never, 'c', 'What was it?')
-  expect(requests).toHaveLength(3) // one normal streamed writer, no interpreter; native clarification stays authoritative
+  expect(requests).toHaveLength(3) // one normal streamed writer, no interpreter or forced replacement
   expect(sender.send).toHaveBeenCalledWith(
     'chat:done',
-    expect.objectContaining({ requestId: 'c', content: 'Which meeting or topic do you mean?' })
+    expect.objectContaining({ requestId: 'c', content: 'Le code est marigold [1].' })
+  )
+})
+
+const dated = (id: string, title: string, day: string, content: string) => ({
+  meetingId: id,
+  title,
+  date: new Date(`${day}T12:00:00`).getTime(),
+  signature: id,
+  dir: '/unused',
+  sourceName: id,
+  noteEntries: [
+    {
+      id: 'x',
+      title: 'Overview',
+      topic: null,
+      content,
+      owner: null,
+      deadline: null,
+      category: 'information',
+      sources: []
+    }
+  ],
+  transcriptChunks: []
+})
+
+function modelHarness(model: string) {
+  const meetings = [
+    dated('vale', 'Vale review', '2026-10-05', 'Quarterly vendor budget approved at $20.'),
+    dated('ridge', 'Ridge review', '2026-09-01', 'Quarterly vendor budget approved at $40.')
+  ]
+  const writerRequests: Array<{ messages: Array<{ role: string; content: string }> }> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [] }) }
+      if (url.endsWith('/api/chat')) writerRequests.push(JSON.parse(String(init?.body)))
+      return {
+        ok: true,
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(
+              new TextEncoder().encode(
+                JSON.stringify({ message: { content: 'Vale is $20 [1].' } }) + '\n'
+              )
+            )
+            c.close()
+          }
+        })
+      }
+    })
+  )
+  registerChatIpc(
+    '/tmp/no-model-harness-recordings',
+    {
+      waitUntilReady: vi.fn(async () => undefined),
+      isServerRunning: vi.fn(async () => true),
+      getBaseUrl: () => 'http://localhost:11434',
+      getAskAiModel: () => model
+    },
+    { getModel: () => model } as never,
+    { fetchAllRecentEvents: async () => [], fetchAllUpcomingEvents: async () => [] } as never,
+    () => 'en',
+    {
+      meetingIndex: {
+        ensureLoaded: vi.fn(),
+        listMeetings: async () => meetings,
+        listInventory: async () => meetings
+      } as never
+    }
+  )
+  const handler = (name: string) =>
+    vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === name)![1]
+  return { handler, writerRequests, sender: { id: 90, send: vi.fn() } }
+}
+
+it('clarifies immediately with meeting options on the tool-less tier, and searchAll answers instead', async () => {
+  const { handler, writerRequests, sender } = modelHarness(LOW_SPEC_MAC_OLLAMA_MODEL)
+  await handler('chat:send-stream')({ sender } as never, 'a', 'Quarterly vendor budget approved?')
+  expect(writerRequests).toHaveLength(0)
+  const done = sender.send.mock.calls.find(([channel]) => channel === 'chat:done')![1]
+  expect(done.content).toBe('Which meeting or topic do you mean?')
+  expect(done.offerSearchAll).toBe(true)
+  expect(done.clarificationOptions.map((option: { title: string }) => option.title).sort()).toEqual(
+    ['Ridge review', 'Vale review']
+  )
+  sender.send.mockClear()
+  await handler('chat:send-stream')(
+    { sender } as never,
+    'b',
+    'Quarterly vendor budget approved?',
+    [],
+    undefined,
+    true
+  )
+  expect(writerRequests).toHaveLength(1)
+  expect(sender.send).toHaveBeenCalledWith(
+    'chat:done',
+    expect.objectContaining({ requestId: 'b', content: expect.stringContaining('Vale is $20') })
+  )
+  expect(
+    sender.send.mock.calls.find(([channel]) => channel === 'chat:done')![1]
+  ).not.toHaveProperty('offerSearchAll')
+})
+
+it('lists saved recordings newest first for unscoped writers only', async () => {
+  const { handler, writerRequests, sender } = modelHarness('test')
+  await handler('chat:send-stream')({ sender } as never, 'a', 'Quarterly vendor budget approved?')
+  expect(writerRequests[0].messages[1].content).toContain(
+    'Saved recordings, newest first: Vale review (2026-10-05); Ridge review (2026-09-01)\n'
+  )
+  await handler('chat:select-recording-stream')(
+    { sender } as never,
+    'b',
+    'ridge',
+    'What was the budget?'
+  )
+  expect(writerRequests[1].messages[1].content).not.toContain('Saved recordings')
+})
+
+it('answers exact whole-library count and list aliases from the inventory without any model call', async () => {
+  const { handler, writerRequests, sender } = modelHarness('test')
+  await handler('chat:send-stream')({ sender } as never, 'a', 'How many recordings do I have?')
+  await handler('chat:send-stream')({ sender } as never, 'b', 'List my recordings')
+  expect(writerRequests).toHaveLength(0)
+  expect(vi.mocked(fetch).mock.calls.every(([url]) => String(url).endsWith('/api/tags'))).toBe(true)
+  expect(sender.send).toHaveBeenCalledWith(
+    'chat:done',
+    expect.objectContaining({ requestId: 'a', content: 'You have 2 recordings.' })
+  )
+  expect(sender.send).toHaveBeenCalledWith(
+    'chat:done',
+    expect.objectContaining({ requestId: 'b', content: expect.stringContaining('1. Vale review') })
   )
 })
 

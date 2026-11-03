@@ -17,6 +17,7 @@ export interface Message {
   status?: 'pending' | 'streaming' | 'complete' | 'failed' | 'canceled' | 'timed_out'
   originalQuestion?: string
   clarificationOptions?: ChatClarificationOption[]
+  offerSearchAll?: boolean
   sources?: ChatSourceCard[]
 }
 
@@ -32,7 +33,8 @@ interface ChatState {
     content: string,
     clarificationOptions?: ChatClarificationOption[],
     status?: Message['status'],
-    sources?: ChatSourceCard[]
+    sources?: ChatSourceCard[],
+    offerSearchAll?: boolean
   ) => void
   setMessageSources: (id: string, sources: ChatSourceCard[]) => void
   setMessageCountSummary: (id: string, summary: ChatCountSummary) => void
@@ -55,7 +57,7 @@ export const useChatStore = create<ChatState>()(
       setMeetingScope: (meetingScope) => set({ meetingScope }),
       startMeetingChat: (meetingScope) => set({ messages: [], draftInput: '', meetingScope }),
       addMessage: (msg) => set((state) => ({ messages: capMessages([...state.messages, msg]) })),
-      updateMessage: (id, content, clarificationOptions, status, sources) =>
+      updateMessage: (id, content, clarificationOptions, status, sources, offerSearchAll) =>
         set((state) => ({
           messages: capMessages(
             state.messages.map((msg) =>
@@ -65,6 +67,7 @@ export const useChatStore = create<ChatState>()(
                     content,
                     clarificationOptions: clarificationOptions ?? msg.clarificationOptions,
                     sources: sources ?? msg.sources,
+                    offerSearchAll: offerSearchAll ?? msg.offerSearchAll,
                     status: status ?? msg.status
                   }
                 : msg

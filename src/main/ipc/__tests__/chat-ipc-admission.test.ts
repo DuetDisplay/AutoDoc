@@ -185,7 +185,9 @@ it('the default writer counts all104 inventory records with one native tool roun
     }
   )
   const send = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'chat:send')![1]
-  expect(await send({} as never, 'Combien de réunions enregistrées ai-je ?')).toContain('104')
+  expect(await send({} as never, 'Combien de réunions enregistrées ai-je en tout ?')).toContain(
+    '104'
+  )
   expect(requests).toHaveLength(2)
   expect(requests.every((r) => r.stream && !r.format)).toBe(true)
   const tool = requests[1].messages.find((m) => m.role === 'tool')!

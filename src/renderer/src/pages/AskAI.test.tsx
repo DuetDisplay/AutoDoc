@@ -545,7 +545,58 @@ describe('AskAI', () => {
       'chat:send-stream',
       expect.any(String),
       'What is the Harbor code?',
-      []
+      [],
+      undefined,
+      true
+    ])
+  })
+  it('offers Search all meetings on a subject clarification and re-asks it unscoped with searchAll', async () => {
+    const api = installMockElectronApi({ 'ollama:check-status': true, 'chat:new': undefined })
+    api.setHandler(
+      'chat:send-stream',
+      (requestId: string, _question: string, _history: unknown, _ids?: string[], all?: boolean) =>
+        queueMicrotask(() =>
+          api.emit(
+            'chat:done',
+            all
+              ? { requestId, content: 'Across your meetings: Mara owns it.' }
+              : {
+                  requestId,
+                  content: 'Which meeting or topic do you mean?',
+                  offerSearchAll: true,
+                  clarificationOptions: [
+                    {
+                      meetingId: 'm1',
+                      title: 'Lumen review',
+                      subtitle: 'Mon',
+                      date: 0,
+                      sourceName: null,
+                      calendarTitle: null,
+                      slackChannel: null,
+                      participants: [],
+                      notePreview: null,
+                      score: 0
+                    }
+                  ]
+                }
+          )
+        )
+    )
+    render(<AskAI />)
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/ask a question/i), 'What are my action items?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByRole('button', { name: /lumen review/i })
+    await user.click(screen.getByRole('button', { name: 'Search all meetings' }))
+    await screen.findByText('Across your meetings: Mara owns it.')
+    const requests = api.invoke.mock.calls.filter(([name]) => name === 'chat:send-stream')
+    expect(requests[1]).toEqual([
+      'chat:send-stream',
+      expect.any(String),
+      'What are my action items?',
+      [],
+      undefined,
+      true
     ])
   })
   it('lets the user remove an unused meeting chip and starts the next turn globally', async () => {

@@ -412,9 +412,8 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
     // Updated inside consume(), so the union is declared via a cast to defeat flow narrowing.
     let guard = (toolsOffered ? 'undecided' : 'open') as 'undecided' | 'held' | 'open'
     let emitted = 0
-    const visible = (): boolean => !params.conversation?.subjectClarification || round > 0
     const release = (): void => {
-      if (!visible() || emitted >= answer.length) return
+      if (emitted >= answer.length) return
       params.onChunk(answer.slice(emitted))
       emitted = answer.length
     }
@@ -511,9 +510,8 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
       for (const line of lines) consume(line)
     }
     if (buffer.trim()) consume(buffer)
-    const clarifying = round === 0 && Boolean(params.conversation?.subjectClarification)
     let unusableTool: string | null = null
-    if (!calls.length && guard === 'held' && !clarifying) {
+    if (!calls.length && guard === 'held') {
       const textual = parseWriterToolText(answer)
       if (textual?.kind === 'call') {
         try {
@@ -541,16 +539,12 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
     }
     if (!calls.length) {
       if (append) params.signal?.throwIfAborted()
-      if (clarifying) {
-        append?.commit(messages, params.conversation!.subjectClarification!)
-        return params.conversation!.subjectClarification!
-      }
       release()
       append?.commit(messages, answer)
       return (priorContent + answer).trim()
     }
     // Held text was never shown; it must not become history either.
-    if (guard !== 'open' && visible()) answer = answer.slice(0, emitted)
+    if (guard !== 'open') answer = answer.slice(0, emitted)
     if (!toolsOffered || !params.executeTool)
       throw Error('Native tools are unavailable for this writer')
     if (round > 0) throw Error('The two-call writer limit was reached')
@@ -586,7 +580,7 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
         content: JSON.stringify(result)
       })
     }
-    if (!params.conversation?.subjectClarification) priorContent += answer
+    priorContent += answer
   }
   throw Error('The two-call writer limit was reached')
 }

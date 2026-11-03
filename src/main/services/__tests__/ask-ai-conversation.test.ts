@@ -52,6 +52,35 @@ describe('bounded conversational context', () => {
     expect(prompt).toContain('sample, not a complete library')
     expect(prompt.endsWith('Current user request: Is that still true?')).toBe(true)
   })
+  it('adds the clipped newest-first recording list after the count only when supplied', () => {
+    const base = { history: [], inventoryCount: 3 }
+    const without = buildConversationWriterPrompt('Latest?', [], base, 2048, 'Ground facts.')
+    const list = 'Vale review (2026-10-05); Ridge review (2026-09-01)'
+    const withList = buildConversationWriterPrompt(
+      'Latest?',
+      [],
+      { ...base, recordings: list },
+      2048,
+      'Ground facts.'
+    )
+    expect(withList).toBe(
+      without.replace(
+        'complete library.\n',
+        `complete library.\nSaved recordings, newest first: ${list}\n`
+      )
+    )
+    const clipped = buildConversationWriterPrompt(
+      'Latest?',
+      [],
+      { ...base, recordings: 'Long title (2026-10-05); '.repeat(100) },
+      2048,
+      'Ground facts.'
+    )
+    const line = clipped.split('\n').find((entry) => entry.startsWith('Saved recordings'))!
+    expect(
+      conversationTokens(line.slice('Saved recordings, newest first: '.length))
+    ).toBeLessThanOrEqual(Math.min(160, 2048 * 0.08))
+  })
   it('reserves output and instructions within the existing smallest context', () => {
     const system = 'Rules '.repeat(80)
     const prompt = buildConversationWriterPrompt(

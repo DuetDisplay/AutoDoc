@@ -260,7 +260,8 @@ export interface IpcInvokeEvents {
     requestId: string,
     question: string,
     history?: ChatHistoryMessage[],
-    scopedMeetingIds?: string[]
+    scopedMeetingIds?: string[],
+    searchAll?: boolean
   ]
   'chat:warmup': []
   'chat:select-recording-stream': [
@@ -533,6 +534,7 @@ export interface IpcOnEvents {
       requestId: string
       content: string
       clarificationOptions?: ChatClarificationOption[]
+      offerSearchAll?: boolean
       sources?: ChatSourceCard[]
     }
   ]

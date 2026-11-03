@@ -48,8 +48,10 @@ import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-cl
 import { runAskAiAgent, type AgentToolDeps } from '../services/ask-ai-agent'
 import { applyAnswerCitations, type ChatSourceCard } from '../services/ask-ai-citations'
 import {
+  answerInventoryIntent,
   answerQuestion,
   applyAskAiAnswerToSession,
+  inventoryClarificationOptions,
   type AskAiAnswer,
   type AskAiSession
 } from '../services/ask-ai-answer'
@@ -63,7 +65,7 @@ import { AskAiPassages } from '../services/ask-ai-passages'
 import { askAiWriterToolsSupported, useAskAiPassages } from '../services/ask-ai-policy'
 import { MeetingIndexService } from '../services/meeting-index'
 import { directEvidenceAnswer } from '../services/ask-ai-evidence'
-import { hasInventoryRequestCue } from '../services/ask-ai-inventory-intent'
+import { hasInventoryRequestCue, nativeInventoryIntent } from '../services/ask-ai-inventory-intent'
 import { parseAskAiQuestion } from '../services/ask-ai-query'
 import {
   appendWriterContexts,
@@ -187,6 +189,7 @@ interface ChatDonePayload {
   requestId: string
   content: string
   clarificationOptions?: ChatClarificationOption[]
+  offerSearchAll?: boolean
   sources?: ChatSourceCard[]
 }
 
@@ -269,11 +272,22 @@ export function registerChatIpc(
     return options.acquireGenerationPriority?.(signal)
   }
   const answerWithExperiment = async (
-    params: Parameters<typeof answerQuestion>[0]
+    params: Parameters<typeof answerQuestion>[0] & { searchAll?: boolean }
   ): Promise<AskAiAnswer> => {
     const originalQuestion = params.question
     params = { ...params, question: chatReplyRequest(params.question).question }
     if (passageIndex && process.env.AUTODOC_ASK_AI_CONVERSATION !== '0') {
+      // Exact whole-library count/list aliases are answered from the authoritative inventory with
+      // no retrieval or writer call; maybeRewriteAnswer localises them like other direct answers.
+      const inventoryAct = params.scopedMeetingIds?.length
+        ? null
+        : nativeInventoryIntent(params.question)
+      if (inventoryAct)
+        return answerInventoryIntent(
+          inventoryAct,
+          params.question,
+          await meetingIndex.listInventory()
+        )
       const history = recentConversation(params.history ?? [])
       const meetings = await meetingIndex.listMeetings()
       const named = conversationTitleAnchors(
@@ -307,6 +321,10 @@ export function registerChatIpc(
         getMeetingLanguage(),
         (params.session as ChatConversationState).lastReplyLanguage
       )
+      const inventory = (await meetingIndex.listInventory()).filter(
+        (meeting) =>
+          !params.scopedMeetingIds?.length || params.scopedMeetingIds.includes(meeting.meetingId)
+      )
       const conversation = {
         ...(useAskAiAppendFollowups()
           ? {
@@ -316,10 +334,14 @@ export function registerChatIpc(
           : {}),
         history,
         question: originalQuestion,
-        inventoryCount: (await meetingIndex.listInventory()).filter(
-          (meeting) =>
-            !params.scopedMeetingIds?.length || params.scopedMeetingIds.includes(meeting.meetingId)
-        ).length,
+        inventoryCount: inventory.length,
+        ...(params.scopedMeetingIds?.length
+          ? {}
+          : {
+              recordings: inventory
+                .map((meeting) => `${meeting.title} (${localIsoDate(meeting.date)})`)
+                .join('; ')
+            }),
         scopedMeetingIds: params.scopedMeetingIds,
         replyLanguage,
         focusedMeetingIds: [...(params.session.lastEvidenceRecordingIds ?? [])]
@@ -392,13 +414,41 @@ export function registerChatIpc(
           params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? []
         )
       }
-      // A low-confidence first turn retains native clarification, but the SAME
-      // streamed writer can first choose a count/calculation tool. No inventory
-      // phrases, classifier, interpreter or extra planning call gates the tools.
-      const subjectClarification =
-        unanchoredInitial && !retrieved?.retrievalConfidence?.confident
-          ? meetingSubjectClarification(replyLanguage)
-          : undefined
+      // Tool-capable writers (Qwen) ask for a missing subject themselves, and the SAME streamed
+      // writer can first choose a count/calculation tool. Only the tool-less tier cannot, and
+      // answers from a random meeting, so a low-confidence first turn clarifies without spending
+      // a generation (the writer's reply would be discarded anyway). "Search all meetings"
+      // (searchAll) counts as anchored here, so a clarification can never repeat.
+      if (
+        unanchoredInitial &&
+        !params.searchAll &&
+        !retrieved?.retrievalConfidence?.confident &&
+        !askAiWriterToolsSupported(writerModel())
+      ) {
+        // Retrieval keeps only the top meeting in rank order; the rest arrive sorted by id.
+        const ids = [
+          ...new Set([
+            ...(retrieved?.primaryMeetingIds ?? []),
+            ...(retrieved?.selectedMeetingIds ?? [])
+          ])
+        ]
+        const options = inventoryClarificationOptions(
+          ids.flatMap((id) => {
+            const item = inventory.find((entry) => entry.meetingId === id)
+            return item ? [{ item, score: 0 }] : []
+          }),
+          inventory
+        ).slice(0, 4)
+        return {
+          intent: 'clarify',
+          content: meetingSubjectClarification(replyLanguage),
+          alreadyLocalized: true,
+          offerSearchAll: true,
+          ...(options.length ? { clarificationOptions: options } : {}),
+          selectedMeetingIds: options.map((option) => option.meetingId),
+          selectedTitles: options.map((option) => option.title)
+        }
+      }
       return {
         ...(retrieved ?? {
           intent: 'lookup',
@@ -412,8 +462,7 @@ export function registerChatIpc(
           : (retrieved?.primaryMeetingIds ?? []),
         conversation: {
           ...conversation,
-          calendar: params.scopedMeetingIds?.length ? undefined : conversationCalendarCache?.text,
-          subjectClarification
+          calendar: params.scopedMeetingIds?.length ? undefined : conversationCalendarCache?.text
         }
       }
     }
@@ -1328,7 +1377,8 @@ export function registerChatIpc(
       requestId: string,
       question: string,
       history: ChatHistoryMessage[] = [],
-      scopedMeetingIds?: string[]
+      scopedMeetingIds?: string[],
+      searchAll?: boolean
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
@@ -1443,6 +1493,7 @@ export function registerChatIpc(
           store: meetingIndex,
           calendar: calendarAdapter,
           scopedMeetingIds: scopedIds,
+          searchAll: searchAll === true,
           signal: controller.signal
         })
         // Keep main's multilingual planner fallback when the strict legacy parser misses.
@@ -1499,6 +1550,7 @@ export function registerChatIpc(
           ...(result.clarificationOptions
             ? { clarificationOptions: result.clarificationOptions }
             : {}),
+          ...(result.offerSearchAll ? { offerSearchAll: true } : {}),
           ...(finalized.sources ? { sources: finalized.sources } : {})
         } satisfies ChatDonePayload)
       } catch (error) {
@@ -1638,6 +1690,15 @@ export function registerChatIpc(
     }
   )
   return () => conversationHolds.shutdown()
+}
+
+/** Local-calendar YYYY-MM-DD. */
+function localIsoDate(ms: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date(ms))
 }
 
 function normalizeMeetingScope(ids: unknown): string[] | undefined {

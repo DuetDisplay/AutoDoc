@@ -142,26 +142,6 @@ describe('native streamed single-writer tools', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(executeTool).toHaveBeenCalledTimes(1)
   })
-  it('keeps native first-turn clarification authoritative without adding an interpreter call', async () => {
-    const fetcher = vi.fn(async () =>
-      stream([{ message: { content: 'An unsupported guess.' } }, { done: true }])
-    )
-    vi.stubGlobal('fetch', fetcher)
-    const chunks = vi.fn()
-    const result = await streamAskAiWriter({
-      ...params,
-      conversation: {
-        history: [],
-        inventoryCount: 2,
-        subjectClarification: 'Which meeting or topic do you mean?'
-      },
-      executeTool: vi.fn(),
-      onChunk: chunks
-    })
-    expect(result).toBe('Which meeting or topic do you mean?')
-    expect(chunks).not.toHaveBeenCalled()
-    expect(fetcher).toHaveBeenCalledTimes(1)
-  })
   it('stops before a second request if canceled while a native tool runs', async () => {
     const controller = new AbortController()
     const fetcher = vi.fn(async () => stream([{ message: { tool_calls: [call] }, done: true }]))

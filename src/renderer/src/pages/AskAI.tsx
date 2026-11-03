@@ -206,6 +206,7 @@ export function AskAI(): ReactElement {
     selectedMeetingId?: string
     scopeOverride?: MeetingChatScope | null
     historyOverride?: Message[]
+    searchAll?: boolean
   }): Promise<void> => {
     const question = params.question.trim()
     if (!question || loading || isSendingRef.current || activeRequestIdRef.current) return
@@ -289,7 +290,8 @@ export function AskAI(): ReactElement {
           payload.content,
           payload.clarificationOptions,
           'complete',
-          payload.sources
+          payload.sources,
+          payload.offerSearchAll
         )
         trackEvent('chat_response_completed', {
           selected_recording: Boolean(params.selectedMeetingId),
@@ -339,6 +341,16 @@ export function AskAI(): ReactElement {
         await window.electronAPI.invoke('chat:send-stream', requestId, question, history, [
           scope.meetingId
         ])
+      } else if (params.searchAll) {
+        // Unscoped on purpose: main must answer across meetings instead of clarifying again.
+        await window.electronAPI.invoke(
+          'chat:send-stream',
+          requestId,
+          question,
+          history,
+          undefined,
+          true
+        )
       } else {
         await window.electronAPI.invoke('chat:send-stream', requestId, question, history)
       }
@@ -401,7 +413,8 @@ export function AskAI(): ReactElement {
       question,
       displayQuestion: question,
       scopeOverride: null,
-      historyOverride: history
+      historyOverride: history,
+      searchAll: true
     })
   }
 
@@ -578,16 +591,6 @@ export function AskAI(): ReactElement {
                           ))}
                         </div>
                       )}
-                      {msg.meetingScope && msg.originalQuestion && msg.status === 'complete' && (
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={() => void handleSearchAll(msg.id, msg.originalQuestion!)}
-                          className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
-                        >
-                          {t('askAi.searchAll')}
-                        </button>
-                      )}
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
                         <div className="grid min-w-0 grid-cols-1 gap-2">
                           {msg.clarificationOptions.map((option) => (
@@ -616,6 +619,18 @@ export function AskAI(): ReactElement {
                           ))}
                         </div>
                       )}
+                      {(msg.meetingScope || msg.offerSearchAll) &&
+                        msg.originalQuestion &&
+                        msg.status === 'complete' && (
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => void handleSearchAll(msg.id, msg.originalQuestion!)}
+                            className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
+                          >
+                            {t('askAi.searchAll')}
+                          </button>
+                        )}
                     </div>
                   ) : (
                     msg.content
