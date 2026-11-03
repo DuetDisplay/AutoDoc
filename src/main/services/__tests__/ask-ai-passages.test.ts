@@ -357,3 +357,76 @@ it('adds passage IDs on the qualifying tier default without an environment opt-i
   hardware.append = false
   vi.resetModules()
 })
+
+describe('multi-meeting retrieval breadth', () => {
+  // Cosine against the [1, 0] query is the first component of each vector.
+  const spread = (cosines: Record<string, number>) => {
+    const meetings = [...Object.keys(cosines), 'grey'].map((colour) => {
+      const meeting = fixture()
+      meeting.meetingId = colour
+      meeting.title = `${colour} sync`
+      meeting.signature = `sig-${colour}`
+      const entry = (id: string, content: string) => ({
+        ...meeting.noteEntries[0],
+        id,
+        title: 'Notes',
+        topic: null,
+        content
+      })
+      meeting.noteEntries = [
+        entry('a', `${colour} first item`),
+        entry('b', `${colour} second item`),
+        entry('c', `${colour} third item`)
+      ]
+      meeting.transcriptChunks = []
+      return meeting
+    })
+    const provider = {
+      model: 'test',
+      isAvailable: vi.fn(async () => true),
+      embed: vi.fn(async (texts: string[]) =>
+        texts.map((text) => {
+          const c = Object.entries(cosines).find(([colour]) => text.includes(colour))?.[1]
+          return text.startsWith('Instruct:') ? [1, 0] : c ? [c, Math.sqrt(1 - c * c)] : [0, 1]
+        })
+      )
+    }
+    return {
+      meetings,
+      index: new AskAiPassages(provider, join(tmpdir(), 'autodoc-breadth-unit.enc'))
+    }
+  }
+  const diffuse = { red: 0.62, blue: 0.5, green: 0.47, amber: 0.44 }
+
+  it('takes a passage from every relevant meeting when no meeting dominates a first question', async () => {
+    const { meetings, index } = spread(diffuse)
+    const result = await index.retrieveConversation('What was raised overall?', meetings, [])
+    expect(result?.retrievalConfidence?.confident).toBe(false)
+    expect(new Set(result?.selectedMeetingIds)).toEqual(new Set(Object.keys(diffuse)))
+    expect(result?.excerpts?.length).toBe(8)
+    expect(result?.excerpts?.filter((e) => e.meetingId === 'grey')).toEqual([])
+  })
+
+  it('keeps a follow-up with history on the narrow single-match window', async () => {
+    const { meetings, index } = spread(diffuse)
+    const result = await index.retrieveConversation('What was raised overall?', meetings, [
+      { role: 'user', content: 'Summarize the meetings.' }
+    ])
+    expect(result?.selectedMeetingIds).toEqual(['red'])
+    expect(result?.excerpts?.length).toBe(3)
+  })
+
+  it('does not widen a confident first question beyond the single-match window', async () => {
+    const { meetings, index } = spread({ red: 0.7, blue: 0.41 })
+    const result = await index.retrieveConversation('What was raised overall?', meetings, [])
+    expect(result?.retrievalConfidence?.confident).toBe(true)
+    expect(result?.selectedMeetingIds).toEqual(['red'])
+  })
+
+  it('does not widen a first question that names a meeting by title', async () => {
+    const { meetings, index } = spread({ red: 0.5, blue: 0.45, amber: 0.41 })
+    const result = await index.retrieveConversation('What was raised in red?', meetings, [])
+    expect(result?.retrievalConfidence?.confident).toBe(false)
+    expect(new Set(result?.selectedMeetingIds)).toEqual(new Set(['red', 'blue']))
+  })
+})

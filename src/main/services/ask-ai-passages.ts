@@ -24,7 +24,8 @@ export function writerSizedPassages(text: string): string[] {
   let sentences: string[]
   try {
     sentences = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(text)]
-      .map((part) => part.segment.trim()).filter(Boolean)
+      .map((part) => part.segment.trim())
+      .filter(Boolean)
   } catch {
     sentences = [text]
   }
@@ -37,19 +38,23 @@ export function writerSizedPassages(text: string): string[] {
     const chars = [...sentence]
     let at = 0
     while (at < chars.length) {
-      let end = at, used = 0
+      let end = at,
+        used = 0
       while (end < chars.length) {
         const cost = chars[end].codePointAt(0)! < 128 ? 1 / 3 : 2
         if (used + cost > 180) break
-        used += cost; end++
+        used += cost
+        end++
       }
       units.push(chars.slice(at, end).join('').trim())
       if (end >= chars.length) break
-      let next = end, overlap = 0
+      let next = end,
+        overlap = 0
       while (next > at + 1) {
         const cost = chars[next - 1].codePointAt(0)! < 128 ? 1 / 3 : 2
         if (overlap + cost > 40) break
-        overlap += cost; next--
+        overlap += cost
+        next--
       }
       at = Math.max(at + 1, next)
     }
@@ -60,8 +65,10 @@ export function writerSizedPassages(text: string): string[] {
     if (pending.length && conversationTokens([...pending, unit].join(' ')) > 180) {
       output.push(pending.join(' '))
       const neighbour = pending.at(-1)!
-      pending = conversationTokens(neighbour + ' ' + unit) <= 180 && conversationTokens(neighbour) <= 40
-        ? [neighbour] : []
+      pending =
+        conversationTokens(neighbour + ' ' + unit) <= 180 && conversationTokens(neighbour) <= 40
+          ? [neighbour]
+          : []
     }
     pending.push(unit)
   }
@@ -384,66 +391,6 @@ export class AskAiPassages {
         if (score <= 0) return
         ranked.set(p.key, { p, score: (ranked.get(p.key)?.score ?? 0) + weight / (12 + i) })
       })
-    // Previous results affect ranking, not unconditional factual eligibility.
-    const eligible = new Set<string>(named)
-    const bestLexical = Math.max(0, ...passages.map((p) => lexical(`${p.title} ${p.text}`, terms)))
-    const bestContextLexical = Math.max(0, ...passages.map((p) => lexical(`${p.title} ${p.text}`, contextTerms)))
-    for (const p of passages) {
-      const score = lexical(`${p.title} ${p.text}`, terms)
-      if (score >= Math.max(2.5, bestLexical * 0.7)) eligible.add(p.meetingId)
-      // Preserve a real contextual match when embeddings are unavailable;
-      // membership in the previous result set alone is never sufficient.
-      if (history.length && priorIds.includes(p.meetingId) && bestContextLexical > 0 &&
-        lexical(`${p.title} ${p.text}`, contextTerms) >= bestContextLexical * 0.7)
-        eligible.add(p.meetingId)
-    }
-    if (vectors.length) {
-      const best = Math.max(...passages.map((p) => cosine(p, vectors[0])))
-      const bestPrior = Math.max(
-        0,
-        ...passages.filter((p) => priorIds.includes(p.meetingId)).map((p) => cosine(p, vectors[0]))
-      )
-      const bestContext = Math.max(...passages.map((p) => cosine(p, vectors[1] ?? vectors[0])))
-      for (const p of passages) {
-        const currentRelevant = cosine(p, vectors[0]) >= Math.max(0.4, best - 0.07)
-        const contextualRelevant =
-          vectors.length > 1 && cosine(p, vectors[1]) >= Math.max(0.4, bestContext - 0.07)
-        // Broad facet words must not bring unrelated meetings into a follow-up.
-        // A strongly better current semantic match can still open a new topic.
-        const newTopic = cosine(p, vectors[0]) >= bestPrior + 0.12
-        if (
-          contextualRelevant ||
-          (currentRelevant && (!history.length || !priorIds.length || newTopic))
-        )
-          eligible.add(p.meetingId)
-      }
-    }
-    const ordered = [...ranked.values()].sort((a, b) => b.score - a.score)
-    // Experiment only: preserve the normal cap unless explicitly requested.
-    const maxPassages = process.env.AUTODOC_ASK_AI_MAX_PASSAGES === '12' ? 12 : 8
-    const carried = new Set(named.size ? [] : carriedIds.slice(0, 2))
-    const picked: Passage[] = []
-    const counts = new Map<string, number>()
-    const add = (p: Passage): boolean => {
-      if (picked.length >= maxPassages || (counts.get(p.meetingId) ?? 0) >= (carried.has(p.meetingId) ? 2 : 3)) return false
-      if (picked.some((other) => other.meetingId === p.meetingId &&
-        normalizeDuplicateEvidence(other.text).includes(normalizeDuplicateEvidence(p.text)))) return false
-      picked.push(p)
-      counts.set(p.meetingId, (counts.get(p.meetingId) ?? 0) + 1)
-      return true
-    }
-    // Reserve only the explicit primary-meeting carry, ranked by this question.
-    // Previous search results remain ranking hints, never automatic eligibility.
-    for (const id of carried)
-      for (const { p } of current)
-        if (p.meetingId === id) add(p)
-    for (const { p } of ordered) {
-      if (eligible.has(p.meetingId)) add(p)
-      if (picked.length >= maxPassages) break
-    }
-    const primaryMeetingIds = named.size
-      ? [...named].slice(0, 2)
-      : [ordered.find(({ p }) => picked.some((chosen) => chosen.key === p.key))?.p.meetingId ?? picked[0]?.meetingId].filter((id): id is string => Boolean(id))
     const meetingScores = new Map<string, number>()
     for (const p of passages)
       meetingScores.set(
@@ -470,8 +417,11 @@ export class AskAiPassages {
     // makes another meeting's semantic score narrowly higher.
     const lexicalConfident = [...meetingScores].some(([id, similarity]) => {
       const matching = rareTerms.filter((term) => queryMeetings.get(term)?.has(id))
-      return similarity >= 0.42 && matching.length >= 2 &&
+      return (
+        similarity >= 0.42 &&
+        matching.length >= 2 &&
         matching.some((term) => unicodeContentTokens(term, 4).length > 0)
+      )
     })
     const retrievalConfidence = {
       score,
@@ -482,6 +432,98 @@ export class AskAiPassages {
         lexicalConfident ||
         (score >= 0.65 && margin >= 0.22)
     }
+    // A first question with no subject anchor and no confident match is treated as
+    // spanning meetings: admit every meeting clearing the absolute floors and pick breadth-first.
+    const carried = new Set(named.size ? [] : carriedIds.slice(0, 2))
+    const broad = !retrievalConfidence.confident && !named.size && !carried.size && !history.length
+    // Previous results affect ranking, not unconditional factual eligibility.
+    const eligible = new Set<string>(named)
+    const bestLexical = Math.max(0, ...passages.map((p) => lexical(`${p.title} ${p.text}`, terms)))
+    const bestContextLexical = Math.max(
+      0,
+      ...passages.map((p) => lexical(`${p.title} ${p.text}`, contextTerms))
+    )
+    for (const p of passages) {
+      const score = lexical(`${p.title} ${p.text}`, terms)
+      if (score >= Math.max(2.5, bestLexical * 0.7) || (broad && score >= 2.5))
+        eligible.add(p.meetingId)
+      // Preserve a real contextual match when embeddings are unavailable;
+      // membership in the previous result set alone is never sufficient.
+      if (
+        history.length &&
+        priorIds.includes(p.meetingId) &&
+        bestContextLexical > 0 &&
+        lexical(`${p.title} ${p.text}`, contextTerms) >= bestContextLexical * 0.7
+      )
+        eligible.add(p.meetingId)
+    }
+    if (vectors.length) {
+      const best = Math.max(...passages.map((p) => cosine(p, vectors[0])))
+      const bestPrior = Math.max(
+        0,
+        ...passages.filter((p) => priorIds.includes(p.meetingId)).map((p) => cosine(p, vectors[0]))
+      )
+      const bestContext = Math.max(...passages.map((p) => cosine(p, vectors[1] ?? vectors[0])))
+      for (const p of passages) {
+        const currentRelevant = cosine(p, vectors[0]) >= Math.max(0.4, best - 0.07)
+        const contextualRelevant =
+          vectors.length > 1 && cosine(p, vectors[1]) >= Math.max(0.4, bestContext - 0.07)
+        // Broad facet words must not bring unrelated meetings into a follow-up.
+        // A strongly better current semantic match can still open a new topic.
+        const newTopic = cosine(p, vectors[0]) >= bestPrior + 0.12
+        if (
+          contextualRelevant ||
+          (currentRelevant && (!history.length || !priorIds.length || newTopic)) ||
+          (broad && cosine(p, vectors[0]) >= 0.4)
+        )
+          eligible.add(p.meetingId)
+      }
+    }
+    const ordered = [...ranked.values()].sort((a, b) => b.score - a.score)
+    // Experiment only: preserve the normal cap unless explicitly requested.
+    const maxPassages = process.env.AUTODOC_ASK_AI_MAX_PASSAGES === '12' ? 12 : 8
+    const picked: Passage[] = []
+    const counts = new Map<string, number>()
+    const add = (p: Passage): boolean => {
+      if (
+        picked.length >= maxPassages ||
+        (counts.get(p.meetingId) ?? 0) >= (carried.has(p.meetingId) ? 2 : 3)
+      )
+        return false
+      if (
+        picked.some(
+          (other) =>
+            other.meetingId === p.meetingId &&
+            normalizeDuplicateEvidence(other.text).includes(normalizeDuplicateEvidence(p.text))
+        )
+      )
+        return false
+      picked.push(p)
+      counts.set(p.meetingId, (counts.get(p.meetingId) ?? 0) + 1)
+      return true
+    }
+    // Reserve only the explicit primary-meeting carry, ranked by this question.
+    // Previous search results remain ranking hints, never automatic eligibility.
+    for (const id of carried) for (const { p } of current) if (p.meetingId === id) add(p)
+    if (broad) {
+      // One best passage per eligible meeting first, so a few meetings cannot fill the cap.
+      const firsts = new Set<string>()
+      for (const { p } of ordered)
+        if (eligible.has(p.meetingId) && !firsts.has(p.meetingId)) {
+          firsts.add(p.meetingId)
+          add(p)
+        }
+    }
+    for (const { p } of ordered) {
+      if (eligible.has(p.meetingId)) add(p)
+      if (picked.length >= maxPassages) break
+    }
+    const primaryMeetingIds = named.size
+      ? [...named].slice(0, 2)
+      : [
+          ordered.find(({ p }) => picked.some((chosen) => chosen.key === p.key))?.p.meetingId ??
+            picked[0]?.meetingId
+        ].filter((id): id is string => Boolean(id))
     if (!picked.length) return null
     picked.sort(
       (a, b) =>
