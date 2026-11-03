@@ -253,7 +253,7 @@ it('clarifies immediately with meeting options on the tool-less tier, and search
   ).not.toHaveProperty('offerSearchAll')
 })
 
-it('lists saved recordings newest first for unscoped writers only', async () => {
+it('lists saved recordings newest first only on an unscoped first turn without a dominant meeting', async () => {
   const { handler, writerRequests, sender } = modelHarness('test')
   await handler('chat:send-stream')({ sender } as never, 'a', 'Quarterly vendor budget approved?')
   expect(writerRequests[0].messages[1].content).toContain(
@@ -266,6 +266,11 @@ it('lists saved recordings newest first for unscoped writers only', async () => 
     'What was the budget?'
   )
   expect(writerRequests[1].messages[1].content).not.toContain('Saved recordings')
+  await handler('chat:send-stream')({ sender } as never, 'c', 'And who approved it?', [
+    { role: 'user', content: 'Quarterly vendor budget approved?' },
+    { role: 'assistant', content: 'Yes.' }
+  ])
+  expect(JSON.stringify(writerRequests.at(-1)!.messages)).not.toContain('Saved recordings')
 })
 
 it('answers exact whole-library count and list aliases from the inventory without any model call', async () => {

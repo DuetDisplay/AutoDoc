@@ -342,13 +342,6 @@ export function registerChatIpc(
         history,
         question: originalQuestion,
         inventoryCount: inventory.length,
-        ...(params.scopedMeetingIds?.length
-          ? {}
-          : {
-              recordings: inventory
-                .map((meeting) => `${meeting.title} (${localIsoDate(meeting.date)})`)
-                .join('; ')
-            }),
         scopedMeetingIds: params.scopedMeetingIds,
         replyLanguage,
         focusedMeetingIds: [...(params.session.lastEvidenceRecordingIds ?? [])]
@@ -466,8 +459,16 @@ export function registerChatIpc(
         conversation: {
           ...conversation,
           calendar: params.scopedMeetingIds?.length ? undefined : conversationCalendarCache?.text,
-          ...(unanchoredInitial && !params.searchAll && !retrieved?.retrievalConfidence?.confident
-            ? { spanning: true }
+          // Only when no single meeting stands out (library-wide or cross-meeting questions): a
+          // title/date list beside one meeting's evidence led the small writer to answer with a
+          // recording date instead of the meeting's own facts.
+          ...(unanchoredInitial && !retrieved?.retrievalConfidence?.confident
+            ? {
+                recordings: inventory
+                  .map((meeting) => `${meeting.title} (${localIsoDate(meeting.date)})`)
+                  .join('; '),
+                ...(params.searchAll ? {} : { spanning: true })
+              }
             : {})
         }
       }
