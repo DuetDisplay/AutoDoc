@@ -293,8 +293,9 @@ interface ChatRecordingIndexOptions {
 export interface ChatEmbeddingProvider {
   readonly model: string
   readonly cacheIdentity?: string
+  readonly availabilityReason?: 'unknown' | 'available' | 'missing' | 'disabled' | 'unreachable'
   isAvailable(): Promise<boolean>
-  embed(texts: string[]): Promise<number[][]>
+  embed(texts: string[], signal?: AbortSignal): Promise<number[][]>
 }
 
 interface SemanticRetrievalDiagnostics {

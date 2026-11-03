@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { useAskAiAppendFollowups } from './ask-ai-writer-session'
-import { mkdir } from 'fs/promises'
+import { mkdir, rename, stat, unlink } from 'fs/promises'
+import type { AskAiPrepareResult } from './ask-ai-index-prewarm'
 import { dirname } from 'path'
 import { decryptJSON, encryptJSON } from './crypto'
 import type { ChatEmbeddingProvider } from './chat-retrieval'
@@ -95,7 +96,7 @@ export class AskAiPassages {
   private vectors = new Map<string, number[]>()
   private loaded = false
   private passageCache = new Map<string, { signature: string; title: string; rows: Passage[] }>()
-  private indexing: Promise<void> | null = null
+  private indexing: Promise<AskAiPrepareResult> | null = null
   private controlVectors: Array<{ kind: string; vector: number[] }> = []
   private queryVectors = new Map<string, number[]>()
   private version: string
@@ -177,15 +178,60 @@ export class AskAiPassages {
     return output
   }
 
+  get isPreparing(): boolean {
+    return this.indexing !== null
+  }
+
+  inspect(meetings: IndexedMeeting[]): { completed: number; total: number } {
+    const passages = this.passages(meetings)
+    return {
+      completed: passages.filter((p) => this.vectors.has(p.key)).length,
+      total: passages.length
+    }
+  }
+
+  private async checkpoint(reason: 'periodic' | 'pause' | 'complete'): Promise<void> {
+    const started = Date.now()
+    await mkdir(dirname(this.cachePath), { recursive: true })
+    const temporary = `${this.cachePath}.checkpoint`
+    try {
+      // Only ciphertext is written. Rename keeps the previous checkpoint valid on a crash.
+      await encryptJSON({ version: this.version, rows: [...this.vectors] }, temporary)
+      await rename(temporary, this.cachePath)
+      logAutodocEvent({
+        area: 'chat',
+        message: 'Ask AI index checkpoint written',
+        context: {
+          reason,
+          vectors: this.vectors.size,
+          elapsedMs: Date.now() - started,
+          bytes: (await stat(this.cachePath)).size
+        }
+      })
+    } finally {
+      await unlink(temporary).catch(() => {})
+    }
+  }
+
   async prepare(
     meetings: IndexedMeeting[],
-    canInfer: () => boolean | Promise<boolean> = () => true
-  ): Promise<void> {
-    if (!(await canInfer())) return
-    if (this.indexing) await this.indexing
-    const work = async (): Promise<void> => {
-      if (!(await canInfer())) return
-      if (!(await this.provider.isAvailable())) return
+    canInfer: () => boolean | Promise<boolean> = () => true,
+    options: {
+      signal?: AbortSignal
+      batchSize?: number
+      onProgress?: (done: number, total: number, added: number) => void
+      checkpoint?: boolean
+    } = {}
+  ): Promise<AskAiPrepareResult> {
+    if (!(await canInfer())) return 'paused'
+    while (this.indexing) await this.indexing
+    const work = async (): Promise<AskAiPrepareResult> => {
+      if (!(await canInfer())) return 'paused'
+      if (!(await this.provider.isAvailable())) {
+        if (options.checkpoint && this.provider.availabilityReason === 'unreachable')
+          throw new Error('Embedding availability probe temporarily unreachable')
+        return 'unavailable'
+      }
       const version = `passages-v2:${this.provider.cacheIdentity ?? this.provider.model}:writer180-overlap40:dim${process.env.AUTODOC_ASK_AI_VECTOR_DIM || 'full'}`
       if (version !== this.version) {
         this.version = version
@@ -206,7 +252,7 @@ export class AskAiPassages {
         this.loaded = true
       }
       if (process.env.AUTODOC_ASK_AI_INTENTS === 'semantic' && this.controlVectors.length === 0) {
-        if (!(await canInfer())) return
+        if (!(await canInfer())) return 'paused'
         const examples = [
           { kind: 'count', text: 'How many recorded meetings do I have in total?' },
           { kind: 'count', text: 'What is the total number of audio recordings in my library?' },
@@ -230,33 +276,57 @@ export class AskAiPassages {
       }
       const passages = this.passages(meetings)
       const missing = passages.filter((p) => !this.vectors.has(p.key))
-      for (let at = 0; at < missing.length; at += 16) {
-        if (!(await canInfer())) return
-        const batch = missing.slice(at, at + 16)
-        const embeddings = await this.provider.embed(
-          batch.map((p) => this.textInput(`${p.title}\n${p.text}`, false))
-        )
-        batch.forEach((p, i) => this.vectors.set(p.key, this.normalize(embeddings[i])))
-      }
-      const current = new Set(passages.map((p) => p.key))
-      let removed = false
-      const currentMeetings = new Set(meetings.map((m) => m.meetingId))
-      for (const id of this.passageCache.keys())
-        if (!currentMeetings.has(id)) this.passageCache.delete(id)
-      for (const key of this.vectors.keys())
-        if (!current.has(key)) {
-          this.vectors.delete(key)
-          removed = true
+      const batchSize = options.batchSize ?? 16
+      let added = 0,
+        checkpointAt = 0
+      let finished = false
+      options.onProgress?.(passages.length - missing.length, passages.length, 0)
+      try {
+        for (let at = 0; at < missing.length; at += batchSize) {
+          options.signal?.throwIfAborted()
+          if (!(await canInfer())) return 'paused'
+          const batch = missing.slice(at, at + batchSize)
+          const texts = batch.map((p) => this.textInput(`${p.title}\n${p.text}`, false))
+          const embeddings = await (options.signal
+            ? this.provider.embed(texts, options.signal)
+            : this.provider.embed(texts))
+          options.signal?.throwIfAborted()
+          batch.forEach((p, i) => this.vectors.set(p.key, this.normalize(embeddings[i])))
+          added += batch.length
+          options.onProgress?.(passages.length - missing.length + added, passages.length, added)
+          if (options.checkpoint && added - checkpointAt >= 512) {
+            await this.checkpoint('periodic')
+            checkpointAt = added
+          }
         }
-      if (missing.length || removed) {
-        await mkdir(dirname(this.cachePath), { recursive: true })
-        // Same local encryption as meeting data; no persisted text or question history.
-        await encryptJSON({ version: this.version, rows: [...this.vectors] }, this.cachePath)
+        options.signal?.throwIfAborted()
+        if (!(await canInfer())) return 'paused'
+        const current = new Set(passages.map((p) => p.key))
+        let removed = false
+        const currentMeetings = new Set(meetings.map((m) => m.meetingId))
+        for (const id of this.passageCache.keys())
+          if (!currentMeetings.has(id)) this.passageCache.delete(id)
+        for (const key of this.vectors.keys())
+          if (!current.has(key)) {
+            this.vectors.delete(key)
+            removed = true
+          }
+        if (missing.length || removed) {
+          if (options.checkpoint) await this.checkpoint('complete')
+          else {
+            await mkdir(dirname(this.cachePath), { recursive: true })
+            await encryptJSON({ version: this.version, rows: [...this.vectors] }, this.cachePath)
+          }
+        }
+        finished = true
+        return 'ready'
+      } finally {
+        if (!finished && options.checkpoint) await this.checkpoint('pause')
       }
     }
     this.indexing = work()
     try {
-      await this.indexing
+      return await this.indexing
     } finally {
       this.indexing = null
     }

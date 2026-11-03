@@ -319,6 +319,10 @@ let ollamaManager: OllamaManager | null = null
 let ollamaPostWakeScheduler: ReturnType<typeof createOllamaPostWakeScheduler> | null = null
 let shutdownTranscriptionWorker: (() => void) | null = null
 let shutdownAskAiConversationHolds: () => void = () => {}
+let refreshAskAiPassageIndex: (
+  trigger: 'launch' | 'notes' | 'model',
+  model?: string
+) => void = () => {}
 let isQuitting = false
 let prepareRecordingQuit: () => Promise<void> = async () => {}
 let getUpdateInstallBlockReason: () => string | undefined = () =>
@@ -1644,6 +1648,7 @@ app.whenReady().then(async () => {
   }
   let githubStarPromptService: GithubStarPromptService | null = null
   segmentationService.onComplete((meetingId) => {
+    refreshAskAiPassageIndex('notes')
     void githubStarPromptService?.recordCompletedMeeting(meetingId)
     const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
     void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, { allowRepeat })
@@ -2334,7 +2339,7 @@ app.whenReady().then(async () => {
   )
   const meetingIndex = new MeetingIndexService(recordingService.getRecordingsBaseDir())
   registerSearchIpc(recordingService.getRecordingsBaseDir(), meetingIndex)
-  shutdownAskAiConversationHolds = registerChatIpc(
+  const chatCleanup = registerChatIpc(
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
@@ -2358,11 +2363,16 @@ app.whenReady().then(async () => {
         return segmentationService.holdForInteractiveAnswer(signal)
       },
       canWarmup: () =>
-        !recordingService.getState().isRecording &&
+        !recordingService.hasActiveCapture() &&
         !transcriptionService.hasActiveOrQueuedWork() &&
         !segmentationService.hasActiveOrQueuedWork() &&
         localProcessingCoordinator.getActiveKind() == null
     }
+  )
+  shutdownAskAiConversationHolds = chatCleanup
+  refreshAskAiPassageIndex = chatCleanup.indexChanged
+  managedOllamaManager.on('pull-complete', (model: string) =>
+    refreshAskAiPassageIndex('model', model)
   )
   app.on('will-quit', shutdownAskAiConversationHolds)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
@@ -2412,6 +2422,8 @@ app.whenReady().then(async () => {
     })
     console.error('Encryption migration failed:', err)
   }
+
+  refreshAskAiPassageIndex('launch')
 
   registerPrefsIpc(
     prefsStore,

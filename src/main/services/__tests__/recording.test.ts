@@ -32,6 +32,15 @@ describe('RecordingService', () => {
     expect(state.startedAt).toBeNull()
   })
 
+  it('counts capture startup as active before the recording state is published', async () => {
+    const pending = service.startRecording('source-123', 'Synthetic workshop')
+    expect(service.getState().isRecording).toBe(false)
+    expect(service.hasActiveCapture()).toBe(true)
+    await pending
+    service.stopRecording()
+    expect(service.hasActiveCapture()).toBe(false)
+  })
+
   it('transitions to recording state on start', async () => {
     const paths = await service.startRecording('source-123', 'Zoom Meeting', {
       meetingSourceId: 'window:zoom',

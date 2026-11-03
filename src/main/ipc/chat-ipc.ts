@@ -1,3 +1,6 @@
+import { AskAiIndexPrewarm, useAskAiIndexPrewarm } from '../services/ask-ai-index-prewarm'
+import type { AskAiIndexStatus } from '../../shared/ask-ai-index-status'
+import { existsSync } from 'fs'
 import { AskAiConversationHolds } from '../services/ask-ai-conversation-hold'
 import {
   useAskAiAppendFollowups,
@@ -9,7 +12,7 @@ import {
   conversationTitleAnchors,
   meetingSubjectClarification
 } from '../services/ask-ai-conversation'
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, type WebContents } from 'electron'
 import {
   chatReplyRequest,
   resolveChatReplyLanguage,
@@ -230,7 +233,10 @@ export function registerChatIpc(
     getPendingNotesIds?: () => string[]
     getWriterContextTokens?: () => number
   } = {}
-): () => void {
+): (() => void) & {
+  indexChanged: (trigger?: 'launch' | 'notes' | 'model', model?: string) => void
+  getIndexStatus: () => AskAiIndexStatus
+} {
   // Resolve at request time: hardware selection and legacy fallback can change
   // after registration. The shared notes provider may have a test-only override.
   const writerModel = (): string =>
@@ -245,12 +251,86 @@ export function registerChatIpc(
     embeddingCachePath: join(app.getPath('userData'), 'cache', 'ask-ai-embeddings.json'),
     meetingIndex
   })
+  const passageCachePath = join(app.getPath('userData'), 'cache', 'ask-ai-passages.enc')
+  const passageEmbeddingProvider = new OllamaEmbeddingProvider(ollamaManager.getBaseUrl())
   const passageIndex = useAskAiPassages()
-    ? new AskAiPassages(
-        new OllamaEmbeddingProvider(ollamaManager.getBaseUrl()),
-        join(app.getPath('userData'), 'cache', 'ask-ai-passages.enc')
-      )
+    ? new AskAiPassages(passageEmbeddingProvider, passageCachePath)
     : null
+  const openSenders = new Map<number, WebContents>()
+  const observedSenders = new WeakSet<WebContents>()
+  let openedOnce = false
+  let deferredWarmup = false
+  let warmupPromise: Promise<{ warmed: boolean; reason?: string }> | null = null
+  const canIndex = async (): Promise<boolean> =>
+    !(options.isProcessing?.() ?? false) && ((await options.canWarmup?.()) ?? true)
+  const idleStatus = (): AskAiIndexStatus => ({ state: 'idle', percent: 0, significant: false })
+  const indexPrewarm =
+    passageIndex && useAskAiIndexPrewarm()
+      ? new AskAiIndexPrewarm({
+          canRun: canIndex,
+          inspect: async () => passageIndex.inspect(await meetingIndex.listMeetings()),
+          prepare: async (signal, onProgress) => {
+            await waitForOllama(ollamaManager, signal)
+            return passageIndex.prepare(await meetingIndex.listMeetings(), canIndex, {
+              signal,
+              batchSize: 4,
+              onProgress,
+              checkpoint: true
+            })
+          },
+          onChange: (status) => {
+            for (const sender of openSenders.values())
+              if (!sender.isDestroyed?.()) sender.send('chat:index-status-changed', status)
+          },
+          onIdle: () => void tryDeferredWarmup()
+        })
+      : null
+  const closeIndexPage = (id: number): void => {
+    openSenders.delete(id)
+    if (!openSenders.size) deferredWarmup = false
+  }
+  const openIndexPage = (sender?: WebContents): void => {
+    if (!indexPrewarm || !sender || openSenders.has(sender.id)) return
+    openedOnce = true
+    openSenders.set(sender.id, sender)
+    if (!observedSenders.has(sender)) {
+      observedSenders.add(sender)
+      const close = (): void => closeIndexPage(sender.id)
+      sender.once?.('destroyed', close)
+      sender.on?.('render-process-gone', close)
+      sender.on?.('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+        if (mainFrame && !inPlace) close()
+      })
+      sender.on?.('did-navigate-in-page', close)
+    }
+    if (indexPrewarm.unavailable) passageEmbeddingProvider.invalidateAvailability()
+    if (indexPrewarm.unavailable || indexPrewarm.snapshot().state === 'idle') indexPrewarm.request()
+  }
+  const indexChanged = (trigger: 'launch' | 'notes' | 'model' = 'notes', model?: string): void => {
+    if (!indexPrewarm) return
+    if (trigger === 'model') {
+      if (
+        model !== passageEmbeddingProvider.model ||
+        (!openedOnce && !existsSync(passageCachePath))
+      )
+        return
+      passageEmbeddingProvider.invalidateAvailability()
+    } else if (!existsSync(passageCachePath)) return
+    indexPrewarm.request()
+  }
+  async function tryDeferredWarmup(): Promise<void> {
+    if (
+      !deferredWarmup ||
+      !openSenders.size ||
+      !indexPrewarm ||
+      (!indexPrewarm.ready && !indexPrewarm.unavailable)
+    )
+      return
+    if (!(await canIndex())) return
+    deferredWarmup = false
+    const result = await normalWarmup()
+    if (!result.warmed && result.reason === 'busy') deferredWarmup = true
+  }
   const acquireGenerationPriority = async (
     question: string,
     signal?: AbortSignal
@@ -298,6 +378,13 @@ export function registerChatIpc(
       )
       const unanchoredInitial =
         history.length === 0 && named.size === 0 && !params.scopedMeetingIds?.length
+      const lexicalFallback = Boolean(indexPrewarm && !indexPrewarm.ready)
+      if (lexicalFallback)
+        logAutodocEvent({
+          area: 'chat',
+          message: 'Ask AI lexical fallback',
+          context: { indexPreparing: true }
+        })
       let prefetched: AskAiAnswer | null = null
       // Relevance order of the retrieved meetings, for clarification options.
       let rankedIds: string[] = []
@@ -314,7 +401,7 @@ export function registerChatIpc(
             [],
             undefined,
             params.signal,
-            () => !(options.isProcessing?.() ?? false),
+            lexicalFallback ? () => false : () => !(options.isProcessing?.() ?? false),
             [],
             onRanked
           )
@@ -393,7 +480,7 @@ export function registerChatIpc(
                 params.session.lastEvidenceRecordingIds ?? params.session.focusedRecordingIds,
                 params.scopedMeetingIds,
                 params.signal,
-                () => !(options.isProcessing?.() ?? false),
+                lexicalFallback ? () => false : () => !(options.isProcessing?.() ?? false),
                 params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? [],
                 onRanked
               )
@@ -1289,6 +1376,7 @@ export function registerChatIpc(
   })
   ipcMain.handle('chat:close', (event): void => {
     conversationHolds.close(event.sender.id)
+    closeIndexPage(event.sender.id)
   })
   ipcMain.handle(
     'chat:notes-work',
@@ -1327,7 +1415,7 @@ export function registerChatIpc(
     session.lastReplyLanguage = undefined
   })
 
-  ipcMain.handle('chat:warmup', async (): Promise<{ warmed: boolean; reason?: string }> => {
+  async function warmupAttempt(): Promise<{ warmed: boolean; reason?: string }> {
     if (process.env.AUTODOC_ASK_AI_WARMUP === '0') return { warmed: false, reason: 'disabled' }
     if (options.canWarmup && !(await options.canWarmup())) {
       logAutodocEvent({
@@ -1341,7 +1429,7 @@ export function registerChatIpc(
       await waitForOllama(ollamaManager)
       if (options.canWarmup && !(await options.canWarmup()))
         return { warmed: false, reason: 'busy' }
-      if (passageIndex)
+      if (passageIndex && (!indexPrewarm || indexPrewarm.ready))
         await passageIndex.prepare(await meetingIndex.listMeetings(), options.canWarmup)
       if (options.canWarmup && !(await options.canWarmup()))
         return { warmed: false, reason: 'busy' }
@@ -1367,6 +1455,27 @@ export function registerChatIpc(
     } catch {
       return { warmed: false, reason: 'unavailable' }
     }
+  }
+  function normalWarmup(): Promise<{ warmed: boolean; reason?: string }> {
+    if (!indexPrewarm) return warmupAttempt()
+    if (!warmupPromise)
+      warmupPromise = warmupAttempt().finally(() => {
+        warmupPromise = null
+      })
+    return warmupPromise
+  }
+  ipcMain.handle('chat:warmup', async (event): Promise<{ warmed: boolean; reason?: string }> => {
+    const wasUnavailable = indexPrewarm?.unavailable
+    openIndexPage(event?.sender)
+    if (wasUnavailable) {
+      deferredWarmup = false
+      return normalWarmup()
+    }
+    if (indexPrewarm && !indexPrewarm.ready && !indexPrewarm.unavailable) {
+      deferredWarmup = true
+      return { warmed: false, reason: 'indexing' }
+    }
+    return normalWarmup()
   })
 
   ipcMain.handle('chat:cancel', (_event, requestId: string): void => {
@@ -1696,7 +1805,14 @@ export function registerChatIpc(
       }
     }
   )
-  return () => conversationHolds.shutdown()
+  return Object.assign(
+    () => {
+      indexPrewarm?.stop()
+      openSenders.clear()
+      conversationHolds.shutdown()
+    },
+    { indexChanged, getIndexStatus: () => indexPrewarm?.snapshot() ?? idleStatus() }
+  )
 }
 
 /** Local-calendar YYYY-MM-DD. */

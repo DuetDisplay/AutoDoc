@@ -8,6 +8,7 @@ const EMBED_KEEP_ALIVE = process.env.AUTODOC_ASK_AI_EMBED_KEEP_ALIVE ?? '10m'
 
 export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
   readonly model: string
+  availabilityReason: 'unknown' | 'available' | 'missing' | 'disabled' | 'unreachable' = 'unknown'
   private availability: boolean | null = null
   private modelDigest: string | null = null
   get cacheIdentity(): string {
@@ -24,8 +25,17 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
     this.model = model
   }
 
+  invalidateAvailability(): void {
+    this.availability = null
+    this.availabilityReason = 'unknown'
+    this.availabilityCheckedAt = 0
+  }
+
   async isAvailable(): Promise<boolean> {
-    if (process.env.AUTODOC_ASK_AI_EMBEDDINGS === '0') return false
+    if (process.env.AUTODOC_ASK_AI_EMBEDDINGS === '0') {
+      this.availabilityReason = 'disabled'
+      return false
+    }
     if (this.availability === true) return true
     if (
       this.availability === false &&
@@ -39,6 +49,7 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
         signal: AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)
       })
       if (!res.ok) {
+        this.availabilityReason = 'unreachable'
         this.availability = false
         this.availabilityCheckedAt = Date.now()
         return false
@@ -51,24 +62,28 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
         const name = entry.name ?? entry.model ?? ''
         return name === this.model || name.startsWith(`${this.model}:`)
       })
+      this.availabilityReason = installed ? 'available' : 'missing'
       this.availability = Boolean(installed)
       this.modelDigest = installed?.digest ?? null
       this.availabilityCheckedAt = Date.now()
       return this.availability
     } catch {
+      this.availabilityReason = 'unreachable'
       this.availability = false
       this.availabilityCheckedAt = Date.now()
       return false
     }
   }
 
-  async embed(texts: string[]): Promise<number[][]> {
+  async embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
     if (texts.length === 0) return []
 
     const res = await fetch(`${this.baseUrl}/api/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(EMBED_TIMEOUT_MS)])
+        : AbortSignal.timeout(EMBED_TIMEOUT_MS),
       body: JSON.stringify({
         model: this.model,
         input: texts,
