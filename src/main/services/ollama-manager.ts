@@ -1764,12 +1764,14 @@ export class OllamaManager extends EventEmitter {
           }
         }
       } else {
-        const pids = execSync(`lsof -ti :${OLLAMA_PORT}`, {
+        // Only the listener: a bare `:port` also matches clients, including this app's own
+        // keep-alive connection, and SIGKILLing ourselves mid-quit skipped the runner reap.
+        const pids = execSync(`lsof -ti tcp:${OLLAMA_PORT} -sTCP:LISTEN`, {
           encoding: 'utf-8',
           timeout: 5000
         }).trim()
         for (const pid of pids.split(/\n/)) {
-          if (pid) {
+          if (pid && Number(pid) !== process.pid) {
             try {
               process.kill(Number(pid), 'SIGKILL')
               killedPids.push(Number(pid))

@@ -1912,3 +1912,17 @@ it('does not reap a live Ask AI runner at a notes boundary and releases requests
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+it('on macOS kills only the port listener, never this app as an Ollama client', async () => {
+  setPlatform('darwin')
+  vi.resetModules()
+  const execSync = vi.fn((cmd: string) => (cmd.startsWith('lsof') ? `${process.pid}\n4242\n` : ''))
+  vi.doMock('electron', () => ({ app: { getPath: vi.fn(() => tmpdir()), isPackaged: false } }))
+  vi.doMock('child_process', () => ({ spawn: vi.fn(), execFile: vi.fn(), execSync }))
+  vi.doMock('../autodoc-log', () => ({ logAutodocEvent: vi.fn(), logAutodocFailure: vi.fn() }))
+  const { OllamaManager } = await import('../ollama-manager')
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+  ;(new OllamaManager() as unknown as { killProcessOnPort(): void }).killProcessOnPort()
+  expect(execSync.mock.calls[0][0]).toMatch(/^lsof -ti tcp:\d+ -sTCP:LISTEN$/)
+  expect(kill.mock.calls).toEqual([[4242, 'SIGKILL']])
+})
