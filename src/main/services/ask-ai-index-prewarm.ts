@@ -34,7 +34,12 @@ export class AskAiIndexPrewarm {
   constructor(
     private options: {
       canRun: () => boolean | Promise<boolean>
-      inspect: () => Promise<{ completed: number; total: number; semanticReady?: boolean }>
+      inspect: () => Promise<{
+        completed: number
+        total: number
+        semanticReady?: boolean
+        unavailable?: boolean
+      }>
       prepare: (signal: AbortSignal, progress: Progress) => Promise<AskAiPrepareResult>
       onChange?: (status: AskAiIndexStatus) => void
       onIdle?: () => void
@@ -50,7 +55,7 @@ export class AskAiIndexPrewarm {
     return this.queryReady || this.ready
   }
   async whenInspected(): Promise<void> {
-    await this.planning
+    while (this.planning) await this.planning
   }
   get unavailable(): boolean {
     return this.status.state === 'unavailable'
@@ -61,7 +66,7 @@ export class AskAiIndexPrewarm {
 
   request(): void {
     if (this.stopped) return
-    if (!this.requested || this.ready)
+    if (!this.requested || this.ready || this.unavailable)
       this.status = { state: 'preparing', percent: 0, significant: false }
     this.requested = true
     this.failures = 0
@@ -74,10 +79,17 @@ export class AskAiIndexPrewarm {
     // Inspection restores/upgrades derived coverage metadata without model inference.
     const planning = this.options
       .inspect()
-      .then(({ completed, total, semanticReady }) => {
+      .then(({ completed, total, semanticReady, unavailable }) => {
         if (this.planning !== planning || this.stopped) return
         this.completed = completed
         this.total = total
+        if (unavailable) {
+          this.queryReady = false
+          this.dirty = false
+          this.setState('unavailable')
+          this.options.onIdle?.()
+          return
+        }
         this.queryReady = semanticReady ?? completed === total
         if (completed === total) {
           this.dirty = false
@@ -145,7 +157,7 @@ export class AskAiIndexPrewarm {
       if (this.stopped) return
       if (!allowed) {
         this.active?.abort()
-        if (this.dirty || this.active) this.setState('paused')
+        if (!this.ready && !this.unavailable && (this.dirty || this.active)) this.setState('paused')
         return
       }
       if (this.ready || this.unavailable) this.options.onIdle?.()
@@ -175,19 +187,14 @@ export class AskAiIndexPrewarm {
           }
         })
         .then(async (result) => {
-          if (this.stopped) return
+          if (this.stopped || generation !== this.generation) return
           const context = {
             elapsedMs: Date.now() - started,
             completed: this.completed,
             total: this.total,
             newEmbeddings: added
           }
-          if (
-            generation !== this.generation ||
-            controller.signal.aborted ||
-            result === 'paused' ||
-            !(await this.options.canRun())
-          ) {
+          if (controller.signal.aborted || result === 'paused' || !(await this.options.canRun())) {
             this.dirty = true
             this.setState('paused')
             logAutodocEvent({ area: 'chat', message: 'Ask AI index prewarm paused', context })
@@ -210,8 +217,8 @@ export class AskAiIndexPrewarm {
           }
         })
         .catch((error) => {
-          if (this.stopped) return
-          if (controller.signal.aborted || generation !== this.generation) {
+          if (this.stopped || generation !== this.generation) return
+          if (controller.signal.aborted) {
             this.dirty = true
             this.setState('paused')
             logAutodocEvent({

@@ -269,8 +269,10 @@ export class AskAiPassages {
 
   async inspect(
     meetings: IndexedMeeting[]
-  ): Promise<{ completed: number; total: number; semanticReady: boolean }> {
-    if (await this.provider.isAvailable()) this.selectProviderVersion()
+  ): Promise<{ completed: number; total: number; semanticReady: boolean; unavailable: boolean }> {
+    const available = await this.provider.isAvailable()
+    const unavailable = !available && this.provider.availabilityReason !== 'unreachable'
+    if (available) this.selectProviderVersion()
     await this.loadSavedCache(true)
     const passages = this.passages(meetings)
     const completed = passages.filter((p) => this.vectors.has(p.key)).length
@@ -285,7 +287,12 @@ export class AskAiPassages {
       (this.coveredMeetingIds.size > 0 &&
         completed > 0 &&
         passages.every((p) => this.vectors.has(p.key) || !this.coveredMeetingIds.has(p.meetingId)))
-    return { completed, total: passages.length, semanticReady }
+    return {
+      completed,
+      total: passages.length,
+      semanticReady: !unavailable && semanticReady,
+      unavailable
+    }
   }
 
   private cacheData(): VectorCache {

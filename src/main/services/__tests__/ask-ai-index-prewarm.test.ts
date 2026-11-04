@@ -153,3 +153,82 @@ it('resets consecutive failures after any successful batch', async () => {
     scheduler.stop()
   }
 })
+
+it('does not let an obsolete paused preparation overwrite a newer complete-cache inspection', async () => {
+  vi.useFakeTimers()
+  let allowed = true,
+    inspected = false,
+    finish!: () => void
+  const scheduler = new AskAiIndexPrewarm({
+    canRun: () => allowed,
+    inspect: async () => ({ completed: inspected ? 100 : 0, total: 100 }),
+    prepare: async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      return 'paused'
+    }
+  })
+  try {
+    scheduler.request()
+    await vi.advanceTimersByTimeAsync(1)
+    allowed = false
+    inspected = true
+    scheduler.request()
+    await scheduler.whenInspected()
+    expect(scheduler.ready).toBe(true)
+    finish()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(scheduler.ready).toBe(true)
+  } finally {
+    scheduler.stop()
+  }
+})
+
+it('waits for the latest inspection when a request supersedes an in-flight one', async () => {
+  vi.useFakeTimers()
+  const releases: Array<() => void> = []
+  const scheduler = new AskAiIndexPrewarm({
+    canRun: () => false,
+    inspect: async () => {
+      await new Promise<void>((resolve) => releases.push(resolve))
+      return { completed: 100, total: 100 }
+    },
+    prepare: vi.fn()
+  })
+  try {
+    scheduler.request()
+    let settled = false
+    const waiting = scheduler.whenInspected().then(() => {
+      settled = true
+    })
+    scheduler.request()
+    releases[0]()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)
+    releases[1]()
+    await waiting
+    expect(scheduler.ready).toBe(true)
+  } finally {
+    scheduler.stop()
+  }
+})
+
+it('keeps definitive embedding unavailability hidden while notes block background work', async () => {
+  vi.useFakeTimers()
+  const prepare = vi.fn()
+  const scheduler = new AskAiIndexPrewarm({
+    canRun: () => false,
+    inspect: async () => ({ completed: 0, total: 100, unavailable: true }),
+    prepare
+  })
+  try {
+    scheduler.request()
+    await scheduler.whenInspected()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(scheduler.unavailable).toBe(true)
+    expect(prepare).not.toHaveBeenCalled()
+  } finally {
+    scheduler.stop()
+  }
+})
