@@ -1239,7 +1239,12 @@ export class OllamaManager extends EventEmitter {
       if (!options.forceRespawn) {
         running = await this.isServerRunning(SERVE_ADOPTION_PROBE_TIMEOUT_MS)
         this.assertStartEpoch(epoch)
-        ownsPort = tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid)
+        ownsPort =
+          tracked.pid != null &&
+          (IS_WIN
+            ? this.getListeningPidsOnOllamaPort().includes(tracked.pid)
+            : await this.ownsTrackedPortOnMac(tracked.pid))
+        this.assertStartEpoch(epoch)
         if (running && ownsPort && this.isCurrentLiveChild(tracked)) {
           this.readyServeProcess = tracked
           this.readyAtMs ??= Date.now()
@@ -1648,6 +1653,22 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
+  private async ownsTrackedPortOnMac(pid: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      execFile(
+        'lsof',
+        ['-ti', `tcp:${OLLAMA_PORT}`, '-sTCP:LISTEN'],
+        { encoding: 'utf-8', timeout: 5000 },
+        (error, output) => {
+          // Exit 1 with no output means no listener. On inspection failure retain
+          // the base macOS policy: trust our live tracked child if it answers.
+          if (error && error.code !== 1) return resolve(true)
+          resolve(output.trim().split(/\s+/).map(Number).includes(pid))
+        }
+      )
+    })
+  }
+
   private getListeningPidsOnOllamaPort(): number[] {
     try {
       if (!IS_WIN) {
@@ -1733,13 +1754,65 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
+  private async trackedRunnerDescendants(proc: ChildProcess): Promise<number[]> {
+    if (IS_WIN || proc.pid == null || !this.isCurrentLiveChild(proc)) return []
+    return new Promise((resolve) => {
+      execFile(
+        'ps',
+        ['-axo', 'pid=,ppid=,rss=,command='],
+        { encoding: 'utf-8', timeout: 5000 },
+        (error, output) => {
+          if (error) return resolve([])
+          const rows = output.split(/\r?\n/).flatMap((line) => {
+            const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/)
+            return match
+              ? [
+                  {
+                    pid: Number(match[1]),
+                    parent: Number(match[2]),
+                    listing: `${match[1]} ${match[3]} ${match[4]}`
+                  }
+                ]
+              : []
+          })
+          const descendants = new Set([proc.pid!])
+          let previousSize = 0
+          while (previousSize !== descendants.size) {
+            previousSize = descendants.size
+            for (const row of rows) if (descendants.has(row.parent)) descendants.add(row.pid)
+          }
+          resolve(
+            parseManagedLlamaServers(
+              rows
+                .filter((row) => row.pid !== proc.pid && descendants.has(row.pid))
+                .map((row) => row.listing)
+                .join('\n'),
+              this.getRuntimeDir()
+            ).map((runner) => runner.pid)
+          )
+        }
+      )
+    })
+  }
+
   private async killProcessAndWait(proc: ChildProcess, reason: OllamaKillReason): Promise<boolean> {
+    // Snapshot ancestry before killing the serve: macOS reparents surviving runners.
+    // Windows already kills the owned process tree through taskkill /t.
+    const runnerPids = IS_WIN ? [] : await this.trackedRunnerDescendants(proc)
     // Record before killing so the exit handler can read it regardless of event ordering.
     this.markIntentionalKill(proc, reason)
     if (proc.pid != null) {
       await this.killProcessByPid(proc.pid)
     } else if (!IS_WIN) {
       proc.kill('SIGTERM')
+    }
+    // These belong to this tracked serve, independently of the startup reap latch.
+    for (const pid of runnerPids) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        /* already exited with the serve */
+      }
     }
     if (await this.waitForProcessExit(proc)) {
       return true
