@@ -269,7 +269,9 @@ export function registerChatIpc(
       ? new AskAiIndexPrewarm({
           canRun: canIndex,
           inspect: async () => {
-            await waitForOllama(ollamaManager, AbortSignal.timeout(2000))
+            // This shared background task may span startup. Individual question
+            // and warmup waits are separately bounded and abortable.
+            await waitForOllama(ollamaManager)
             return passageIndex.inspect(await meetingIndex.listMeetings())
           },
           prepare: async (signal, onProgress) => {
