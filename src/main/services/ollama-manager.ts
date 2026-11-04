@@ -1347,7 +1347,7 @@ export class OllamaManager extends EventEmitter {
         ...decision.env
       },
       // Request logs must not fill an unread stdout pipe and stall serve.
-        stdio: ['ignore', 'ignore', 'pipe']
+      stdio: ['ignore', 'ignore', 'pipe']
     })
 
     this.process = proc
