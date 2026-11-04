@@ -468,6 +468,7 @@
   "announcement.done": "Terminé",
   "announcement.meetingLanguageBody": "Les transcriptions et les notes sont désormais disponibles en {count} langues !",
   "announcement.meetingLanguageDescription": "Choisissez la langue parlée pendant vos réunions. Les nouvelles transcriptions et notes utiliseront cette langue.",
-  "askAi.indexingProgress": "Préparation de vos réunions pour l’IA ({percent} %). Vous pouvez déjà poser des questions, mais les réponses risquent de manquer de détails tant que la préparation n’est pas terminée.",
-  "askAi.indexingPaused": "La préparation de vos réunions pour l’IA est en pause pendant un enregistrement ou la création de notes ({percent} % terminé). Vous pouvez toujours poser des questions, mais les réponses risquent de manquer de détails tant que la préparation n’est pas terminée."
+  "askAi.indexingProgress": "Préparation de vos réunions pour Demander à l’IA ({percent} %). Vous pouvez poser des questions, mais les réponses risquent de manquer de détails avant la fin.",
+  "askAi.indexingPaused": "La préparation pour Demander à l’IA est en pause à {percent} % pendant l’enregistrement d’une réunion ou la création des notes. Elle reprendra automatiquement ensuite. D’ici là, des détails peuvent manquer dans les réponses.",
+  "askAi.indexingStarting": "Préparation de vos réunions pour Demander à l’IA. Vous pouvez poser des questions, mais les réponses risquent de manquer de détails avant la fin."
 }

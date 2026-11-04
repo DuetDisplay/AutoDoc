@@ -468,6 +468,7 @@
   "announcement.done": "Gotovo",
   "announcement.meetingLanguageBody": "Transkripti i bilješke sada podržavaju {count} jezika!",
   "announcement.meetingLanguageDescription": "Odaberite jezik koji se govori na vašim sastancima. Novi transkripti i bilješke bit će na tom jeziku.",
-  "askAi.indexingProgress": "Priprema sastanaka za AI ({percent} %). Već možete postavljati pitanja, ali dok priprema ne završi, u odgovorima mogu nedostajati pojedinosti.",
-  "askAi.indexingPaused": "Priprema sastanaka za AI pauzirana je tijekom snimanja ili izrade bilježaka ({percent} % dovršeno). I dalje možete postavljati pitanja, ali dok priprema ne završi, u odgovorima mogu nedostajati pojedinosti."
+  "askAi.indexingProgress": "Priprema sastanaka za Pitaj AI ({percent} %). Već možete pitati, ali do završetka u odgovorima mogu nedostajati pojedinosti.",
+  "askAi.indexingPaused": "Priprema za Pitaj AI pauzirana je na {percent} % dok se snima sastanak ili izrađuju bilješke. Nakon toga nastavlja se automatski. Dotad u odgovorima mogu nedostajati pojedinosti.",
+  "askAi.indexingStarting": "Priprema sastanaka za Pitaj AI. Već možete pitati, ali do završetka u odgovorima mogu nedostajati pojedinosti."
 }

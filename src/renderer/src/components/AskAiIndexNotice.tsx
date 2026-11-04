@@ -43,30 +43,40 @@ export function AskAiIndexNotice(): ReactElement {
     return () => window.clearTimeout(timer)
   }, [candidate])
 
-  // Freeze the announced percentage for each state. Visible progress can change
-  // every second without mutating the live region or moving keyboard focus.
+  const copyState = status.percent === 0 ? 'starting' : status.state
+  const copyKey =
+    copyState === 'starting'
+      ? 'askAi.indexingStarting'
+      : copyState === 'paused'
+        ? 'askAi.indexingPaused'
+        : 'askAi.indexingProgress'
+  // Only state changes update the live region. The visible paragraph separately
+  // exposes the current percentage to assistive technology.
   useEffect(() => {
     setAnnouncement(
       shown
-        ? t(status.state === 'paused' ? 'askAi.indexingPaused' : 'askAi.indexingProgress', {
+        ? t(copyKey, {
             percent: latest.current.percent
           })
         : ''
     )
-  }, [shown, status.state, t])
+  }, [shown, copyState, t])
 
   return (
-    <div role={shown ? 'status' : undefined} aria-live="polite" aria-atomic="true">
-      <span className="sr-only" data-ask-ai-index-announcement>
+    <div>
+      <span
+        role={shown ? 'status' : undefined}
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        data-ask-ai-index-announcement
+      >
         {announcement}
       </span>
       {shown && (
-        <div className="px-6 pt-3" data-ask-ai-index-banner data-index-state={status.state}>
-          <p
-            aria-hidden="true"
-            className="rounded-xl border border-border bg-bg-accent px-3 py-2 text-[12px] leading-relaxed text-ink-muted [overflow-wrap:anywhere]"
-          >
-            {t(status.state === 'paused' ? 'askAi.indexingPaused' : 'askAi.indexingProgress', {
+        <div className="px-6 pt-3 pb-3" data-ask-ai-index-banner data-index-state={status.state}>
+          <p className="rounded-xl border border-border bg-bg-accent px-3 py-2 text-[12px] leading-relaxed text-ink-muted [overflow-wrap:anywhere]">
+            {t(copyKey, {
               percent: status.percent
             })}
           </p>

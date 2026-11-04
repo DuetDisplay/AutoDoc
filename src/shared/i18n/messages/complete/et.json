@@ -468,6 +468,7 @@
   "announcement.done": "Valmis",
   "announcement.meetingLanguageBody": "Transkriptsioonid ja märkmed toetavad nüüd {count} keelt!",
   "announcement.meetingLanguageDescription": "Valige koosolekutel räägitav keel. Uued transkriptsioonid ja märkmed koostatakse selles keeles.",
-  "askAi.indexingProgress": "Koosolekute ettevalmistamine tehisintellekti jaoks ({percent}%). Võite juba küsida, kuid kuni ettevalmistus lõpeb, võivad vastustest mõned üksikasjad puududa.",
-  "askAi.indexingPaused": "Koosolekute ettevalmistamine tehisintellekti jaoks on salvestamise või märkmete koostamise ajaks peatatud ({percent}% valmis). Võite endiselt küsida, kuid kuni ettevalmistus lõpeb, võivad vastustest mõned üksikasjad puududa."
+  "askAi.indexingProgress": "Koosolekuid valmistatakse ette tehisarult küsimiseks ({percent} %). Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.",
+  "askAi.indexingPaused": "Koosolekute ettevalmistus tehisarult küsimiseks on peatatud {percent} % juures, kuni koosolekut salvestatakse või märkmeid koostatakse. Seejärel jätkub see automaatselt. Seni võib vastustest üksikasju puududa.",
+  "askAi.indexingStarting": "Koosolekuid valmistatakse ette tehisarult küsimiseks. Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa."
 }

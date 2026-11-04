@@ -468,6 +468,7 @@
   "announcement.done": "Gata",
   "announcement.meetingLanguageBody": "Transcrierile și notițele sunt acum disponibile în {count} de limbi!",
   "announcement.meetingLanguageDescription": "Alegeți limba vorbită în întâlniri. Noile transcrieri și notițe vor fi în această limbă.",
-  "askAi.indexingProgress": "Se pregătesc întâlnirile pentru AI ({percent}%). Puteți pune deja întrebări, dar răspunsurile pot omite unele detalii până la finalizarea pregătirii.",
-  "askAi.indexingPaused": "Pregătirea întâlnirilor pentru AI este întreruptă cât timp se înregistrează sau se creează notițe ({percent}% finalizat). Puteți pune în continuare întrebări, dar răspunsurile pot omite unele detalii până la finalizarea pregătirii."
+  "askAi.indexingProgress": "Pregătirea întâlnirilor pentru Întreabă AI ({percent}%). Puteți întreba acum, dar până la final răspunsurile pot omite detalii.",
+  "askAi.indexingPaused": "Pregătirea pentru Întreabă AI este în pauză la {percent}% cât timp se înregistrează o întâlnire sau se creează notițe. Va continua automat după aceea. Până atunci, răspunsurile pot omite detalii.",
+  "askAi.indexingStarting": "Pregătirea întâlnirilor pentru Întreabă AI. Puteți întreba acum, dar până la final răspunsurile pot omite detalii."
 }

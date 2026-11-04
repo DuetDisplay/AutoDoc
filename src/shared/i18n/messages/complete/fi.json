@@ -468,6 +468,7 @@
   "announcement.done": "Valmis",
   "announcement.meetingLanguageBody": "Litteroinnit ja muistiinpanot tukevat nyt {count} kieltä!",
   "announcement.meetingLanguageDescription": "Valitse kokouksissasi puhuttu kieli. Uudet litteroinnit ja muistiinpanot tehdään tällä kielellä.",
-  "askAi.indexingProgress": "Kokouksiasi valmistellaan tekoälyä varten ({percent} %). Voit kysyä jo nyt, mutta vastauksista voi puuttua yksityiskohtia, kunnes valmistelu on valmis.",
-  "askAi.indexingPaused": "Kokousten valmistelu tekoälyä varten on keskeytetty tallennuksen tai muistiinpanojen laatimisen ajaksi ({percent} % valmiina). Voit silti kysyä, mutta vastauksista voi puuttua yksityiskohtia, kunnes valmistelu on valmis."
+  "askAi.indexingProgress": "Kokouksiasi valmistellaan tekoälyltä kysymistä varten ({percent} %). Voit jo kysyä, mutta vastauksista voi puuttua tietoja, kunnes valmistelu päättyy.",
+  "askAi.indexingPaused": "Kokousten valmistelu tekoälyltä kysymistä varten on tauolla kohdassa {percent} %, kun kokousta tallennetaan tai muistiinpanoja luodaan. Se jatkuu sitten automaattisesti. Siihen asti vastauksista voi puuttua tietoja.",
+  "askAi.indexingStarting": "Kokouksiasi valmistellaan tekoälyltä kysymistä varten. Voit jo kysyä, mutta vastauksista voi puuttua tietoja, kunnes valmistelu päättyy."
 }

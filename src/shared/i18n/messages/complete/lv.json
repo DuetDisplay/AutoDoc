@@ -468,6 +468,7 @@
   "announcement.done": "Gatavs",
   "announcement.meetingLanguageBody": "Transkripti un piezīmes tagad atbalsta {count} valodas!",
   "announcement.meetingLanguageDescription": "Izvēlieties valodu, kurā runājat sapulcēs. Jaunie transkripti un piezīmes tiks veidoti šajā valodā.",
-  "askAi.indexingProgress": "Notiek sapulču sagatavošana MI ({percent}%). Jau varat uzdot jautājumus, taču līdz sagatavošanas beigām atbildēs var trūkt dažu detaļu.",
-  "askAi.indexingPaused": "Sapulču sagatavošana MI ir apturēta ierakstīšanas vai piezīmju veidošanas laikā ({percent}% pabeigti). Joprojām varat uzdot jautājumus, taču līdz sagatavošanas beigām atbildēs var trūkt dažu detaļu."
+  "askAi.indexingProgress": "Sanāksmju sagatavošana funkcijai Jautāt AI ({percent} %). Varat jautāt jau tagad, bet līdz beigām atbildēs var trūkt detaļu.",
+  "askAi.indexingPaused": "Sagatavošana funkcijai Jautāt AI ir apturēta pie {percent} %, kamēr tiek ierakstīta sanāksme vai veidotas piezīmes. Pēc tam tā turpināsies automātiski. Līdz tam atbildēs var trūkt detaļu.",
+  "askAi.indexingStarting": "Sanāksmju sagatavošana funkcijai Jautāt AI. Varat jautāt jau tagad, bet līdz beigām atbildēs var trūkt detaļu."
 }

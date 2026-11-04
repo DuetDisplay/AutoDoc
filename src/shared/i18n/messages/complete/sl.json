@@ -468,6 +468,7 @@
   "announcement.done": "Končano",
   "announcement.meetingLanguageBody": "Prepisi in zapiski zdaj podpirajo {count} jezikov!",
   "announcement.meetingLanguageDescription": "Izberite jezik, ki ga govorite na sestankih. Novi prepisi in zapiski bodo v tem jeziku.",
-  "askAi.indexingProgress": "Priprava sestankov za AI ({percent} %). Vprašanja lahko postavljate že zdaj, vendar lahko do konca priprave v odgovorih manjkajo nekatere podrobnosti.",
-  "askAi.indexingPaused": "Priprava sestankov za AI je začasno ustavljena med snemanjem ali ustvarjanjem zapiskov ({percent} % končano). Še vedno lahko postavljate vprašanja, vendar lahko do konca priprave v odgovorih manjkajo nekatere podrobnosti."
+  "askAi.indexingProgress": "Priprava sestankov za Vprašaj AI ({percent} %). Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.",
+  "askAi.indexingPaused": "Priprava za Vprašaj AI je ustavljena pri {percent} %, medtem ko se snema sestanek ali ustvarjajo zapiski. Nato se bo samodejno nadaljevala. Do takrat lahko v odgovorih manjkajo podrobnosti.",
+  "askAi.indexingStarting": "Priprava sestankov za Vprašaj AI. Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti."
 }

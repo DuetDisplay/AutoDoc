@@ -146,10 +146,12 @@ export const en = {
     'Notes for {title} are still being made. Using Ask AI now will make them take a little longer.',
   'askAi.notesPendingMany':
     'Notes for {count} meetings are still being made. Using Ask AI now will make them take a little longer.',
+  'askAi.indexingStarting':
+    'Preparing your meetings for Ask AI. You can ask now, but answers might miss some details until this finishes.',
   'askAi.indexingProgress':
-    'Getting your meetings ready for Ask AI ({percent}%). You can ask now, but answers may miss some details until this finishes.',
+    'Preparing your meetings for Ask AI ({percent}%). You can ask now, but answers might miss some details until this finishes.',
   'askAi.indexingPaused':
-    'Getting your meetings ready for Ask AI is paused while a recording or notes are in progress ({percent}% done). You can still ask, but answers may miss some details until this finishes.',
+    'Preparing your meetings for Ask AI is paused at {percent}% while a meeting is recording or notes are being made. It will continue automatically afterwards. Until then, answers might miss some details.',
   'askAi.countAll': 'all saved recordings',
   'askAi.countAttached': 'attached saved recordings',
   'askAi.countNoFilters': 'no filters',
