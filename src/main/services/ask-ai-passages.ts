@@ -4,7 +4,7 @@ import { mkdir, stat } from 'fs/promises'
 import type { AskAiPrepareResult } from './ask-ai-index-prewarm'
 import { dirname } from 'path'
 import { decryptJSON, encryptJSON } from './crypto'
-import { readAskAiCache } from './ask-ai-cache-reader'
+import { readAskAiCache, writeAskAiCache } from './ask-ai-cache-reader'
 import type { ChatEmbeddingProvider } from './chat-retrieval'
 import { filterMeetingsForQuestionWindow } from './chat-retrieval'
 import { unicodeContentTokens } from './unicode-text'
@@ -261,9 +261,13 @@ export class AskAiPassages {
     unavailable: boolean
     needsSave: boolean
   }> {
-    const available = await this.provider.isAvailable()
-    const unavailable = !available && this.provider.availabilityReason !== 'unreachable'
-    if (available) this.selectProviderVersion()
+    // Inspection must not join Ollama startup. Known identities can be checked
+    // now; unknown identities are revalidated before cached semantic retrieval.
+    const unavailable =
+      process.env.AUTODOC_ASK_AI_EMBEDDINGS === '0' ||
+      ['missing', 'disabled'].includes(this.provider.availabilityReason ?? '')
+    if (this.provider.cacheIdentity && !this.provider.cacheIdentity.endsWith(':unknown'))
+      this.selectProviderVersion()
     await this.loadSavedCache(true, true)
     const passages: Passage[] = []
     for (const meeting of meetings) {
@@ -303,9 +307,7 @@ export class AskAiPassages {
   private async checkpoint(reason: 'periodic' | 'pause' | 'complete'): Promise<void> {
     const started = Date.now()
     await mkdir(dirname(this.cachePath), { recursive: true })
-    // encryptJSON already writes ciphertext to a unique temporary file and
-    // atomically replaces the destination. Its AAD must use the final basename.
-    await encryptJSON(this.cacheData(), this.cachePath)
+    await writeAskAiCache(this.cachePath, this.version, this.vectors, [...this.coveredMeetingIds])
     this.coverageNeedsSave = false
     logAutodocEvent({
       area: 'chat',

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, readdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import { AskAiPassages } from '../ask-ai-passages'
 import type { IndexedMeeting } from '../meeting-index'
 import { logAutodocEvent } from '../autodoc-log'
@@ -22,6 +22,7 @@ vi.mock('../windows-key-protection', () => ({
 // Real AES-GCM and filename authentication; only OS key storage is mocked.
 import { decryptJSON } from '../crypto'
 import * as cacheCrypto from '../crypto'
+beforeEach(() => vi.clearAllMocks())
 function meeting(id: string, count = 1): IndexedMeeting {
   return {
     meetingId: id,
@@ -43,6 +44,34 @@ function meeting(id: string, count = 1): IndexedMeeting {
     }))
   }
 }
+it('writes checkpoints off the main thread with identical authenticated cache contents', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-worker-write-'))
+  try {
+    storage.dir = dir
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: async (texts: string[]) => texts.map(() => [1, 0])
+    }
+    const legacy = join(dir, 'legacy.enc'),
+      worker = join(dir, 'worker.enc')
+    const data = [meeting('saved', 3)]
+    await new AskAiPassages(provider, legacy).prepare(data)
+    const expected = await decryptJSON<{ version: string; rows: unknown[] }>(legacy)
+    const mainEncrypt = vi.spyOn(cacheCrypto, 'encryptJSON')
+    try {
+      await new AskAiPassages(provider, worker).prepare(data, () => true, { checkpoint: true })
+      expect(mainEncrypt).not.toHaveBeenCalled()
+      expect(await decryptJSON(worker)).toEqual({ ...expected, coveredMeetingIds: ['saved'] })
+      expect((await readFile(worker)).subarray(0, 4).toString()).toBe('ADOC')
+      expect(await readdir(dir)).not.toContain(expect.stringMatching(/\.enc\.\w+\.enc$/))
+    } finally {
+      mainEncrypt.mockRestore()
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
 it('checkpoints periodically and on pause, then restores the persisted vectors without embedding again', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-checkpoint-'))
   try {

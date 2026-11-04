@@ -174,23 +174,27 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-it('returns existing extractive evidence when inspection cannot finish, without waiting for writer readiness', async () => {
+it('uses lexical retrieval and the writer in the reply language after inspection times out', async () => {
   state.inspection.mockResolvedValue(false)
-  state.readiness.mockImplementation(() => new Promise(() => {}))
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(
+      JSON.stringify({ message: { content: 'Ari vastaa työpajasta [1].' }, done: true }) + '\n'
+    )
+  )
   const web = sender()
-  const pending = handler('chat:send-stream')(
+  await handler('chat:send-stream')(
     { sender: web } as never,
     'stalled',
-    'Who owns Workshop?',
+    'Who owns Workshop? Answer in Finnish.',
     []
   )
-  await vi.waitFor(() => expect(web.send).toHaveBeenCalledWith('chat:done', expect.anything()), {
-    timeout: 250
-  })
-  await pending
-  expect(state.inspection.mock.calls[0][0]).toBeInstanceOf(AbortSignal)
-  expect(state.readiness).not.toHaveBeenCalled()
-  expect(fetch).not.toHaveBeenCalled()
+  expect(state.admissions).toEqual([false])
+  expect(state.readiness).toHaveBeenCalled()
+  expect(fetch).toHaveBeenCalled()
+  const request = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))
+  expect(request.model).toBe('unit-model')
+  expect(JSON.stringify(request.messages)).toContain('Finnish')
+  expect(JSON.stringify(web.send.mock.calls)).toContain('Ari vastaa työpajasta [1].')
 })
 
 it('does not change ready-index query admission during recording; processing still blocks embeddings', async () => {
@@ -213,7 +217,8 @@ it('keeps semantic query admission for a new-meeting-only gap during recording',
   expect(state.admissions).toEqual([true])
   expect(state.retrieve.mock.lastCall?.at(-1)).toBe(true)
 })
-it('runs the normal writer warmup once after indexing and only when its gates reopen', async () => {
+it('runs the writer warmup once after a timed-out inspection completes and its gates reopen', async () => {
+  state.inspection.mockResolvedValue(false)
   const web = sender()
   await expect(handler('chat:warmup')({ sender: web } as never)).resolves.toEqual({
     warmed: false,

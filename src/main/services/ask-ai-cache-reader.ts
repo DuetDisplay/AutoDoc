@@ -58,3 +58,77 @@ export function readAskAiCache(file: string): Promise<PackedAskAiCache> {
     })
   })
 }
+
+// Match encryptJSON's ADOC/AAD and atomic replacement, keeping serialization
+// and encryption off the main thread. Only packed buffers cross the boundary.
+const writer = String.raw`
+const { parentPort, workerData } = require('node:worker_threads');
+const fs = require('node:fs/promises');
+const crypto = require('node:crypto');
+const path = require('node:path');
+(async () => {
+  let temp;
+  try {
+    const { file, version, keys, offsets, values, coveredMeetingIds } = workerData;
+    const rows = keys.map((key,i) => [key, Array.from(values.subarray(offsets[i], offsets[i+1]))]);
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', workerData.key, iv);
+    cipher.setAAD(Buffer.from(path.basename(file), 'utf8'));
+    const plaintext = Buffer.from(JSON.stringify({ version, rows, coveredMeetingIds }), 'utf8');
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const output = Buffer.concat([Buffer.from('ADOC'), iv, cipher.getAuthTag(), encrypted]);
+    temp = file + '.' + crypto.randomBytes(6).toString('hex') + '.enc';
+    try { await fs.writeFile(temp, output, { flag:'wx', mode:0o600 }); }
+    catch (error) { if (error.code === 'EEXIST') temp = undefined; throw error; }
+    for (const delay of [0,80,160,320,640]) {
+      if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+      try { await fs.rename(temp, file); temp = undefined; break; }
+      catch (error) {
+        if (process.platform !== 'win32' || !['EPERM','EBUSY','EACCES','ENOTEMPTY'].includes(error.code) || delay === 640) throw error;
+      }
+    }
+    parentPort.postMessage(true);
+  } finally {
+    workerData.key.fill(0);
+    if (temp) await fs.unlink(temp).catch(() => {});
+  }
+})().catch(error => { throw error; });
+`
+
+export function writeAskAiCache(
+  file: string,
+  version: string,
+  vectors: ReadonlyMap<string, number[] | Float64Array>,
+  coveredMeetingIds: string[]
+): Promise<void> {
+  const keys: string[] = [],
+    offsets = new Uint32Array(vectors.size + 1)
+  let size = 0
+  for (const [key, vector] of vectors) {
+    keys.push(key)
+    size += vector.length
+    offsets[keys.length] = size
+  }
+  // Transfer a packed copy, leaving live retrieval vectors intact.
+  const values = new Float64Array(size)
+  let i = 0
+  for (const vector of vectors.values()) values.set(vector, offsets[i++])
+  const key = Buffer.from(getKey())
+  let worker: Worker
+  try {
+    worker = new Worker(writer, {
+      eval: true,
+      workerData: { file, key, version, keys, offsets, values, coveredMeetingIds },
+      transferList: [offsets.buffer, values.buffer]
+    })
+  } finally {
+    key.fill(0)
+  }
+  return new Promise((resolve, reject) => {
+    worker.once('message', () => resolve())
+    worker.once('error', reject)
+    worker.once('exit', (code) => {
+      if (code !== 0) reject(Error('Cache writer exited'))
+    })
+  })
+}
