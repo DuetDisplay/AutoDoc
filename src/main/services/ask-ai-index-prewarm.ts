@@ -71,7 +71,7 @@ export class AskAiIndexPrewarm {
     this.active?.abort()
     this.queryReady = false
     this.setState('preparing')
-    // Catalog inspection is read-only; it does not load or run an embedding model.
+    // Inspection restores/upgrades derived coverage metadata without model inference.
     const planning = this.options
       .inspect()
       .then(({ completed, total, semanticReady }) => {

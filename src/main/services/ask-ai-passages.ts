@@ -97,6 +97,8 @@ export class AskAiPassages {
   private vectors = new Map<string, number[]>()
   private loaded = false
   private coveredMeetingIds = new Set<string>()
+  private coverageNeedsSave = false
+  private inspectionWrite: Promise<void> | null = null
   private cacheLoad: Promise<void> | null = null
   private passageCache = new Map<string, { signature: string; title: string; rows: Passage[] }>()
   private indexing: Promise<AskAiPrepareResult> | null = null
@@ -193,6 +195,7 @@ export class AskAiPassages {
       this.vectors.clear()
       this.passageCache.clear()
       this.coveredMeetingIds.clear()
+      this.coverageNeedsSave = false
       this.controlVectors = []
       this.queryVectors.clear()
     }
@@ -218,6 +221,7 @@ export class AskAiPassages {
           this.version = cache.version
           for (const [key, vector] of cache.rows) this.vectors.set(key, this.normalize(vector))
           this.coveredMeetingIds = new Set(cache.coveredMeetingIds ?? [])
+          this.coverageNeedsSave = cache.coveredMeetingIds === undefined
         }
       } catch {
         /* Missing or invalid derived cache is rebuilt from source. */
@@ -230,6 +234,39 @@ export class AskAiPassages {
     return this.cacheLoad
   }
 
+  private markCovered(passages: Passage[]): void {
+    // A recording with no passages has no indexed notes yet. Its first notes
+    // are new content, rather than an edit to previously indexed evidence.
+    const next = new Set(passages.map((p) => p.meetingId))
+    if (
+      next.size !== this.coveredMeetingIds.size ||
+      [...next].some((id) => !this.coveredMeetingIds.has(id))
+    )
+      this.coverageNeedsSave = true
+    this.coveredMeetingIds = next
+  }
+
+  private async persistInspectedCoverage(): Promise<void> {
+    if (!this.inspectionWrite) {
+      const pending = this.indexing
+      const write = (async () => {
+        if (pending) await pending.catch(() => {})
+        if (this.coverageNeedsSave) {
+          try {
+            await this.checkpoint('complete')
+          } catch {
+            /* Ready vectors remain usable; retry metadata on a real trigger. */
+          }
+        }
+      })()
+      const tracked = write.finally(() => {
+        if (this.inspectionWrite === tracked) this.inspectionWrite = null
+      })
+      this.inspectionWrite = tracked
+    }
+    await this.inspectionWrite
+  }
+
   async inspect(
     meetings: IndexedMeeting[]
   ): Promise<{ completed: number; total: number; semanticReady: boolean }> {
@@ -237,8 +274,12 @@ export class AskAiPassages {
     await this.loadSavedCache(true)
     const passages = this.passages(meetings)
     const completed = passages.filter((p) => this.vectors.has(p.key)).length
-    if (completed === passages.length)
-      this.coveredMeetingIds = new Set(meetings.map((m) => m.meetingId))
+    if (completed === passages.length) {
+      this.markCovered(passages)
+      // Upgrade a legacy complete cache once, so a later paused new-meeting
+      // update retains its proven old coverage across another launch.
+      if (this.coverageNeedsSave) await this.persistInspectedCoverage()
+    }
     const semanticReady =
       completed === passages.length ||
       (this.coveredMeetingIds.size > 0 &&
@@ -261,6 +302,7 @@ export class AskAiPassages {
     // encryptJSON already writes ciphertext to a unique temporary file and
     // atomically replaces the destination. Its AAD must use the final basename.
     await encryptJSON(this.cacheData(), this.cachePath)
+    this.coverageNeedsSave = false
     logAutodocEvent({
       area: 'chat',
       message: 'Ask AI index checkpoint written',
@@ -284,7 +326,7 @@ export class AskAiPassages {
     } = {}
   ): Promise<AskAiPrepareResult> {
     if (!(await canInfer())) return 'paused'
-    while (this.indexing) await this.indexing
+    while (this.indexing || this.inspectionWrite) await (this.inspectionWrite ?? this.indexing)
     const work = async (): Promise<AskAiPrepareResult> => {
       if (!(await canInfer())) return 'paused'
       if (!(await this.provider.isAvailable())) {
@@ -354,8 +396,8 @@ export class AskAiPassages {
             this.vectors.delete(key)
             removed = true
           }
-        this.coveredMeetingIds = new Set(meetings.map((m) => m.meetingId))
-        if (missing.length || removed) {
+        this.markCovered(passages)
+        if (missing.length || removed || (options.checkpoint && this.coverageNeedsSave)) {
           if (options.checkpoint) await this.checkpoint('complete')
           else {
             await mkdir(dirname(this.cachePath), { recursive: true })

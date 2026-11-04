@@ -288,3 +288,47 @@ it('invalidates restored readiness when the installed embedding identity changes
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+it('keeps new-meeting semantics when a previously empty recording receives notes, including after a legacy cache upgrade', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-empty-coverage-'))
+  try {
+    storage.dir = dir
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0]))
+    }
+    const file = join(dir, 'index.enc'),
+      saved = meeting('saved'),
+      empty = { ...meeting('new'), noteEntries: [] }
+    // Flag-off legacy cache has no coverage metadata.
+    await new AskAiPassages(provider, file).prepare([saved])
+    const upgraded = new AskAiPassages(provider, file)
+    const upgradeWrite = vi.spyOn(upgraded as any, 'checkpoint')
+    expect(await upgraded.inspect([saved, empty])).toMatchObject({
+      completed: 1,
+      total: 1,
+      semanticReady: true
+    })
+    await upgraded.inspect([saved, empty])
+    expect(upgradeWrite).toHaveBeenCalledTimes(1)
+    expect((await decryptJSON<{ coveredMeetingIds: string[] }>(file)).coveredMeetingIds).toEqual([
+      'saved'
+    ])
+    const added = { ...meeting('new'), signature: 'notes-arrived' }
+    expect(await upgraded.inspect([saved, added])).toMatchObject({
+      completed: 1,
+      total: 2,
+      semanticReady: true
+    })
+    const relaunched = new AskAiPassages(provider, file)
+    expect(await relaunched.inspect([saved, added])).toMatchObject({
+      completed: 1,
+      total: 2,
+      semanticReady: true
+    })
+    expect(provider.embed).toHaveBeenCalledTimes(1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
