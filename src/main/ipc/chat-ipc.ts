@@ -301,7 +301,11 @@ export function registerChatIpc(
       sender.on?.('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
         if (mainFrame && !inPlace) close()
       })
-      sender.on?.('did-navigate-in-page', close)
+      sender.on?.('did-navigate-in-page', (_event, url, mainFrame) => {
+        // Router self-navigation keeps the page mounted, so no new initial query
+        // follows. Keep its subscription until it actually leaves Ask AI.
+        if (mainFrame && new URL(url).hash.split('?')[0] !== '#/ask-ai') close()
+      })
     }
     if (indexPrewarm.unavailable) passageEmbeddingProvider.invalidateAvailability()
     if (indexPrewarm.unavailable || indexPrewarm.snapshot().state === 'idle') indexPrewarm.request()

@@ -235,3 +235,19 @@ it('queries initial status, pushes structural status and unsubscribes when Ask A
   state.options!.onChange({ ...next, state: 'ready', percent: 100 })
   expect(web.send).not.toHaveBeenCalled()
 })
+
+it('keeps status pushes on Ask AI self-navigation and removes them when navigating away', async () => {
+  const web = sender()
+  state.status = { state: 'preparing', percent: 12, significant: true }
+  await handler('chat:index-status')({ sender: web } as never)
+  web.emit('did-navigate-in-page', {}, 'file:///app/index.html#/ask-ai', true)
+  state.options!.onChange({ ...state.status, percent: 13 })
+  expect(web.send).toHaveBeenCalledWith('chat:index-status-changed', {
+    ...state.status,
+    percent: 13
+  })
+  web.send.mockClear()
+  web.emit('did-navigate-in-page', {}, 'file:///app/index.html#/upcoming', true)
+  state.options!.onChange({ ...state.status, percent: 14 })
+  expect(web.send).not.toHaveBeenCalled()
+})
