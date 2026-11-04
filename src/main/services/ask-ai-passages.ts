@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { useAskAiAppendFollowups } from './ask-ai-writer-session'
-import { mkdir, rename, stat, unlink } from 'fs/promises'
+import { mkdir, stat } from 'fs/promises'
 import type { AskAiPrepareResult } from './ask-ai-index-prewarm'
 import { dirname } from 'path'
 import { decryptJSON, encryptJSON } from './crypto'
@@ -193,24 +193,19 @@ export class AskAiPassages {
   private async checkpoint(reason: 'periodic' | 'pause' | 'complete'): Promise<void> {
     const started = Date.now()
     await mkdir(dirname(this.cachePath), { recursive: true })
-    const temporary = `${this.cachePath}.checkpoint`
-    try {
-      // Only ciphertext is written. Rename keeps the previous checkpoint valid on a crash.
-      await encryptJSON({ version: this.version, rows: [...this.vectors] }, temporary)
-      await rename(temporary, this.cachePath)
-      logAutodocEvent({
-        area: 'chat',
-        message: 'Ask AI index checkpoint written',
-        context: {
-          reason,
-          vectors: this.vectors.size,
-          elapsedMs: Date.now() - started,
-          bytes: (await stat(this.cachePath)).size
-        }
-      })
-    } finally {
-      await unlink(temporary).catch(() => {})
-    }
+    // encryptJSON already writes ciphertext to a unique temporary file and
+    // atomically replaces the destination. Its AAD must use the final basename.
+    await encryptJSON({ version: this.version, rows: [...this.vectors] }, this.cachePath)
+    logAutodocEvent({
+      area: 'chat',
+      message: 'Ask AI index checkpoint written',
+      context: {
+        reason,
+        vectors: this.vectors.size,
+        elapsedMs: Date.now() - started,
+        bytes: (await stat(this.cachePath)).size
+      }
+    })
   }
 
   async prepare(

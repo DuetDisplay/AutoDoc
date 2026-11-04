@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { expect, it, vi } from 'vitest'
@@ -6,11 +6,21 @@ import { AskAiPassages } from '../ask-ai-passages'
 import type { IndexedMeeting } from '../meeting-index'
 import { logAutodocEvent } from '../autodoc-log'
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
-// This unit codec uses only generated data. Real-app checks verify ADOC encryption.
-vi.mock('../crypto', () => ({
-  encryptJSON: (value: unknown, file: string) => writeFile(file, JSON.stringify(value)),
-  decryptJSON: async (file: string) => JSON.parse(await readFile(file, 'utf8'))
+const storage = vi.hoisted(() => ({ dir: '/unused' }))
+vi.mock('electron', () => ({
+  app: { getPath: () => storage.dir, isPackaged: false },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (value: string) => Buffer.from(`unit:${value}`),
+    decryptString: (value: Buffer) => value.toString().replace(/^unit:/, '')
+  }
 }))
+vi.mock('../windows-key-protection', () => ({
+  protectWindowsRecordingKey: (key: Buffer) => Buffer.concat([Buffer.from('unit:'), key]),
+  unprotectWindowsRecordingKey: (value: Buffer) => value.subarray(5)
+}))
+// Real AES-GCM and filename authentication; only OS key storage is mocked.
+import { decryptJSON } from '../crypto'
 function meeting(id: string, count = 1): IndexedMeeting {
   return {
     meetingId: id,
@@ -35,6 +45,7 @@ function meeting(id: string, count = 1): IndexedMeeting {
 it('checkpoints periodically and on pause, then restores the persisted vectors without embedding again', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-checkpoint-'))
   try {
+    storage.dir = dir
     let permitted = true,
       embedded = 0
     const provider = {
@@ -46,7 +57,7 @@ it('checkpoints periodically and on pause, then restores the persisted vectors w
         return texts.map(() => [1, 0])
       })
     }
-    const file = join(dir, 'index.enc'),
+    const file = join(dir, 'cache', 'index.enc'),
       data = [meeting('sample', 520)]
     const index = new AskAiPassages(provider, file)
     expect(await index.prepare(data, () => permitted, { batchSize: 4, checkpoint: true })).toBe(
@@ -60,7 +71,9 @@ it('checkpoints periodically and on pause, then restores the persisted vectors w
       ['periodic', 512],
       ['pause', 520]
     ])
-    expect(await readdir(dir)).toEqual(['index.enc'])
+    expect((await readFile(file)).subarray(0, 4).toString()).toBe('ADOC')
+    await expect(decryptJSON(file)).resolves.toMatchObject({ rows: expect.any(Array) })
+    expect(await readdir(join(dir, 'cache'))).toEqual(['index.enc'])
     const cached = { ...provider, embed: vi.fn() }
     const resumed = new AskAiPassages(cached, file)
     const progress = vi.fn()
@@ -76,6 +89,7 @@ it('checkpoints periodically and on pause, then restores the persisted vectors w
 it('serializes all concurrent prepare waiters, including different meeting snapshots', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-waiters-'))
   try {
+    storage.dir = dir
     const releases: Array<() => void> = []
     let active = 0,
       peak = 0
