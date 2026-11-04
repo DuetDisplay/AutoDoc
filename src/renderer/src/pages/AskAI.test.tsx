@@ -363,6 +363,7 @@ describe('AskAI', () => {
       queueMicrotask(() => {
         api.emit('chat:sources', {
           requestId,
+          inventoryCount: 1,
           sources: [
             {
               n: 1,
@@ -701,4 +702,109 @@ describe('Ask AI conversation notes banner and activity', () => {
     unmount()
     expect(api.invoke).toHaveBeenCalledWith('chat:close')
   })
+})
+
+const coverageSource = (n: number, meetingId: string) => ({
+  n,
+  meetingId,
+  title: 'Synthetic session',
+  quote: 'Synthetic evidence.',
+  startMs: null,
+  category: 'information'
+})
+it('shows coverage matching rendered chips, with natural singulars, and hides it without chips or for scoped questions', () => {
+  resetRendererStores()
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  installMockElectronApi({ 'ollama:check-status': true })
+  useChatStore.setState({
+    messages: [
+      {
+        id: 'plural',
+        role: 'assistant',
+        content: 'Answer.',
+        status: 'complete',
+        sources: [coverageSource(1, 'a'), coverageSource(2, 'a'), coverageSource(3, 'b')],
+        inventoryCount: 102
+      },
+      {
+        id: 'singular',
+        role: 'assistant',
+        content: 'Answer.',
+        status: 'complete',
+        sources: [coverageSource(1, 'a')],
+        inventoryCount: 102
+      },
+      {
+        id: 'none',
+        role: 'assistant',
+        content: 'Which meeting?',
+        status: 'complete',
+        inventoryCount: 102
+      },
+      {
+        id: 'scoped',
+        role: 'assistant',
+        content: 'Scoped answer.',
+        status: 'complete',
+        meetingScope: { meetingId: 'a', title: 'Synthetic session' },
+        sources: [coverageSource(1, 'a')],
+        inventoryCount: 102
+      },
+      {
+        id: 'scoped-ids',
+        role: 'assistant',
+        content: 'Selected answer.',
+        status: 'complete',
+        scopedMeetingIds: ['a'],
+        sources: [coverageSource(1, 'a')],
+        inventoryCount: 102
+      }
+    ]
+  })
+  render(<AskAI />)
+  expect(screen.getByText('Based on 3 passages from 2 of your 102 meetings.')).toBeInTheDocument()
+  expect(screen.getByText('Based on 1 passage from 1 of your 102 meetings.')).toBeInTheDocument()
+  expect(document.querySelectorAll('[data-ask-ai-coverage]')).toHaveLength(2)
+})
+it('never flashes a literal citation placeholder split across stream chunks', async () => {
+  resetRendererStores()
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  const api = installMockElectronApi({ 'ollama:check-status': true })
+  let requestId = ''
+  api.setHandler('chat:send-stream', (id: string) => {
+    requestId = id
+    return new Promise(() => {})
+  })
+  render(<AskAI />)
+  await act(async () => {
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Who owns the task?' } })
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+  })
+  expect(requestId).toBeTruthy()
+  for (const chunk of ['Mira [', 'n', ']']) {
+    act(() => api.emit('chat:chunk', { requestId, content: chunk }))
+    expect(document.querySelector('.whitespace-pre-wrap')).toHaveTextContent('Mira')
+    expect(document.querySelector('.whitespace-pre-wrap')?.textContent).not.toContain('[')
+  }
+})
+
+it('restores coverage for saved source chips that predate inventory metadata', async () => {
+  resetRendererStores()
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  installMockElectronApi({ 'ollama:check-status': true, 'chat:inventory-count': 102 })
+  useChatStore.setState({
+    messages: [
+      {
+        id: 'saved',
+        role: 'assistant',
+        content: 'Saved answer.',
+        status: 'complete',
+        sources: [coverageSource(1, 'a')]
+      }
+    ]
+  })
+  render(<AskAI />)
+  expect(
+    await screen.findByText('Based on 1 passage from 1 of your 102 meetings.')
+  ).toBeInTheDocument()
 })

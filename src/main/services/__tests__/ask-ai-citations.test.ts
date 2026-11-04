@@ -39,3 +39,9 @@ describe('ask-ai-citations', () => {
     expect(applied.sources).toEqual([])
   })
 })
+
+it('strips literal citation placeholders without changing ordinary bracketed words', () => {
+  expect(applyAnswerCitations('One [n]. Two [1]. Keep [notes].', sources).answer).toBe(
+    'One. Two. Keep [notes].'
+  )
+})

@@ -1,3 +1,4 @@
+import { translatePlural } from '../../../shared/i18n'
 import { askAiCountFilterCopy } from '../services/ask-ai-count-copy'
 import {
   useCallback,
@@ -41,6 +42,14 @@ function openSource(source: ChatSourceCard): void {
   window.location.hash = `#/recordings/${encodeURIComponent(source.meetingId)}${query ? `?${query}` : ''}`
 }
 
+function displayAnswer(message: Message): string {
+  const content = message.content.replace(/\[n\]/g, '')
+  // Hold a possible literal placeholder until its next chunk resolves it.
+  return message.status === 'pending' || message.status === 'streaming'
+    ? content.replace(/\[(?:n)?$/, '')
+    : content
+}
+
 export function AskAI(): ReactElement {
   const { t, language } = useI18n()
   const {
@@ -58,6 +67,32 @@ export function AskAI(): ReactElement {
     setMessageCountSummary,
     clearMessages
   } = useChatStore()
+  useEffect(() => {
+    if (
+      !messages.some(
+        (message) =>
+          message.id &&
+          message.sources?.length &&
+          message.inventoryCount === undefined &&
+          !message.meetingScope &&
+          !message.scopedMeetingIds?.length
+      )
+    )
+      return
+    let active = true
+    void window.electronAPI
+      .invoke('chat:inventory-count')
+      .then((count) => {
+        if (!active || !Number.isInteger(count) || count < 0) return
+        for (const message of useChatStore.getState().messages)
+          if (message.id && message.sources?.length && message.inventoryCount === undefined)
+            setMessageSources(message.id, message.sources, count)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [messages, setMessageSources])
   const [loading, setLoading] = useState(false)
   const [notesWork, setNotesWork] = useState<Array<{ meetingId: string; title: string }>>([])
   const activitySentAtRef = useRef(-10_000)
@@ -242,7 +277,8 @@ export function AskAI(): ReactElement {
       content: '',
       status: 'pending',
       originalQuestion: question,
-      ...(scope ? { meetingScope: scope } : {})
+      ...(scope ? { meetingScope: scope } : {}),
+      ...(params.selectedMeetingId ? { scopedMeetingIds: [params.selectedMeetingId] } : {})
     })
     setLoading(true)
     recordDiagnosticAction({
@@ -272,7 +308,7 @@ export function AskAI(): ReactElement {
           window.clearTimeout(firstTokenTimeoutRef.current)
           firstTokenTimeoutRef.current = null
         }
-        setMessageSources(assistantMessageId, payload.sources)
+        setMessageSources(assistantMessageId, payload.sources, payload.inventoryCount)
       }),
       window.electronAPI.on('chat:chunk', (payload) => {
         if (payload.requestId !== requestId) return
@@ -292,7 +328,8 @@ export function AskAI(): ReactElement {
           payload.clarificationOptions,
           'complete',
           payload.sources,
-          payload.offerSearchAll
+          payload.offerSearchAll,
+          payload.inventoryCount
         )
         trackEvent('chat_response_completed', {
           selected_recording: Boolean(params.selectedMeetingId),
@@ -522,6 +559,7 @@ export function AskAI(): ReactElement {
             {messages.map((msg, i) => (
               <div
                 key={msg.id ?? i}
+                data-ask-ai-message={msg.role === 'assistant' ? msg.id : undefined}
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
@@ -556,7 +594,7 @@ export function AskAI(): ReactElement {
                               ? t('askAi.failed')
                               : msg.status === 'timed_out'
                                 ? t('askAi.timeout')
-                                : msg.content
+                                : displayAnswer(msg)
                           )}
                         </div>
                       )}
@@ -572,27 +610,57 @@ export function AskAI(): ReactElement {
                           })}
                         </p>
                       )}
-                      {msg.sources && msg.sources.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {msg.sources.map((source) => (
-                            <button
-                              key={`${source.n}-${source.meetingId}`}
-                              type="button"
-                              onClick={() => openSource(source)}
-                              className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
-                            >
-                              <span className="font-medium">[{source.n}]</span>{' '}
-                              <span className="text-ink-muted">{source.title}</span>
-                              {formatSourceTime(source.startMs) && (
-                                <span className="text-ink-faint">
-                                  {' '}
-                                  · {formatSourceTime(source.startMs)}
-                                </span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                      {msg.sources &&
+                        msg.sources.length > 0 &&
+                        (msg.inventoryCount !== undefined ||
+                          msg.meetingScope ||
+                          msg.scopedMeetingIds?.length) && (
+                          <>
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {msg.sources.map((source) => (
+                                <button
+                                  key={`${source.n}-${source.meetingId}`}
+                                  data-ask-ai-source
+                                  data-meeting-id={source.meetingId}
+                                  type="button"
+                                  onClick={() => openSource(source)}
+                                  className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
+                                >
+                                  <span className="font-medium">[{source.n}]</span>{' '}
+                                  <span className="text-ink-muted">{source.title}</span>
+                                  {formatSourceTime(source.startMs) && (
+                                    <span className="text-ink-faint">
+                                      {' '}
+                                      · {formatSourceTime(source.startMs)}
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                            {!msg.meetingScope && !msg.scopedMeetingIds?.length && (
+                              <p
+                                data-ask-ai-coverage
+                                role="note"
+                                className="rounded-lg border border-border bg-bg px-3 py-2 text-[11px] text-ink-muted"
+                              >
+                                {t('askAi.coverage', {
+                                  passages: translatePlural(
+                                    language,
+                                    'passages',
+                                    msg.sources.length
+                                  ),
+                                  meetings: new Set(msg.sources.map((source) => source.meetingId))
+                                    .size,
+                                  totalMeetings: translatePlural(
+                                    language,
+                                    'meetings',
+                                    msg.inventoryCount!
+                                  )
+                                })}
+                              </p>
+                            )}
+                          </>
+                        )}
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
                         <div className="grid min-w-0 grid-cols-1 gap-2">
                           {msg.clarificationOptions.map((option) => (

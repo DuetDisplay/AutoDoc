@@ -265,6 +265,7 @@ export interface IpcInvokeEvents {
     searchAll?: boolean
   ]
   'chat:index-status': []
+  'chat:inventory-count': []
   'chat:warmup': []
   'chat:select-recording-stream': [
     requestId: string,
@@ -456,6 +457,7 @@ export interface IpcInvokeReturns {
   'chat:cancel': void
   'chat:send-stream': void
   'chat:index-status': AskAiIndexStatus
+  'chat:inventory-count': number
   'chat:warmup': { warmed: boolean; reason?: string }
   'chat:select-recording-stream': void
   'detection:dismiss': void
@@ -531,7 +533,9 @@ export interface IpcOnEvents {
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
   'chat:chunk': [payload: { requestId: string; content: string }]
-  'chat:sources': [payload: { requestId: string; sources: ChatSourceCard[] }]
+  'chat:sources': [
+    payload: { requestId: string; sources: ChatSourceCard[]; inventoryCount: number }
+  ]
   'chat:count-result': [payload: { requestId: string; summary: ChatCountSummary }]
   'chat:done': [
     payload: {
@@ -540,6 +544,7 @@ export interface IpcOnEvents {
       clarificationOptions?: ChatClarificationOption[]
       offerSearchAll?: boolean
       sources?: ChatSourceCard[]
+      inventoryCount?: number
     }
   ]
   'chat:error': [payload: { requestId: string; error: string }]

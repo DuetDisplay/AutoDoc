@@ -7,7 +7,7 @@ export interface ChatSourceCard {
   category: string
 }
 
-const CITATION_MARKER = /\[(\d+)\]/g
+const CITATION_MARKER = /\[(?:\d+|n)\]/g
 
 /** Display-only selection; citation numbers may span an appended conversation. */
 export function filterCitedSourceCards(

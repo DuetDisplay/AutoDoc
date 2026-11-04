@@ -19,6 +19,8 @@ export interface Message {
   clarificationOptions?: ChatClarificationOption[]
   offerSearchAll?: boolean
   sources?: ChatSourceCard[]
+  inventoryCount?: number
+  scopedMeetingIds?: string[]
 }
 
 interface ChatState {
@@ -34,9 +36,10 @@ interface ChatState {
     clarificationOptions?: ChatClarificationOption[],
     status?: Message['status'],
     sources?: ChatSourceCard[],
-    offerSearchAll?: boolean
+    offerSearchAll?: boolean,
+    inventoryCount?: number
   ) => void
-  setMessageSources: (id: string, sources: ChatSourceCard[]) => void
+  setMessageSources: (id: string, sources: ChatSourceCard[], inventoryCount?: number) => void
   setMessageCountSummary: (id: string, summary: ChatCountSummary) => void
   appendToMessage: (id: string, chunk: string) => void
   setMessageStatus: (id: string, status: Message['status']) => void
@@ -57,7 +60,15 @@ export const useChatStore = create<ChatState>()(
       setMeetingScope: (meetingScope) => set({ meetingScope }),
       startMeetingChat: (meetingScope) => set({ messages: [], draftInput: '', meetingScope }),
       addMessage: (msg) => set((state) => ({ messages: capMessages([...state.messages, msg]) })),
-      updateMessage: (id, content, clarificationOptions, status, sources, offerSearchAll) =>
+      updateMessage: (
+        id,
+        content,
+        clarificationOptions,
+        status,
+        sources,
+        offerSearchAll,
+        inventoryCount
+      ) =>
         set((state) => ({
           messages: capMessages(
             state.messages.map((msg) =>
@@ -67,6 +78,7 @@ export const useChatStore = create<ChatState>()(
                     content,
                     clarificationOptions: clarificationOptions ?? msg.clarificationOptions,
                     sources: sources ?? msg.sources,
+                    inventoryCount: inventoryCount ?? msg.inventoryCount,
                     offerSearchAll: offerSearchAll ?? msg.offerSearchAll,
                     status: status ?? msg.status
                   }
@@ -74,10 +86,14 @@ export const useChatStore = create<ChatState>()(
             )
           )
         })),
-      setMessageSources: (id, sources) =>
+      setMessageSources: (id, sources, inventoryCount) =>
         set((state) => ({
           messages: capMessages(
-            state.messages.map((msg) => (msg.id === id ? { ...msg, sources } : msg))
+            state.messages.map((msg) =>
+              msg.id === id
+                ? { ...msg, sources, inventoryCount: inventoryCount ?? msg.inventoryCount }
+                : msg
+            )
           )
         })),
       setMessageCountSummary: (id, countSummary) =>

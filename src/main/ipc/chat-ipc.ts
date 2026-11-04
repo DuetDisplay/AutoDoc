@@ -189,6 +189,7 @@ interface ChatStreamPayload {
 }
 
 interface ChatDonePayload {
+  inventoryCount?: number
   requestId: string
   content: string
   clarificationOptions?: ChatClarificationOption[]
@@ -197,6 +198,7 @@ interface ChatDonePayload {
 }
 
 interface ChatSourcesPayload {
+  inventoryCount: number
   requestId: string
   sources: ChatSourceCard[]
 }
@@ -693,12 +695,13 @@ export function registerChatIpc(
   const emitSources = (
     sender: Electron.WebContents,
     requestId: string,
-    sources?: ChatSourceCard[],
+    sources: ChatSourceCard[] | undefined,
+    inventoryCount: number,
     completed = false
   ): void => {
     if (process.env.AUTODOC_ASK_AI_CITED_CARDS === '1' && !completed) return
     if (!sources || sources.length === 0) return
-    sender.send('chat:sources', { requestId, sources } satisfies ChatSourcesPayload)
+    sender.send('chat:sources', { requestId, sources, inventoryCount } satisfies ChatSourcesPayload)
   }
 
   const rememberWrittenConversation = (
@@ -721,8 +724,8 @@ export function registerChatIpc(
   ): { content: string; sources?: ChatSourceCard[] } => {
     if (!sources || sources.length === 0)
       return process.env.AUTODOC_ASK_AI_CITED_CARDS === '1'
-        ? { content: answer, sources: [] }
-        : { content: answer }
+        ? { content: answer.replace(/\[n\]/g, ''), sources: [] }
+        : { content: answer.replace(/\[n\]/g, '') }
     const applied = applyAnswerCitations(answer, sources)
     return {
       content: applied.answer,
@@ -1511,6 +1514,12 @@ export function registerChatIpc(
     return normalWarmup()
   })
 
+  // Rehydrate source receipts saved before coverage metadata existed.
+  ipcMain.handle(
+    'chat:inventory-count',
+    async (): Promise<number> => (await meetingIndex.listInventory()).length
+  )
+
   ipcMain.handle('chat:cancel', (_event, requestId: string): void => {
     const controller = activeChatRequests.get(requestId)
     if (controller) {
@@ -1651,7 +1660,14 @@ export function registerChatIpc(
           return
         }
         applyAskAiAnswerToSession(session as AskAiSession, result)
-        if (!useAskAiAppendFollowups()) emitSources(sender, requestId, result.sources)
+        const inventoryCount =
+          result.conversation && !result.conversation.scopedMeetingIds?.length
+            ? result.conversation.inventoryCount
+            : result.sources?.length
+              ? (await meetingIndex.listInventory()).length
+              : 0
+        if (!useAskAiAppendFollowups())
+          emitSources(sender, requestId, result.sources, inventoryCount)
         let writerSources: ChatSourceCard[] | undefined
         let streamed = false
         const rewritten = await maybeRewriteAnswer(
@@ -1666,14 +1682,14 @@ export function registerChatIpc(
           (summary) => sender.send('chat:count-result', { requestId, summary }),
           (sources) => {
             writerSources = sources
-            emitSources(sender, requestId, sources)
+            emitSources(sender, requestId, sources, inventoryCount)
           }
         )
         controller.signal.throwIfAborted()
         rememberWrittenConversation(result, rewritten, session as AskAiSession)
         const finalized = finalizeAnswer(rewritten, writerSources ?? result.sources)
         if (process.env.AUTODOC_ASK_AI_CITED_CARDS === '1')
-          emitSources(sender, requestId, finalized.sources, true)
+          emitSources(sender, requestId, finalized.sources, inventoryCount, true)
         if (!streamed) {
           sender.send('chat:chunk', {
             requestId,
@@ -1700,7 +1716,7 @@ export function registerChatIpc(
             ? { clarificationOptions: result.clarificationOptions }
             : {}),
           ...(result.offerSearchAll ? { offerSearchAll: true } : {}),
-          ...(finalized.sources ? { sources: finalized.sources } : {})
+          ...(finalized.sources ? { sources: finalized.sources, inventoryCount } : {})
         } satisfies ChatDonePayload)
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) {
@@ -1765,7 +1781,14 @@ export function registerChatIpc(
           signal: controller.signal
         })
         applyAskAiAnswerToSession(session as AskAiSession, result)
-        if (!useAskAiAppendFollowups()) emitSources(sender, requestId, result.sources)
+        const inventoryCount =
+          result.conversation && !result.conversation.scopedMeetingIds?.length
+            ? result.conversation.inventoryCount
+            : result.sources?.length
+              ? (await meetingIndex.listInventory()).length
+              : 0
+        if (!useAskAiAppendFollowups())
+          emitSources(sender, requestId, result.sources, inventoryCount)
         let writerSources: ChatSourceCard[] | undefined
         let streamed = false
         const rewritten = await maybeRewriteAnswer(
@@ -1780,14 +1803,14 @@ export function registerChatIpc(
           (summary) => sender.send('chat:count-result', { requestId, summary }),
           (sources) => {
             writerSources = sources
-            emitSources(sender, requestId, sources)
+            emitSources(sender, requestId, sources, inventoryCount)
           }
         )
         controller.signal.throwIfAborted()
         rememberWrittenConversation(result, rewritten, session as AskAiSession)
         const finalized = finalizeAnswer(rewritten, writerSources ?? result.sources)
         if (process.env.AUTODOC_ASK_AI_CITED_CARDS === '1')
-          emitSources(sender, requestId, finalized.sources, true)
+          emitSources(sender, requestId, finalized.sources, inventoryCount, true)
         if (!streamed) {
           sender.send('chat:chunk', {
             requestId,
@@ -1813,7 +1836,7 @@ export function registerChatIpc(
           ...(result.clarificationOptions
             ? { clarificationOptions: result.clarificationOptions }
             : {}),
-          ...(finalized.sources ? { sources: finalized.sources } : {})
+          ...(finalized.sources ? { sources: finalized.sources, inventoryCount } : {})
         } satisfies ChatDonePayload)
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) {

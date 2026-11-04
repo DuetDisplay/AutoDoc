@@ -6,6 +6,13 @@ export const askAiOverlays: Record<
   Partial<Record<keyof typeof en, string>>
 > = {
   de: {
+    'askAi.coverage': 'Grundlage: {passages} aus {meetings} von insgesamt {totalMeetings}.',
+    'count.passages.zero': '{count} Passagen',
+    'count.passages.one': '{count} Passage',
+    'count.passages.two': '{count} Passagen',
+    'count.passages.few': '{count} Passagen',
+    'count.passages.many': '{count} Passagen',
+    'count.passages.other': '{count} Passagen',
     'askAi.indexingPreparingAnnouncement': 'Ihre Besprechungen werden für „KI fragen“ vorbereitet.',
     'askAi.indexingPausedAnnouncement':
       'Die Vorbereitung für „KI fragen“ pausiert, während eine Besprechung aufgenommen wird oder Notizen erstellt werden.',
@@ -38,6 +45,13 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'Filterdetails nicht verfügbar'
   },
   ja: {
+    'askAi.coverage': '{totalMeetings}のうち{meetings}件の会議からの{passages}に基づいています。',
+    'count.passages.zero': '{count}件の抜粋',
+    'count.passages.one': '{count}件の抜粋',
+    'count.passages.two': '{count}件の抜粋',
+    'count.passages.few': '{count}件の抜粋',
+    'count.passages.many': '{count}件の抜粋',
+    'count.passages.other': '{count}件の抜粋',
     'askAi.indexingPreparingAnnouncement': 'AIに質問できるよう会議を準備しています。',
     'askAi.indexingPausedAnnouncement':
       '会議の録音中またはノートの作成中のため、AIに質問するための準備を一時停止しています。',
@@ -70,6 +84,13 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '条件の詳細を表示できません'
   },
   'zh-Hans': {
+    'askAi.coverage': '依据 {passages}；涉及会议：{meetings}，会议总数：{totalMeetings}。',
+    'count.passages.zero': '{count}段摘录',
+    'count.passages.one': '{count}段摘录',
+    'count.passages.two': '{count}段摘录',
+    'count.passages.few': '{count}段摘录',
+    'count.passages.many': '{count}段摘录',
+    'count.passages.other': '{count}段摘录',
     'askAi.indexingPreparingAnnouncement': '正在为“询问 AI”准备您的会议。',
     'askAi.indexingPausedAnnouncement': '会议录制或笔记生成期间，“询问 AI”的准备工作暂停。',
 
@@ -99,6 +120,13 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '筛选详情不可用'
   },
   ko: {
+    'askAi.coverage': '근거: {totalMeetings} 중 {meetings}개 회의에서 가져온 {passages}.',
+    'count.passages.zero': '{count} 개 발췌문',
+    'count.passages.one': '{count} 개 발췌문',
+    'count.passages.two': '{count} 개 발췌문',
+    'count.passages.few': '{count} 개 발췌문',
+    'count.passages.many': '{count} 개 발췌문',
+    'count.passages.other': '{count} 개 발췌문',
     'askAi.indexingPreparingAnnouncement': 'AI에게 묻기를 위해 회의를 준비하고 있습니다.',
     'askAi.indexingPausedAnnouncement':
       '회의를 녹음하거나 노트를 작성하는 동안 AI에게 묻기 준비가 일시 중지되었습니다.',
@@ -131,6 +159,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '필터 세부 정보를 사용할 수 없음'
   },
   fr: {
+    'askAi.coverage':
+      'Base de la réponse : {passages}. Réunions utilisées : {meetings} ; bibliothèque : {totalMeetings}.',
+    'count.passages.zero': '{count} passages',
+    'count.passages.one': '{count} passage',
+    'count.passages.two': '{count} passages',
+    'count.passages.few': '{count} passages',
+    'count.passages.many': '{count} passages',
+    'count.passages.other': '{count} passages',
     'askAi.indexingPreparingAnnouncement': 'Préparation de vos réunions pour Demander à l’IA.',
     'askAi.indexingPausedAnnouncement':
       'La préparation pour Demander à l’IA est en pause pendant l’enregistrement d’une réunion ou la création des notes.',
@@ -163,6 +199,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'détails des filtres indisponibles'
   },
   es: {
+    'askAi.coverage':
+      'Basado en {passages}. Reuniones utilizadas: {meetings}; en tu biblioteca: {totalMeetings}.',
+    'count.passages.zero': '{count} fragmentos',
+    'count.passages.one': '{count} fragmento',
+    'count.passages.two': '{count} fragmentos',
+    'count.passages.few': '{count} fragmentos',
+    'count.passages.many': '{count} fragmentos',
+    'count.passages.other': '{count} fragmentos',
     'askAi.indexingPreparingAnnouncement': 'Preparando tus reuniones para Preguntar a la IA.',
     'askAi.indexingPausedAnnouncement':
       'La preparación para Preguntar a la IA está pausada mientras se graba una reunión o se crean las notas.',
@@ -195,6 +239,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detalles del filtro no disponibles'
   },
   it: {
+    'askAi.coverage':
+      'Fonti: {passages}. Riunioni utilizzate: {meetings}; nella libreria: {totalMeetings}.',
+    'count.passages.zero': '{count} passaggi',
+    'count.passages.one': '{count} passaggio',
+    'count.passages.two': '{count} passaggi',
+    'count.passages.few': '{count} passaggi',
+    'count.passages.many': '{count} passaggi',
+    'count.passages.other': '{count} passaggi',
     'askAi.indexingPreparingAnnouncement': 'Preparazione delle riunioni per Chiedi all’IA.',
     'askAi.indexingPausedAnnouncement':
       'La preparazione per Chiedi all’IA è in pausa mentre si registra una riunione o si preparano le note.',
@@ -227,6 +279,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'dettagli dei filtri non disponibili'
   },
   pt: {
+    'askAi.coverage':
+      'Base da resposta: {passages}. Reuniões utilizadas: {meetings}; na biblioteca: {totalMeetings}.',
+    'count.passages.zero': '{count} trechos',
+    'count.passages.one': '{count} trecho',
+    'count.passages.two': '{count} trechos',
+    'count.passages.few': '{count} trechos',
+    'count.passages.many': '{count} trechos',
+    'count.passages.other': '{count} trechos',
     'askAi.indexingPreparingAnnouncement': 'A preparar as suas reuniões para Perguntar à IA.',
     'askAi.indexingPausedAnnouncement':
       'A preparação para Perguntar à IA está em pausa enquanto uma reunião é gravada ou as notas são criadas.',
@@ -259,6 +319,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detalhes dos filtros indisponíveis'
   },
   ru: {
+    'askAi.coverage':
+      'Основа ответа: {passages}. Использовано встреч: {meetings}; в библиотеке: {totalMeetings}.',
+    'count.passages.zero': '{count} отрывков',
+    'count.passages.one': '{count} отрывок',
+    'count.passages.two': '{count} отрывка',
+    'count.passages.few': '{count} отрывка',
+    'count.passages.many': '{count} отрывков',
+    'count.passages.other': '{count} отрывка',
     'askAi.indexingPreparingAnnouncement': 'Подготовка встреч для функции «Спросить ИИ».',
     'askAi.indexingPausedAnnouncement':
       'Подготовка для «Спросить ИИ» приостановлена, пока записывается встреча или создаются заметки.',
@@ -291,6 +359,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'сведения о фильтрах недоступны'
   },
   uk: {
+    'askAi.coverage':
+      'Основа відповіді: {passages}. Використано зустрічей: {meetings}; у бібліотеці: {totalMeetings}.',
+    'count.passages.zero': '{count} уривків',
+    'count.passages.one': '{count} уривок',
+    'count.passages.two': '{count} уривки',
+    'count.passages.few': '{count} уривки',
+    'count.passages.many': '{count} уривків',
+    'count.passages.other': '{count} уривка',
     'askAi.indexingPreparingAnnouncement': 'Підготовка зустрічей для функції «Запитати ШІ».',
     'askAi.indexingPausedAnnouncement':
       'Підготовку для «Запитати ШІ» призупинено, поки записується зустріч або створюються нотатки.',
@@ -323,6 +399,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'відомості про фільтри недоступні'
   },
   bg: {
+    'askAi.coverage':
+      'Основа на отговора: {passages}. Използвани срещи: {meetings}; в библиотеката: {totalMeetings}.',
+    'count.passages.zero': '{count} откъса',
+    'count.passages.one': '{count} откъс',
+    'count.passages.two': '{count} откъса',
+    'count.passages.few': '{count} откъса',
+    'count.passages.many': '{count} откъса',
+    'count.passages.other': '{count} откъса',
     'askAi.indexingPreparingAnnouncement': 'Подготовка на срещите ви за „Попитай ИИ“.',
     'askAi.indexingPausedAnnouncement':
       'Подготовката за „Попитай ИИ“ е спряна, докато се записва среща или се създават бележки.',
@@ -355,6 +439,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'подробностите за филтрите не са налични'
   },
   hr: {
+    'askAi.coverage':
+      'Osnova odgovora: {passages}. Korišteni sastanci: {meetings}; u biblioteci: {totalMeetings}.',
+    'count.passages.zero': '{count} odlomaka',
+    'count.passages.one': '{count} odlomak',
+    'count.passages.two': '{count} odlomka',
+    'count.passages.few': '{count} odlomka',
+    'count.passages.many': '{count} odlomaka',
+    'count.passages.other': '{count} odlomaka',
     'askAi.indexingPreparingAnnouncement': 'Priprema sastanaka za Pitaj AI.',
     'askAi.indexingPausedAnnouncement':
       'Priprema za Pitaj AI pauzirana je dok se snima sastanak ili izrađuju bilješke.',
@@ -387,6 +479,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'pojedinosti filtara nisu dostupne'
   },
   cs: {
+    'askAi.coverage':
+      'Podklad odpovědi: {passages}. Využité schůzky: {meetings}; v knihovně: {totalMeetings}.',
+    'count.passages.zero': '{count} úryvků',
+    'count.passages.one': '{count} úryvek',
+    'count.passages.two': '{count} úryvky',
+    'count.passages.few': '{count} úryvky',
+    'count.passages.many': '{count} úryvku',
+    'count.passages.other': '{count} úryvků',
     'askAi.indexingPreparingAnnouncement': 'Příprava vašich schůzek pro Zeptat se AI.',
     'askAi.indexingPausedAnnouncement':
       'Příprava pro Zeptat se AI je pozastavena, zatímco se nahrává schůzka nebo vytvářejí poznámky.',
@@ -419,6 +519,13 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrů nejsou k dispozici'
   },
   da: {
+    'askAi.coverage': 'Baseret på {passages} fra {meetings} ud af i alt {totalMeetings}.',
+    'count.passages.zero': '{count} uddrag',
+    'count.passages.one': '{count} uddrag',
+    'count.passages.two': '{count} uddrag',
+    'count.passages.few': '{count} uddrag',
+    'count.passages.many': '{count} uddrag',
+    'count.passages.other': '{count} uddrag',
     'askAi.indexingPreparingAnnouncement': 'Dine møder gøres klar til Spørg AI.',
     'askAi.indexingPausedAnnouncement':
       'Klargøring til Spørg AI er sat på pause, mens et møde optages, eller noter bliver lavet.',
@@ -451,6 +558,13 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filteroplysninger er ikke tilgængelige'
   },
   nl: {
+    'askAi.coverage': 'Gebaseerd op {passages} uit {meetings} van in totaal {totalMeetings}.',
+    'count.passages.zero': '{count} fragmenten',
+    'count.passages.one': '{count} fragment',
+    'count.passages.two': '{count} fragmenten',
+    'count.passages.few': '{count} fragmenten',
+    'count.passages.many': '{count} fragmenten',
+    'count.passages.other': '{count} fragmenten',
     'askAi.indexingPreparingAnnouncement': 'Je vergaderingen worden voorbereid voor Vraag AI.',
     'askAi.indexingPausedAnnouncement':
       'De voorbereiding voor Vraag AI is gepauzeerd terwijl een vergadering wordt opgenomen of notities worden gemaakt.',
@@ -483,6 +597,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filterdetails niet beschikbaar'
   },
   et: {
+    'askAi.coverage':
+      'Vastuse aluseks: {passages}. Kasutatud koosolekuid: {meetings}; teegis: {totalMeetings}.',
+    'count.passages.zero': '{count} katkendit',
+    'count.passages.one': '{count} katkend',
+    'count.passages.two': '{count} katkendit',
+    'count.passages.few': '{count} katkendit',
+    'count.passages.many': '{count} katkendit',
+    'count.passages.other': '{count} katkendit',
     'askAi.indexingPreparingAnnouncement': 'Koosolekuid valmistatakse ette tehisarult küsimiseks.',
     'askAi.indexingPausedAnnouncement':
       'Koosolekute ettevalmistus tehisarult küsimiseks on peatatud, kuni koosolekut salvestatakse või märkmeid koostatakse.',
@@ -515,6 +637,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtri üksikasjad pole saadaval'
   },
   fi: {
+    'askAi.coverage':
+      'Vastauksen pohjana: {passages}. Käytetyt kokoukset: {meetings}; kirjastossa: {totalMeetings}.',
+    'count.passages.zero': '{count} katkelmaa',
+    'count.passages.one': '{count} katkelma',
+    'count.passages.two': '{count} katkelmaa',
+    'count.passages.few': '{count} katkelmaa',
+    'count.passages.many': '{count} katkelmaa',
+    'count.passages.other': '{count} katkelmaa',
     'askAi.indexingPreparingAnnouncement': 'Kokouksiasi valmistellaan tekoälyltä kysymistä varten.',
     'askAi.indexingPausedAnnouncement':
       'Kokousten valmistelu tekoälyltä kysymistä varten on tauolla, kun kokousta tallennetaan tai muistiinpanoja luodaan.',
@@ -547,6 +677,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'suodattimen tietoja ei ole saatavilla'
   },
   el: {
+    'askAi.coverage':
+      'Βάση απάντησης: {passages}. Συναντήσεις που χρησιμοποιήθηκαν: {meetings}· στη βιβλιοθήκη: {totalMeetings}.',
+    'count.passages.zero': '{count} αποσπάσματα',
+    'count.passages.one': '{count} απόσπασμα',
+    'count.passages.two': '{count} αποσπάσματα',
+    'count.passages.few': '{count} αποσπάσματα',
+    'count.passages.many': '{count} αποσπάσματα',
+    'count.passages.other': '{count} αποσπάσματα',
     'askAi.indexingPreparingAnnouncement': 'Προετοιμασία των συσκέψεών σας για το Ρωτήστε το AI.',
     'askAi.indexingPausedAnnouncement':
       'Η προετοιμασία για το Ρωτήστε το AI έχει παύσει όσο γίνεται εγγραφή σύσκεψης ή δημιουργούνται σημειώσεις.',
@@ -579,6 +717,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'οι λεπτομέρειες φίλτρων δεν είναι διαθέσιμες'
   },
   hu: {
+    'askAi.coverage':
+      'A válasz alapja: {passages}. Felhasznált megbeszélések: {meetings}; a könyvtárban: {totalMeetings}.',
+    'count.passages.zero': '{count} részlet',
+    'count.passages.one': '{count} részlet',
+    'count.passages.two': '{count} részlet',
+    'count.passages.few': '{count} részlet',
+    'count.passages.many': '{count} részlet',
+    'count.passages.other': '{count} részlet',
     'askAi.indexingPreparingAnnouncement':
       'Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz.',
     'askAi.indexingPausedAnnouncement':
@@ -612,6 +758,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'a szűrő részletei nem érhetők el'
   },
   lv: {
+    'askAi.coverage':
+      'Atbildes pamats: {passages}. Izmantotās sapulces: {meetings}; bibliotēkā: {totalMeetings}.',
+    'count.passages.zero': '{count} fragmentu',
+    'count.passages.one': '{count} fragments',
+    'count.passages.two': '{count} fragmenti',
+    'count.passages.few': '{count} fragmenti',
+    'count.passages.many': '{count} fragmentu',
+    'count.passages.other': '{count} fragmenti',
     'askAi.indexingPreparingAnnouncement': 'Sanāksmju sagatavošana funkcijai Jautāt AI.',
     'askAi.indexingPausedAnnouncement':
       'Sagatavošana funkcijai Jautāt AI ir apturēta, kamēr tiek ierakstīta sanāksme vai veidotas piezīmes.',
@@ -644,6 +798,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtra informācija nav pieejama'
   },
   lt: {
+    'askAi.coverage':
+      'Atsakymo pagrindas: {passages}. Panaudoti susitikimai: {meetings}; bibliotekoje: {totalMeetings}.',
+    'count.passages.zero': '{count} ištraukų',
+    'count.passages.one': '{count} ištrauka',
+    'count.passages.two': '{count} ištraukos',
+    'count.passages.few': '{count} ištraukos',
+    'count.passages.many': '{count} ištraukos',
+    'count.passages.other': '{count} ištraukų',
     'askAi.indexingPreparingAnnouncement': 'Susitikimų paruošimas funkcijai Klausti DI.',
     'askAi.indexingPausedAnnouncement':
       'Paruošimas funkcijai Klausti DI sustabdytas, kol įrašomas susitikimas arba rengiamos pastabos.',
@@ -676,6 +838,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtro informacija nepasiekiama'
   },
   pl: {
+    'askAi.coverage':
+      'Podstawa odpowiedzi: {passages}. Wykorzystane spotkania: {meetings}; w bibliotece: {totalMeetings}.',
+    'count.passages.zero': '{count} fragmentów',
+    'count.passages.one': '{count} fragment',
+    'count.passages.two': '{count} fragmenty',
+    'count.passages.few': '{count} fragmenty',
+    'count.passages.many': '{count} fragmentów',
+    'count.passages.other': '{count} fragmentu',
     'askAi.indexingPreparingAnnouncement': 'Przygotowywanie spotkań do funkcji Zapytaj AI.',
     'askAi.indexingPausedAnnouncement':
       'Przygotowywanie do Zapytaj AI wstrzymano, gdy trwa nagrywanie spotkania lub tworzenie notatek.',
@@ -708,6 +878,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'szczegóły filtrów są niedostępne'
   },
   ro: {
+    'askAi.coverage':
+      'Baza răspunsului: {passages}. Întâlniri folosite: {meetings}; în bibliotecă: {totalMeetings}.',
+    'count.passages.zero': '{count} fragmente',
+    'count.passages.one': '{count} fragment',
+    'count.passages.two': '{count} fragmente',
+    'count.passages.few': '{count} fragmente',
+    'count.passages.many': '{count} fragmente',
+    'count.passages.other': '{count} fragmente',
     'askAi.indexingPreparingAnnouncement': 'Pregătirea întâlnirilor pentru Întreabă AI.',
     'askAi.indexingPausedAnnouncement':
       'Pregătirea pentru Întreabă AI este în pauză cât timp se înregistrează o întâlnire sau se creează notițe.',
@@ -740,6 +918,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detaliile filtrelor nu sunt disponibile'
   },
   sk: {
+    'askAi.coverage':
+      'Podklad odpovede: {passages}. Použité stretnutia: {meetings}; v knižnici: {totalMeetings}.',
+    'count.passages.zero': '{count} úryvkov',
+    'count.passages.one': '{count} úryvok',
+    'count.passages.two': '{count} úryvky',
+    'count.passages.few': '{count} úryvky',
+    'count.passages.many': '{count} úryvku',
+    'count.passages.other': '{count} úryvkov',
     'askAi.indexingPreparingAnnouncement': 'Príprava vašich schôdzí pre Opýtať sa AI.',
     'askAi.indexingPausedAnnouncement':
       'Príprava pre Opýtať sa AI je pozastavená, kým sa nahráva schôdza alebo vytvárajú poznámky.',
@@ -772,6 +958,14 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrov nie sú k dispozícii'
   },
   sl: {
+    'askAi.coverage':
+      'Podlaga odgovora: {passages}. Uporabljeni sestanki: {meetings}; v knjižnici: {totalMeetings}.',
+    'count.passages.zero': '{count} odlomkov',
+    'count.passages.one': '{count} odlomek',
+    'count.passages.two': '{count} odlomka',
+    'count.passages.few': '{count} odlomki',
+    'count.passages.many': '{count} odlomkov',
+    'count.passages.other': '{count} odlomkov',
     'askAi.indexingPreparingAnnouncement': 'Priprava sestankov za Vprašaj AI.',
     'askAi.indexingPausedAnnouncement':
       'Priprava za Vprašaj AI je ustavljena, medtem ko se snema sestanek ali ustvarjajo zapiski.',
@@ -804,6 +998,13 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrov niso na voljo'
   },
   sv: {
+    'askAi.coverage': 'Baserat på {passages} från {meetings} av totalt {totalMeetings}.',
+    'count.passages.zero': '{count} utdrag',
+    'count.passages.one': '{count} utdrag',
+    'count.passages.two': '{count} utdrag',
+    'count.passages.few': '{count} utdrag',
+    'count.passages.many': '{count} utdrag',
+    'count.passages.other': '{count} utdrag',
     'askAi.indexingPreparingAnnouncement': 'Dina möten förbereds för Fråga AI.',
     'askAi.indexingPausedAnnouncement':
       'Förberedelsen för Fråga AI är pausad medan ett möte spelas in eller anteckningar skapas.',

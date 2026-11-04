@@ -136,6 +136,13 @@ export const en = {
   'search.transcript': 'transcript',
   'search.note': 'note',
 
+  'askAi.coverage': 'Based on {passages} from {meetings} of your {totalMeetings}.',
+  'count.passages.zero': '{count} passages',
+  'count.passages.one': '{count} passage',
+  'count.passages.two': '{count} passages',
+  'count.passages.few': '{count} passages',
+  'count.passages.many': '{count} passages',
+  'count.passages.other': '{count} passages',
   'askAi.scope': 'Meeting scope',
   'askAi.onlyMeeting': 'Only this meeting: {title}',
   'askAi.removeScope': 'Remove meeting scope',
