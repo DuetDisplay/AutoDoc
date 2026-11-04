@@ -94,6 +94,7 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
     })
 
     if (!res.ok) {
+      this.availabilityReason = res.status === 404 ? 'missing' : 'unreachable'
       this.availability = false
       this.availabilityCheckedAt = Date.now()
       throw new Error(`Ollama embedding model ${this.model} returned ${res.status}`)

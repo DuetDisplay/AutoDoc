@@ -27,3 +27,17 @@ it('can force CPU embedding and unload afterward for the Windows experiment', as
     input: ['A note.']
   })
 })
+
+it('distinguishes a transient embedding response from a missing model for bounded prewarm retries', async () => {
+  let status = 500
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response('unavailable', { status }))
+  )
+  const provider = new OllamaEmbeddingProvider('http://localhost:11435', 'test')
+  await expect(provider.embed(['Synthetic note.'])).rejects.toThrow('returned 500')
+  expect(provider.availabilityReason).toBe('unreachable')
+  status = 404
+  await expect(provider.embed(['Synthetic note.'])).rejects.toThrow('returned 404')
+  expect(provider.availabilityReason).toBe('missing')
+})
