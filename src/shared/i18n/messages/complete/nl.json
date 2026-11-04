@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "Kies de taal die tijdens je vergaderingen wordt gesproken. Nieuwe transcripties en notities gebruiken deze taal.",
   "askAi.indexingProgress": "Je vergaderingen worden voorbereid voor Vraag AI ({percent}%). Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen.",
   "askAi.indexingPaused": "De voorbereiding voor Vraag AI is gepauzeerd op {percent}% terwijl een vergadering wordt opgenomen of notities worden gemaakt. Daarna gaat dit automatisch verder. Tot die tijd kunnen antwoorden details missen.",
-  "askAi.indexingStarting": "Je vergaderingen worden voorbereid voor Vraag AI. Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen."
+  "askAi.indexingStarting": "Je vergaderingen worden voorbereid voor Vraag AI. Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen.",
+  "askAi.indexingPreparingAnnouncement": "Je vergaderingen worden voorbereid voor Vraag AI.",
+  "askAi.indexingPausedAnnouncement": "De voorbereiding voor Vraag AI is gepauzeerd terwijl een vergadering wordt opgenomen of notities worden gemaakt."
 }

@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "选择会议中使用的语言。新的转录和笔记将使用此语言。",
   "askAi.indexingProgress": "正在为“询问 AI”准备您的会议（{percent}%）。您现在就可以提问，但完成前回答可能遗漏一些细节。",
   "askAi.indexingPaused": "会议录制或笔记生成期间，“询问 AI”的准备工作暂停在{percent}%。之后会自动继续。在此之前，回答可能遗漏一些细节。",
-  "askAi.indexingStarting": "正在为“询问 AI”准备您的会议。您现在就可以提问，但完成前回答可能遗漏一些细节。"
+  "askAi.indexingStarting": "正在为“询问 AI”准备您的会议。您现在就可以提问，但完成前回答可能遗漏一些细节。",
+  "askAi.indexingPreparingAnnouncement": "正在为“询问 AI”准备您的会议。",
+  "askAi.indexingPausedAnnouncement": "会议录制或笔记生成期间，“询问 AI”的准备工作暂停。"
 }

@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "회의에서 사용하는 언어를 선택하세요. 새 녹취록과 회의록은 이 언어로 작성됩니다.",
   "askAi.indexingProgress": "AI에게 묻기를 위해 회의를 준비하고 있습니다({percent}%). 지금 질문할 수 있지만 완료될 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.",
   "askAi.indexingPaused": "회의를 녹음하거나 노트를 작성하는 동안 AI에게 묻기 준비가 {percent}%에서 일시 중지되었습니다. 이후 자동으로 계속됩니다. 그때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.",
-  "askAi.indexingStarting": "AI에게 묻기를 위해 회의를 준비하고 있습니다. 지금 질문할 수 있지만 완료될 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다."
+  "askAi.indexingStarting": "AI에게 묻기를 위해 회의를 준비하고 있습니다. 지금 질문할 수 있지만 완료될 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.",
+  "askAi.indexingPreparingAnnouncement": "AI에게 묻기를 위해 회의를 준비하고 있습니다.",
+  "askAi.indexingPausedAnnouncement": "회의를 녹음하거나 노트를 작성하는 동안 AI에게 묻기 준비가 일시 중지되었습니다."
 }

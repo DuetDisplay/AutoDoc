@@ -6,6 +6,10 @@ export const askAiOverlays: Record<
   Partial<Record<keyof typeof en, string>>
 > = {
   de: {
+    'askAi.indexingPreparingAnnouncement': 'Ihre Besprechungen werden für „KI fragen“ vorbereitet.',
+    'askAi.indexingPausedAnnouncement':
+      'Die Vorbereitung für „KI fragen“ pausiert, während eine Besprechung aufgenommen wird oder Notizen erstellt werden.',
+
     'askAi.indexingStarting':
       'Ihre Besprechungen werden für „KI fragen“ vorbereitet. Sie können jetzt fragen, aber bis zum Abschluss können Antworten Details auslassen.',
     'askAi.indexingProgress':
@@ -34,6 +38,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'Filterdetails nicht verfügbar'
   },
   ja: {
+    'askAi.indexingPreparingAnnouncement': 'AIに質問できるよう会議を準備しています。',
+    'askAi.indexingPausedAnnouncement':
+      '会議の録音中またはノートの作成中のため、AIに質問するための準備を一時停止しています。',
+
     'askAi.indexingStarting':
       'AIに質問できるよう会議を準備しています。今すぐ質問できますが、完了までは回答に一部の詳細が含まれない場合があります。',
     'askAi.indexingProgress':
@@ -62,6 +70,9 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '条件の詳細を表示できません'
   },
   'zh-Hans': {
+    'askAi.indexingPreparingAnnouncement': '正在为“询问 AI”准备您的会议。',
+    'askAi.indexingPausedAnnouncement': '会议录制或笔记生成期间，“询问 AI”的准备工作暂停。',
+
     'askAi.indexingStarting':
       '正在为“询问 AI”准备您的会议。您现在就可以提问，但完成前回答可能遗漏一些细节。',
     'askAi.indexingProgress':
@@ -88,6 +99,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '筛选详情不可用'
   },
   ko: {
+    'askAi.indexingPreparingAnnouncement': 'AI에게 묻기를 위해 회의를 준비하고 있습니다.',
+    'askAi.indexingPausedAnnouncement':
+      '회의를 녹음하거나 노트를 작성하는 동안 AI에게 묻기 준비가 일시 중지되었습니다.',
+
     'askAi.indexingStarting':
       'AI에게 묻기를 위해 회의를 준비하고 있습니다. 지금 질문할 수 있지만 완료될 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.',
     'askAi.indexingProgress':
@@ -116,6 +131,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': '필터 세부 정보를 사용할 수 없음'
   },
   fr: {
+    'askAi.indexingPreparingAnnouncement': 'Préparation de vos réunions pour Demander à l’IA.',
+    'askAi.indexingPausedAnnouncement':
+      'La préparation pour Demander à l’IA est en pause pendant l’enregistrement d’une réunion ou la création des notes.',
+
     'askAi.indexingStarting':
       'Préparation de vos réunions pour Demander à l’IA. Vous pouvez poser des questions, mais les réponses risquent de manquer de détails avant la fin.',
     'askAi.indexingProgress':
@@ -144,6 +163,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'détails des filtres indisponibles'
   },
   es: {
+    'askAi.indexingPreparingAnnouncement': 'Preparando tus reuniones para Preguntar a la IA.',
+    'askAi.indexingPausedAnnouncement':
+      'La preparación para Preguntar a la IA está pausada mientras se graba una reunión o se crean las notas.',
+
     'askAi.indexingStarting':
       'Preparando tus reuniones para Preguntar a la IA. Ya puedes preguntar, pero las respuestas pueden omitir detalles hasta que termine.',
     'askAi.indexingProgress':
@@ -172,6 +195,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detalles del filtro no disponibles'
   },
   it: {
+    'askAi.indexingPreparingAnnouncement': 'Preparazione delle riunioni per Chiedi all’IA.',
+    'askAi.indexingPausedAnnouncement':
+      'La preparazione per Chiedi all’IA è in pausa mentre si registra una riunione o si preparano le note.',
+
     'askAi.indexingStarting':
       'Preparazione delle riunioni per Chiedi all’IA. Puoi già fare domande, ma le risposte potrebbero omettere dettagli fino al termine.',
     'askAi.indexingProgress':
@@ -200,6 +227,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'dettagli dei filtri non disponibili'
   },
   pt: {
+    'askAi.indexingPreparingAnnouncement': 'A preparar as suas reuniões para Perguntar à IA.',
+    'askAi.indexingPausedAnnouncement':
+      'A preparação para Perguntar à IA está em pausa enquanto uma reunião é gravada ou as notas são criadas.',
+
     'askAi.indexingStarting':
       'A preparar as suas reuniões para Perguntar à IA. Já pode perguntar, mas as respostas podem omitir detalhes até à conclusão.',
     'askAi.indexingProgress':
@@ -228,6 +259,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detalhes dos filtros indisponíveis'
   },
   ru: {
+    'askAi.indexingPreparingAnnouncement': 'Подготовка встреч для функции «Спросить ИИ».',
+    'askAi.indexingPausedAnnouncement':
+      'Подготовка для «Спросить ИИ» приостановлена, пока записывается встреча или создаются заметки.',
+
     'askAi.indexingStarting':
       'Подготовка встреч для функции «Спросить ИИ». Уже можно задавать вопросы, но до завершения в ответах могут отсутствовать детали.',
     'askAi.indexingProgress':
@@ -256,6 +291,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'сведения о фильтрах недоступны'
   },
   uk: {
+    'askAi.indexingPreparingAnnouncement': 'Підготовка зустрічей для функції «Запитати ШІ».',
+    'askAi.indexingPausedAnnouncement':
+      'Підготовку для «Запитати ШІ» призупинено, поки записується зустріч або створюються нотатки.',
+
     'askAi.indexingStarting':
       'Підготовка зустрічей для функції «Запитати ШІ». Уже можна ставити запитання, але до завершення у відповідях можуть бути відсутні деталі.',
     'askAi.indexingProgress':
@@ -284,6 +323,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'відомості про фільтри недоступні'
   },
   bg: {
+    'askAi.indexingPreparingAnnouncement': 'Подготовка на срещите ви за „Попитай ИИ“.',
+    'askAi.indexingPausedAnnouncement':
+      'Подготовката за „Попитай ИИ“ е спряна, докато се записва среща или се създават бележки.',
+
     'askAi.indexingStarting':
       'Подготовка на срещите ви за „Попитай ИИ“. Можете да питате сега, но до завършването в отговорите може да липсват подробности.',
     'askAi.indexingProgress':
@@ -312,6 +355,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'подробностите за филтрите не са налични'
   },
   hr: {
+    'askAi.indexingPreparingAnnouncement': 'Priprema sastanaka za Pitaj AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Priprema za Pitaj AI pauzirana je dok se snima sastanak ili izrađuju bilješke.',
+
     'askAi.indexingStarting':
       'Priprema sastanaka za Pitaj AI. Već možete pitati, ali do završetka u odgovorima mogu nedostajati pojedinosti.',
     'askAi.indexingProgress':
@@ -340,6 +387,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'pojedinosti filtara nisu dostupne'
   },
   cs: {
+    'askAi.indexingPreparingAnnouncement': 'Příprava vašich schůzek pro Zeptat se AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Příprava pro Zeptat se AI je pozastavena, zatímco se nahrává schůzka nebo vytvářejí poznámky.',
+
     'askAi.indexingStarting':
       'Příprava vašich schůzek pro Zeptat se AI. Ptát se můžete už teď, ale do dokončení mohou v odpovědích chybět podrobnosti.',
     'askAi.indexingProgress':
@@ -368,6 +419,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrů nejsou k dispozici'
   },
   da: {
+    'askAi.indexingPreparingAnnouncement': 'Dine møder gøres klar til Spørg AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Klargøring til Spørg AI er sat på pause, mens et møde optages, eller noter bliver lavet.',
+
     'askAi.indexingStarting':
       'Dine møder gøres klar til Spørg AI. Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt.',
     'askAi.indexingProgress':
@@ -396,6 +451,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filteroplysninger er ikke tilgængelige'
   },
   nl: {
+    'askAi.indexingPreparingAnnouncement': 'Je vergaderingen worden voorbereid voor Vraag AI.',
+    'askAi.indexingPausedAnnouncement':
+      'De voorbereiding voor Vraag AI is gepauzeerd terwijl een vergadering wordt opgenomen of notities worden gemaakt.',
+
     'askAi.indexingStarting':
       'Je vergaderingen worden voorbereid voor Vraag AI. Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen.',
     'askAi.indexingProgress':
@@ -424,6 +483,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filterdetails niet beschikbaar'
   },
   et: {
+    'askAi.indexingPreparingAnnouncement': 'Koosolekuid valmistatakse ette tehisarult küsimiseks.',
+    'askAi.indexingPausedAnnouncement':
+      'Koosolekute ettevalmistus tehisarult küsimiseks on peatatud, kuni koosolekut salvestatakse või märkmeid koostatakse.',
+
     'askAi.indexingStarting':
       'Koosolekuid valmistatakse ette tehisarult küsimiseks. Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.',
     'askAi.indexingProgress':
@@ -452,6 +515,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtri üksikasjad pole saadaval'
   },
   fi: {
+    'askAi.indexingPreparingAnnouncement': 'Kokouksiasi valmistellaan tekoälyltä kysymistä varten.',
+    'askAi.indexingPausedAnnouncement':
+      'Kokousten valmistelu tekoälyltä kysymistä varten on tauolla, kun kokousta tallennetaan tai muistiinpanoja luodaan.',
+
     'askAi.indexingStarting':
       'Kokouksiasi valmistellaan tekoälyltä kysymistä varten. Voit jo kysyä, mutta vastauksista voi puuttua tietoja, kunnes valmistelu päättyy.',
     'askAi.indexingProgress':
@@ -480,12 +547,16 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'suodattimen tietoja ei ole saatavilla'
   },
   el: {
+    'askAi.indexingPreparingAnnouncement': 'Προετοιμασία των συσκέψεών σας για το Ρωτήστε το AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Η προετοιμασία για το Ρωτήστε το AI έχει παύσει όσο γίνεται εγγραφή σύσκεψης ή δημιουργούνται σημειώσεις.',
+
     'askAi.indexingStarting':
       'Προετοιμασία των συσκέψεών σας για το Ρωτήστε το AI. Μπορείτε να ρωτήσετε τώρα, αλλά ως την ολοκλήρωση ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
     'askAi.indexingProgress':
       'Προετοιμασία των συσκέψεών σας για το Ρωτήστε το AI ({percent}%). Μπορείτε να ρωτήσετε τώρα, αλλά ως την ολοκλήρωση ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
     'askAi.indexingPaused':
-      'Η προετοιμασία για το Ρωτήστε το AI έχει παύσει στο {percent}% όσο εγγράφεται σύσκεψη ή δημιουργούνται σημειώσεις. Θα συνεχιστεί αυτόματα μετά. Ως τότε ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
+      'Η προετοιμασία για το Ρωτήστε το AI έχει παύσει στο {percent}% όσο γίνεται εγγραφή σύσκεψης ή δημιουργούνται σημειώσεις. Θα συνεχιστεί αυτόματα μετά. Ως τότε ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
 
     'askAi.scope': 'Πεδίο σύσκεψης',
     'askAi.onlyMeeting': 'Μόνο αυτή η σύσκεψη: {title}',
@@ -508,6 +579,11 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'οι λεπτομέρειες φίλτρων δεν είναι διαθέσιμες'
   },
   hu: {
+    'askAi.indexingPreparingAnnouncement':
+      'Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz.',
+    'askAi.indexingPausedAnnouncement':
+      'A Kérdezd az AI-t előkészítése szünetel, amíg értekezletet rögzít vagy jegyzetek készülnek.',
+
     'askAi.indexingStarting':
       'Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz. Már kérdezhet, de a befejezésig a válaszokból részletek hiányozhatnak.',
     'askAi.indexingProgress':
@@ -536,6 +612,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'a szűrő részletei nem érhetők el'
   },
   lv: {
+    'askAi.indexingPreparingAnnouncement': 'Sanāksmju sagatavošana funkcijai Jautāt AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Sagatavošana funkcijai Jautāt AI ir apturēta, kamēr tiek ierakstīta sanāksme vai veidotas piezīmes.',
+
     'askAi.indexingStarting':
       'Sanāksmju sagatavošana funkcijai Jautāt AI. Varat jautāt jau tagad, bet līdz beigām atbildēs var trūkt detaļu.',
     'askAi.indexingProgress':
@@ -564,6 +644,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtra informācija nav pieejama'
   },
   lt: {
+    'askAi.indexingPreparingAnnouncement': 'Susitikimų paruošimas funkcijai Klausti DI.',
+    'askAi.indexingPausedAnnouncement':
+      'Paruošimas funkcijai Klausti DI sustabdytas, kol įrašomas susitikimas arba rengiamos pastabos.',
+
     'askAi.indexingStarting':
       'Susitikimų paruošimas funkcijai Klausti DI. Jau galite klausti, bet iki pabaigos atsakymuose gali trūkti detalių.',
     'askAi.indexingProgress':
@@ -592,6 +676,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'filtro informacija nepasiekiama'
   },
   pl: {
+    'askAi.indexingPreparingAnnouncement': 'Przygotowywanie spotkań do funkcji Zapytaj AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Przygotowywanie do Zapytaj AI wstrzymano, gdy trwa nagrywanie spotkania lub tworzenie notatek.',
+
     'askAi.indexingStarting':
       'Przygotowywanie spotkań do funkcji Zapytaj AI. Możesz już pytać, ale do zakończenia w odpowiedziach może brakować szczegółów.',
     'askAi.indexingProgress':
@@ -620,6 +708,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'szczegóły filtrów są niedostępne'
   },
   ro: {
+    'askAi.indexingPreparingAnnouncement': 'Pregătirea întâlnirilor pentru Întreabă AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Pregătirea pentru Întreabă AI este în pauză cât timp se înregistrează o întâlnire sau se creează notițe.',
+
     'askAi.indexingStarting':
       'Pregătirea întâlnirilor pentru Întreabă AI. Puteți întreba acum, dar până la final răspunsurile pot omite detalii.',
     'askAi.indexingProgress':
@@ -648,6 +740,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'detaliile filtrelor nu sunt disponibile'
   },
   sk: {
+    'askAi.indexingPreparingAnnouncement': 'Príprava vašich schôdzí pre Opýtať sa AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Príprava pre Opýtať sa AI je pozastavená, kým sa nahráva schôdza alebo vytvárajú poznámky.',
+
     'askAi.indexingStarting':
       'Príprava vašich schôdzí pre Opýtať sa AI. Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti.',
     'askAi.indexingProgress':
@@ -676,6 +772,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrov nie sú k dispozícii'
   },
   sl: {
+    'askAi.indexingPreparingAnnouncement': 'Priprava sestankov za Vprašaj AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Priprava za Vprašaj AI je ustavljena, medtem ko se snema sestanek ali ustvarjajo zapiski.',
+
     'askAi.indexingStarting':
       'Priprava sestankov za Vprašaj AI. Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.',
     'askAi.indexingProgress':
@@ -704,6 +804,10 @@ export const askAiOverlays: Record<
     'askAi.filterUnavailable': 'podrobnosti filtrov niso na voljo'
   },
   sv: {
+    'askAi.indexingPreparingAnnouncement': 'Dina möten förbereds för Fråga AI.',
+    'askAi.indexingPausedAnnouncement':
+      'Förberedelsen för Fråga AI är pausad medan ett möte spelas in eller anteckningar skapas.',
+
     'askAi.indexingStarting':
       'Dina möten förbereds för Fråga AI. Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar.',
     'askAi.indexingProgress':

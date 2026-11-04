@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "Alegeți limba vorbită în întâlniri. Noile transcrieri și notițe vor fi în această limbă.",
   "askAi.indexingProgress": "Pregătirea întâlnirilor pentru Întreabă AI ({percent}%). Puteți întreba acum, dar până la final răspunsurile pot omite detalii.",
   "askAi.indexingPaused": "Pregătirea pentru Întreabă AI este în pauză la {percent}% cât timp se înregistrează o întâlnire sau se creează notițe. Va continua automat după aceea. Până atunci, răspunsurile pot omite detalii.",
-  "askAi.indexingStarting": "Pregătirea întâlnirilor pentru Întreabă AI. Puteți întreba acum, dar până la final răspunsurile pot omite detalii."
+  "askAi.indexingStarting": "Pregătirea întâlnirilor pentru Întreabă AI. Puteți întreba acum, dar până la final răspunsurile pot omite detalii.",
+  "askAi.indexingPreparingAnnouncement": "Pregătirea întâlnirilor pentru Întreabă AI.",
+  "askAi.indexingPausedAnnouncement": "Pregătirea pentru Întreabă AI este în pauză cât timp se înregistrează o întâlnire sau se creează notițe."
 }

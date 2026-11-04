@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "Vyberte jazyk, ktorým sa hovorí na vašich stretnutiach. Nové prepisy a poznámky budú v tomto jazyku.",
   "askAi.indexingProgress": "Príprava vašich schôdzí pre Opýtať sa AI ({percent} %). Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti.",
   "askAi.indexingPaused": "Príprava pre Opýtať sa AI je pozastavená na {percent} %, kým sa nahráva schôdza alebo vytvárajú poznámky. Potom bude automaticky pokračovať. Dovtedy môžu v odpovediach chýbať podrobnosti.",
-  "askAi.indexingStarting": "Príprava vašich schôdzí pre Opýtať sa AI. Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti."
+  "askAi.indexingStarting": "Príprava vašich schôdzí pre Opýtať sa AI. Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti.",
+  "askAi.indexingPreparingAnnouncement": "Príprava vašich schôdzí pre Opýtať sa AI.",
+  "askAi.indexingPausedAnnouncement": "Príprava pre Opýtať sa AI je pozastavená, kým sa nahráva schôdza alebo vytvárajú poznámky."
 }

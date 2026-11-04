@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "Välj det språk som talas på dina möten. Nya transkriptioner och anteckningar kommer att använda detta språk.",
   "askAi.indexingProgress": "Dina möten förbereds för Fråga AI ({percent} %). Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar.",
   "askAi.indexingPaused": "Förberedelsen för Fråga AI är pausad vid {percent} % medan ett möte spelas in eller anteckningar skapas. Den fortsätter automatiskt efteråt. Tills dess kan svaren sakna detaljer.",
-  "askAi.indexingStarting": "Dina möten förbereds för Fråga AI. Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar."
+  "askAi.indexingStarting": "Dina möten förbereds för Fråga AI. Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar.",
+  "askAi.indexingPreparingAnnouncement": "Dina möten förbereds för Fråga AI.",
+  "askAi.indexingPausedAnnouncement": "Förberedelsen för Fråga AI är pausad medan ett möte spelas in eller anteckningar skapas."
 }

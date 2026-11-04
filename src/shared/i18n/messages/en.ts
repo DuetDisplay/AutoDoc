@@ -146,6 +146,9 @@ export const en = {
     'Notes for {title} are still being made. Using Ask AI now will make them take a little longer.',
   'askAi.notesPendingMany':
     'Notes for {count} meetings are still being made. Using Ask AI now will make them take a little longer.',
+  'askAi.indexingPreparingAnnouncement': 'Preparing your meetings for Ask AI.',
+  'askAi.indexingPausedAnnouncement':
+    'Preparing your meetings for Ask AI is paused while a meeting is recording or notes are being made.',
   'askAi.indexingStarting':
     'Preparing your meetings for Ask AI. You can ask now, but answers might miss some details until this finishes.',
   'askAi.indexingProgress':

@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "Izberite jezik, ki ga govorite na sestankih. Novi prepisi in zapiski bodo v tem jeziku.",
   "askAi.indexingProgress": "Priprava sestankov za Vprašaj AI ({percent} %). Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.",
   "askAi.indexingPaused": "Priprava za Vprašaj AI je ustavljena pri {percent} %, medtem ko se snema sestanek ali ustvarjajo zapiski. Nato se bo samodejno nadaljevala. Do takrat lahko v odgovorih manjkajo podrobnosti.",
-  "askAi.indexingStarting": "Priprava sestankov za Vprašaj AI. Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti."
+  "askAi.indexingStarting": "Priprava sestankov za Vprašaj AI. Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.",
+  "askAi.indexingPreparingAnnouncement": "Priprava sestankov za Vprašaj AI.",
+  "askAi.indexingPausedAnnouncement": "Priprava za Vprašaj AI je ustavljena, medtem ko se snema sestanek ali ustvarjajo zapiski."
 }

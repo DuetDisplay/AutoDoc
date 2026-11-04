@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import type { AskAiIndexStatus } from '../../../shared/ask-ai-index-status'
 import { useI18n } from '../services/i18n'
 
@@ -9,8 +9,6 @@ export function AskAiIndexNotice(): ReactElement {
   const [status, setStatus] = useState(idle)
   const [visible, setVisible] = useState(false)
   const [announcement, setAnnouncement] = useState('')
-  const latest = useRef(status)
-  latest.current = status
   const candidate =
     status.significant && (status.state === 'preparing' || status.state === 'paused')
   const shown = candidate && visible
@@ -55,9 +53,11 @@ export function AskAiIndexNotice(): ReactElement {
   useEffect(() => {
     setAnnouncement(
       shown
-        ? t(copyKey, {
-            percent: latest.current.percent
-          })
+        ? t(
+            copyState === 'paused'
+              ? 'askAi.indexingPausedAnnouncement'
+              : 'askAi.indexingPreparingAnnouncement'
+          )
         : ''
     )
   }, [shown, copyState, t])

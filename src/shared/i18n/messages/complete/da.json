@@ -470,5 +470,7 @@
   "announcement.meetingLanguageDescription": "Vælg det sprog, der tales på dine møder. Nye transskriptioner og noter vil være på dette sprog.",
   "askAi.indexingProgress": "Dine møder gøres klar til Spørg AI ({percent} %). Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt.",
   "askAi.indexingPaused": "Klargøring til Spørg AI er sat på pause ved {percent} %, mens et møde optages, eller noter bliver lavet. Den fortsætter automatisk bagefter. Indtil da kan svarene mangle detaljer.",
-  "askAi.indexingStarting": "Dine møder gøres klar til Spørg AI. Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt."
+  "askAi.indexingStarting": "Dine møder gøres klar til Spørg AI. Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt.",
+  "askAi.indexingPreparingAnnouncement": "Dine møder gøres klar til Spørg AI.",
+  "askAi.indexingPausedAnnouncement": "Klargøring til Spørg AI er sat på pause, mens et møde optages, eller noter bliver lavet."
 }

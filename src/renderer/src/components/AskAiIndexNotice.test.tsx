@@ -73,6 +73,7 @@ it('uses starting copy at zero and exposes current progress outside the live ann
   )
   const live = container.querySelector('[data-ask-ai-index-announcement]')!
   const prior = live.textContent
+  expect(prior).not.toMatch(/\d|%/)
   act(() =>
     api.emit('chat:index-status-changed', { state: 'preparing', percent: 63, significant: true })
   )
