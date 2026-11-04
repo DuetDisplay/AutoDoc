@@ -111,10 +111,25 @@ it('publishes state changes immediately, throttles percentages and never moves p
   }
 })
 
-it('recognizes a cached complete index while gated and resets consecutive failures after successful batches', async () => {
+it('recognizes a cached complete index while notes gate background inference', async () => {
   vi.useFakeTimers()
-  let gated = true,
-    complete = true
+  const prepare = vi.fn()
+  const scheduler = new AskAiIndexPrewarm({
+    canRun: () => false,
+    inspect: async () => ({ completed: 100, total: 100, semanticReady: true }),
+    prepare
+  })
+  try {
+    scheduler.request()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(scheduler.ready).toBe(true)
+    expect(prepare).not.toHaveBeenCalled()
+  } finally {
+    scheduler.stop()
+  }
+})
+it('resets consecutive failures after any successful batch', async () => {
+  vi.useFakeTimers()
   const prepare = vi.fn(
     async (
       _signal: AbortSignal,
@@ -125,18 +140,13 @@ it('recognizes a cached complete index while gated and resets consecutive failur
     }
   )
   const scheduler = new AskAiIndexPrewarm({
-    canRun: () => !gated,
-    inspect: async () => ({ completed: complete ? 100 : 0, total: 100, semanticReady: complete }),
+    canRun: () => true,
+    inspect: async () => ({ completed: 0, total: 100 }),
     prepare
   })
   try {
     scheduler.request()
-    await vi.advanceTimersByTimeAsync(1)
-    expect(scheduler.ready).toBe(true)
-    complete = false
-    gated = false
-    scheduler.request()
-    for (let i = 0; i < 7; i++) await vi.advanceTimersByTimeAsync(5_250)
+    for (let i = 0; i < 7; i++) await vi.advanceTimersByTimeAsync(5250)
     expect(prepare.mock.calls.length).toBeGreaterThan(5)
     expect(scheduler.unavailable).toBe(false)
   } finally {

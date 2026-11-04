@@ -176,6 +176,8 @@ it('keeps flag-off pruning and persistence when the gate closes after the last b
     }
     const file = join(dir, 'index.enc'),
       index = new AskAiPassages(provider, file)
+    await index.prepare([meeting('obsolete')])
+    allowed = true
     expect(await index.prepare([meeting('saved')], () => allowed)).toBe('ready')
     expect((await decryptJSON<{ rows: unknown[] }>(file)).rows).toHaveLength(1)
   } finally {
@@ -183,15 +185,11 @@ it('keeps flag-off pruning and persistence when the gate closes after the last b
   }
 })
 
-it('skips unchanged pause checkpoints and preserves the embedding error if checkpoint persistence also fails', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-write-failure-'))
+it('skips a pause checkpoint when no new vectors were added', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-unchanged-pause-'))
   try {
     storage.dir = dir
-    const provider = {
-      model: 'unit',
-      isAvailable: async () => true,
-      embed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0]))
-    }
+    const provider = { model: 'unit', isAvailable: async () => true, embed: vi.fn() }
     const index = new AskAiPassages(provider, join(dir, 'index.enc'))
     const write = vi
       .spyOn(index as any, 'checkpoint')
@@ -202,14 +200,29 @@ it('skips unchanged pause checkpoints and preserves the embedding error if check
       index.prepare([meeting('saved')], () => true, { checkpoint: true, signal: abort.signal })
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(write).not.toHaveBeenCalled()
-    provider.embed
-      .mockImplementationOnce(async (texts) => texts.map(() => [1, 0]))
-      .mockRejectedValueOnce(new Error('original embed failed'))
-    await expect(
-      index.prepare([{ ...meeting('saved', 2), signature: 'two-entries' }], () => true, {
-        checkpoint: true,
-        batchSize: 1
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+it('preserves the embedding error when the best-effort pause checkpoint also fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-pause-error-'))
+  try {
+    storage.dir = dir
+    let calls = 0
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: vi.fn(async (texts: string[]) => {
+        if (++calls === 2) throw new Error('original embed failed')
+        return texts.map(() => [1, 0])
       })
+    }
+    const index = new AskAiPassages(provider, join(dir, 'index.enc'))
+    const write = vi
+      .spyOn(index as any, 'checkpoint')
+      .mockRejectedValue(new Error('disk write failed'))
+    await expect(
+      index.prepare([meeting('saved', 2)], () => true, { checkpoint: true, batchSize: 1 })
     ).rejects.toThrow('original embed failed')
     expect(write).toHaveBeenCalledWith('pause')
   } finally {
