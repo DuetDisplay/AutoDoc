@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   stop: vi.fn(),
   cache: false,
   busy: false,
+  partial: false,
   processing: false,
   options: null as null | { onIdle: () => void; onChange: (status: AskAiIndexStatus) => void },
   prepare: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock('../../services/ask-ai-index-prewarm', async (original) => ({
     get ready() {
       return state.status.state === 'ready'
     }
+    get semanticReady() {
+      return state.partial || this.ready
+    }
+    async whenInspected() {}
     get unavailable() {
       return state.status.state === 'unavailable'
     }
@@ -139,6 +144,7 @@ beforeEach(() => {
   vi.stubEnv('AUTODOC_ASK_AI_CONVERSATION', '1')
   state.status = { state: 'idle', percent: 0, significant: false }
   state.cache = state.busy = state.processing = false
+  state.partial = false
   state.admissions = []
   state.request.mockImplementation(() => {
     state.status.state = 'preparing'
@@ -173,6 +179,15 @@ it('does not change ready-index query admission during recording; processing sti
   await handler('chat:new')({ sender: web } as never)
   await handler('chat:send-stream')({ sender: web } as never, 'b', 'Who owns Workshop?', [])
   expect(state.admissions).toEqual([true, false])
+})
+it('keeps semantic query admission for a new-meeting-only gap during recording', async () => {
+  state.status.state = 'paused'
+  state.partial = state.busy = true
+  const web = sender()
+  await handler('chat:new')({ sender: web } as never)
+  await handler('chat:send-stream')({ sender: web } as never, 'partial', 'Who owns Workshop?', [])
+  expect(state.admissions).toEqual([true])
+  expect(state.retrieve.mock.lastCall?.at(-1)).toBe(true)
 })
 it('runs the normal writer warmup once after indexing and only when its gates reopen', async () => {
   const web = sender()

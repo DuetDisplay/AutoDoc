@@ -23,6 +23,7 @@ export class AskAiIndexPrewarm {
   private failures = 0
   private retryAfter = 0
   private completed = 0
+  private queryReady = false
   private total = 0
   private lastPublishedAt = 0
   private publishTimer: ReturnType<typeof setTimeout> | null = null
@@ -33,7 +34,7 @@ export class AskAiIndexPrewarm {
   constructor(
     private options: {
       canRun: () => boolean | Promise<boolean>
-      inspect: () => Promise<{ completed: number; total: number }>
+      inspect: () => Promise<{ completed: number; total: number; semanticReady?: boolean }>
       prepare: (signal: AbortSignal, progress: Progress) => Promise<AskAiPrepareResult>
       onChange?: (status: AskAiIndexStatus) => void
       onIdle?: () => void
@@ -44,6 +45,12 @@ export class AskAiIndexPrewarm {
   }
   get ready(): boolean {
     return this.status.state === 'ready'
+  }
+  get semanticReady(): boolean {
+    return this.queryReady || this.ready
+  }
+  async whenInspected(): Promise<void> {
+    await this.planning
   }
   get unavailable(): boolean {
     return this.status.state === 'unavailable'
@@ -62,16 +69,23 @@ export class AskAiIndexPrewarm {
     this.dirty = true
     this.generation++
     this.active?.abort()
+    this.queryReady = false
     this.setState('preparing')
     // Catalog inspection is read-only; it does not load or run an embedding model.
     const planning = this.options
       .inspect()
-      .then(({ completed, total }) => {
+      .then(({ completed, total, semanticReady }) => {
         if (this.planning !== planning || this.stopped) return
         this.completed = completed
         this.total = total
-        this.status.significant ||= total - completed > NOTICE_PASSAGES
-        this.publish()
+        this.queryReady = semanticReady ?? completed === total
+        if (completed === total) {
+          this.dirty = false
+          this.setState('ready')
+          this.options.onIdle?.()
+          return
+        }
+        this.progress(completed, total)
       })
       .catch(() => {})
       .finally(() => {
@@ -149,6 +163,7 @@ export class AskAiIndexPrewarm {
         .prepare(controller.signal, (done, total, count) => {
           if (generation !== this.generation) return
           this.progress(done, total)
+          if (count > added) this.failures = 0
           added = count
           if (done - lastLogged >= 128) {
             lastLogged = done

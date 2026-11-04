@@ -89,12 +89,15 @@ interface Passage {
 interface VectorCache {
   version: string
   rows: Array<[string, number[]]>
+  coveredMeetingIds?: string[]
 }
 
 /** Full-coverage local retrieval, with encrypted derived vectors and lexical busy fallback. */
 export class AskAiPassages {
   private vectors = new Map<string, number[]>()
   private loaded = false
+  private coveredMeetingIds = new Set<string>()
+  private cacheLoad: Promise<void> | null = null
   private passageCache = new Map<string, { signature: string; title: string; rows: Passage[] }>()
   private indexing: Promise<AskAiPrepareResult> | null = null
   private controlVectors: Array<{ kind: string; vector: number[] }> = []
@@ -182,11 +185,59 @@ export class AskAiPassages {
     return this.indexing !== null
   }
 
-  inspect(meetings: IndexedMeeting[]): { completed: number; total: number } {
+  private async loadSavedCache(): Promise<void> {
+    if (this.loaded) return
+    if (this.cacheLoad) return this.cacheLoad
+    const load = async (): Promise<void> => {
+      try {
+        const cache = await decryptJSON<VectorCache>(this.cachePath)
+        // At launch the provider digest may not yet be known. Accept a saved
+        // cache for this model/dimension; prepare verifies its installed digest.
+        const prefix = `passages-v2:${this.provider.model}`
+        const suffix = `:writer180-overlap40:dim${process.env.AUTODOC_ASK_AI_VECTOR_DIM || 'full'}`
+        if (
+          cache.version === this.version ||
+          (this.version === prefix + suffix &&
+            cache.version.startsWith(prefix + ':') &&
+            cache.version.endsWith(suffix))
+        ) {
+          const rows = cache.rows.map(([key, vector]) => [key, this.normalize(vector)] as const)
+          this.version = cache.version
+          for (const [key, vector] of rows) this.vectors.set(key, vector)
+          this.coveredMeetingIds = new Set(cache.coveredMeetingIds ?? [])
+        }
+      } catch {
+        /* Missing or invalid derived cache is rebuilt from source. */
+      }
+      this.loaded = true
+    }
+    this.cacheLoad = load().finally(() => {
+      this.cacheLoad = null
+    })
+    return this.cacheLoad
+  }
+
+  async inspect(
+    meetings: IndexedMeeting[]
+  ): Promise<{ completed: number; total: number; semanticReady: boolean }> {
+    await this.loadSavedCache()
     const passages = this.passages(meetings)
+    const completed = passages.filter((p) => this.vectors.has(p.key)).length
+    if (completed === passages.length)
+      this.coveredMeetingIds = new Set(meetings.map((m) => m.meetingId))
+    const semanticReady =
+      completed === passages.length ||
+      (this.coveredMeetingIds.size > 0 &&
+        completed > 0 &&
+        passages.every((p) => this.vectors.has(p.key) || !this.coveredMeetingIds.has(p.meetingId)))
+    return { completed, total: passages.length, semanticReady }
+  }
+
+  private cacheData(): VectorCache {
     return {
-      completed: passages.filter((p) => this.vectors.has(p.key)).length,
-      total: passages.length
+      version: this.version,
+      rows: [...this.vectors],
+      coveredMeetingIds: [...this.coveredMeetingIds]
     }
   }
 
@@ -195,7 +246,7 @@ export class AskAiPassages {
     await mkdir(dirname(this.cachePath), { recursive: true })
     // encryptJSON already writes ciphertext to a unique temporary file and
     // atomically replaces the destination. Its AAD must use the final basename.
-    await encryptJSON({ version: this.version, rows: [...this.vectors] }, this.cachePath)
+    await encryptJSON(this.cacheData(), this.cachePath)
     logAutodocEvent({
       area: 'chat',
       message: 'Ask AI index checkpoint written',
@@ -233,19 +284,11 @@ export class AskAiPassages {
         this.loaded = false
         this.vectors.clear()
         this.passageCache.clear()
+        this.coveredMeetingIds.clear()
         this.controlVectors = []
         this.queryVectors.clear()
       }
-      if (!this.loaded) {
-        try {
-          const cache = await decryptJSON<VectorCache>(this.cachePath)
-          if (cache.version === this.version)
-            for (const [key, vector] of cache.rows) this.vectors.set(key, this.normalize(vector))
-        } catch {
-          /* Missing or invalid derived cache is rebuilt from source. */
-        }
-        this.loaded = true
-      }
+      await this.loadSavedCache()
       if (process.env.AUTODOC_ASK_AI_INTENTS === 'semantic' && this.controlVectors.length === 0) {
         if (!(await canInfer())) return 'paused'
         const examples = [
@@ -295,7 +338,7 @@ export class AskAiPassages {
           }
         }
         options.signal?.throwIfAborted()
-        if (!(await canInfer())) return 'paused'
+        if (options.checkpoint && !(await canInfer())) return 'paused'
         const current = new Set(passages.map((p) => p.key))
         let removed = false
         const currentMeetings = new Set(meetings.map((m) => m.meetingId))
@@ -306,6 +349,7 @@ export class AskAiPassages {
             this.vectors.delete(key)
             removed = true
           }
+        this.coveredMeetingIds = new Set(meetings.map((m) => m.meetingId))
         if (missing.length || removed) {
           if (options.checkpoint) await this.checkpoint('complete')
           else {
@@ -316,7 +360,14 @@ export class AskAiPassages {
         finished = true
         return 'ready'
       } finally {
-        if (!finished && options.checkpoint) await this.checkpoint('pause')
+        if (!finished && options.checkpoint && added > checkpointAt) {
+          // A failed best-effort pause write must not hide the original failure.
+          try {
+            await this.checkpoint('pause')
+          } catch {
+            /* retry on the next real trigger */
+          }
+        }
       }
     }
     this.indexing = work()
@@ -338,9 +389,13 @@ export class AskAiPassages {
     return vector
   }
 
-  async classifyControl(question: string, meetings: IndexedMeeting[]): Promise<string | null> {
+  async classifyControl(
+    question: string,
+    meetings: IndexedMeeting[],
+    cachedOnly = false
+  ): Promise<string | null> {
     if (process.env.AUTODOC_ASK_AI_INTENTS !== 'semantic') return null
-    await this.prepare(meetings)
+    if (!cachedOnly) await this.prepare(meetings)
     if (!this.controlVectors.length) return null
     const query = await this.queryVector(question)
     const scores = new Map<string, number>()
@@ -374,7 +429,8 @@ export class AskAiPassages {
     signal?: AbortSignal,
     canInfer: () => boolean = () => true,
     carriedIds: string[] = [],
-    onRanked?: (meetingIds: string[]) => void
+    onRanked?: (meetingIds: string[]) => void,
+    cachedOnly = false
   ): Promise<AskAiAnswer | null> {
     signal?.throwIfAborted()
     const scoped = scopedIds?.length
@@ -409,7 +465,7 @@ export class AskAiPassages {
     const named = conversationTitleAnchors(question, scoped)
     let vectors: number[][] = []
     if (canInfer()) {
-      await this.prepare(meetings, canInfer)
+      if (!cachedOnly) await this.prepare(meetings, canInfer)
       passages = this.passages(scoped)
       if (canInfer() && (await this.provider.isAvailable())) {
         const queries = history.length ? [question, contextual] : [question]
@@ -633,7 +689,8 @@ export class AskAiPassages {
     meetings: IndexedMeeting[],
     scopedIds?: string[],
     signal?: AbortSignal,
-    canInfer: () => boolean = () => true
+    canInfer: () => boolean = () => true,
+    cachedOnly = false
   ): Promise<AskAiAnswer | null> {
     signal?.throwIfAborted()
     const scoped = scopedIds?.length
@@ -675,7 +732,7 @@ export class AskAiPassages {
     // Already-grounded, title-scoped facts must not queue indexing/embedding
     // behind notes. Rich/ambiguous questions retain semantic retrieval when idle.
     if (!lexicalFact && canInfer()) {
-      await this.prepare(meetings, canInfer)
+      if (!cachedOnly) await this.prepare(meetings, canInfer)
       passages = this.passages(scoped)
     }
     const lexical = passages

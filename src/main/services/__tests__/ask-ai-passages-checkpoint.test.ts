@@ -120,3 +120,134 @@ it('serializes all concurrent prepare waiters, including different meeting snaps
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+it('inspects a saved complete cache without inference and retains semantic coverage for newly added meetings only', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-saved-ready-'))
+  try {
+    storage.dir = dir
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0]))
+    }
+    const file = join(dir, 'index.enc'),
+      original = meeting('saved', 2)
+    await new AskAiPassages(provider, file).prepare([original])
+    provider.embed.mockClear()
+    const restored = new AskAiPassages(provider, file)
+    expect(await restored.inspect([original])).toMatchObject({
+      completed: 2,
+      total: 2,
+      semanticReady: true
+    })
+    const added = meeting('new')
+    expect(await restored.inspect([original, added])).toMatchObject({
+      completed: 2,
+      total: 3,
+      semanticReady: true
+    })
+    const edited = {
+      ...original,
+      signature: 'edited',
+      noteEntries: meeting('edited', 2).noteEntries.map((e) => ({
+        ...e,
+        content: 'Different saved facts.'
+      }))
+    }
+    expect(await restored.inspect([edited, added])).toMatchObject({ semanticReady: false })
+    expect(provider.embed).not.toHaveBeenCalled()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it('keeps flag-off pruning and persistence when the gate closes after the last batch', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-final-gate-'))
+  try {
+    storage.dir = dir
+    let allowed = true
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: async (texts: string[]) => {
+        allowed = false
+        return texts.map(() => [1, 0])
+      }
+    }
+    const file = join(dir, 'index.enc'),
+      index = new AskAiPassages(provider, file)
+    expect(await index.prepare([meeting('saved')], () => allowed)).toBe('ready')
+    expect((await decryptJSON<{ rows: unknown[] }>(file)).rows).toHaveLength(1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it('skips unchanged pause checkpoints and preserves the embedding error if checkpoint persistence also fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-write-failure-'))
+  try {
+    storage.dir = dir
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0]))
+    }
+    const index = new AskAiPassages(provider, join(dir, 'index.enc'))
+    const write = vi
+      .spyOn(index as any, 'checkpoint')
+      .mockRejectedValue(new Error('disk write failed'))
+    const abort = new AbortController()
+    abort.abort()
+    await expect(
+      index.prepare([meeting('saved')], () => true, { checkpoint: true, signal: abort.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(write).not.toHaveBeenCalled()
+    provider.embed
+      .mockImplementationOnce(async (texts) => texts.map(() => [1, 0]))
+      .mockRejectedValueOnce(new Error('original embed failed'))
+    await expect(
+      index.prepare([{ ...meeting('saved', 2), signature: 'two-entries' }], () => true, {
+        checkpoint: true,
+        batchSize: 1
+      })
+    ).rejects.toThrow('original embed failed')
+    expect(write).toHaveBeenCalledWith('pause')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it('uses cached-only retrieval without joining a cold index or semantic control preparation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-nonblocking-'))
+  try {
+    storage.dir = dir
+    vi.stubEnv('AUTODOC_ASK_AI_INTENTS', 'semantic')
+    const provider = {
+      model: 'unit',
+      isAvailable: async () => true,
+      embed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0]))
+    }
+    const index = new AskAiPassages(provider, join(dir, 'index.enc'))
+    const prepare = vi.spyOn(index, 'prepare').mockImplementation(() => new Promise(() => {}))
+    const data = [meeting('saved')]
+    const control = await index.classifyControl('Synthetic fact?', data, true)
+    expect(control).toBeNull()
+    await index.retrieve('Synthetic fact?', data, undefined, undefined, () => false, true)
+    await index.retrieveConversation(
+      'Synthetic fact?',
+      data,
+      [],
+      [],
+      undefined,
+      undefined,
+      () => false,
+      [],
+      undefined,
+      true
+    )
+    expect(prepare).not.toHaveBeenCalled()
+  } finally {
+    vi.unstubAllEnvs()
+    await rm(dir, { recursive: true, force: true })
+  }
+})

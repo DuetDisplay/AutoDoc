@@ -110,3 +110,36 @@ it('publishes state changes immediately, throttles percentages and never moves p
     scheduler.stop()
   }
 })
+
+it('recognizes a cached complete index while gated and resets consecutive failures after successful batches', async () => {
+  vi.useFakeTimers()
+  let gated = true,
+    complete = true
+  const prepare = vi.fn(
+    async (
+      _signal: AbortSignal,
+      progress: (done: number, total: number, added: number) => void
+    ): Promise<'ready'> => {
+      progress(1, 100, 1)
+      throw new Error('later batch stalled')
+    }
+  )
+  const scheduler = new AskAiIndexPrewarm({
+    canRun: () => !gated,
+    inspect: async () => ({ completed: complete ? 100 : 0, total: 100, semanticReady: complete }),
+    prepare
+  })
+  try {
+    scheduler.request()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(scheduler.ready).toBe(true)
+    complete = false
+    gated = false
+    scheduler.request()
+    for (let i = 0; i < 7; i++) await vi.advanceTimersByTimeAsync(5_250)
+    expect(prepare.mock.calls.length).toBeGreaterThan(5)
+    expect(scheduler.unavailable).toBe(false)
+  } finally {
+    scheduler.stop()
+  }
+})

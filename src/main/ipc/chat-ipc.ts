@@ -384,7 +384,8 @@ export function registerChatIpc(
       )
       const unanchoredInitial =
         history.length === 0 && named.size === 0 && !params.scopedMeetingIds?.length
-      const lexicalFallback = Boolean(indexPrewarm && !indexPrewarm.ready)
+      await indexPrewarm?.whenInspected()
+      const lexicalFallback = Boolean(indexPrewarm && !indexPrewarm.semanticReady)
       if (lexicalFallback)
         logAutodocEvent({
           area: 'chat',
@@ -409,7 +410,8 @@ export function registerChatIpc(
             params.signal,
             lexicalFallback ? () => false : () => !(options.isProcessing?.() ?? false),
             [],
-            onRanked
+            onRanked,
+            Boolean(indexPrewarm)
           )
         } catch (error) {
           if (params.signal?.aborted) throw error
@@ -488,7 +490,8 @@ export function registerChatIpc(
                 params.signal,
                 lexicalFallback ? () => false : () => !(options.isProcessing?.() ?? false),
                 params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? [],
-                onRanked
+                onRanked,
+                Boolean(indexPrewarm)
               )
       } catch (error) {
         if (params.signal?.aborted) throw error
@@ -579,10 +582,17 @@ export function registerChatIpc(
     })
     if (hasInventoryRequestCue(params.question)) return clarifyInventory()
     try {
+      await indexPrewarm?.whenInspected()
+      const lexicalFallback = Boolean(indexPrewarm && !indexPrewarm.semanticReady)
       const processing = options.isProcessing?.() ?? false
-      const control = processing
-        ? null
-        : await passageIndex.classifyControl(params.question, await meetingIndex.listMeetings())
+      const control =
+        processing || lexicalFallback
+          ? null
+          : await passageIndex.classifyControl(
+              params.question,
+              await meetingIndex.listMeetings(),
+              Boolean(indexPrewarm)
+            )
       // An uncertain inventory classification must never become a count/list
       // invented from the top retrieved passages. Strict native aliases above
       // already use the authoritative inventory; ambiguous routes clarify.
@@ -612,7 +622,8 @@ export function registerChatIpc(
           await meetingIndex.listMeetings(),
           scopedIds,
           params.signal,
-          () => !(options.isProcessing?.() ?? false)
+          () => !lexicalFallback && !(options.isProcessing?.() ?? false),
+          Boolean(indexPrewarm)
         )) ?? result
       )
     } catch (error) {
@@ -1435,7 +1446,7 @@ export function registerChatIpc(
       await waitForOllama(ollamaManager)
       if (options.canWarmup && !(await options.canWarmup()))
         return { warmed: false, reason: 'busy' }
-      if (passageIndex && (!indexPrewarm || indexPrewarm.ready))
+      if (passageIndex && !indexPrewarm)
         await passageIndex.prepare(await meetingIndex.listMeetings(), options.canWarmup)
       if (options.canWarmup && !(await options.canWarmup()))
         return { warmed: false, reason: 'busy' }
@@ -1477,6 +1488,7 @@ export function registerChatIpc(
   ipcMain.handle('chat:warmup', async (event): Promise<{ warmed: boolean; reason?: string }> => {
     const wasUnavailable = indexPrewarm?.unavailable
     openIndexPage(event?.sender)
+    await indexPrewarm?.whenInspected()
     if (wasUnavailable) {
       deferredWarmup = false
       return normalWarmup()

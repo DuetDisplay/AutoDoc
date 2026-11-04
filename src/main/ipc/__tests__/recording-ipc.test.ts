@@ -180,6 +180,7 @@ describe('recording IPC source handling', () => {
     const recording = registerRecordingIpc(
       {
         getState: () => ({ isRecording: false }),
+        completeProcessingHandoff: vi.fn(),
         getRecordingsBaseDir: () => baseDir
       } as any,
       { enqueue } as any,
@@ -215,6 +216,7 @@ describe('recording IPC source handling', () => {
     registerRecordingIpc(
       {
         getState: () => ({ isRecording: true, meetingId: 'active' }),
+        completeProcessingHandoff: vi.fn(),
         getRecordingsBaseDir: () => baseDir
       } as any,
       { getStatus: async () => 'pending' } as any,
@@ -314,6 +316,7 @@ describe('recording IPC source handling', () => {
 
     registerRecordingIpc(
       {
+        completeProcessingHandoff: vi.fn(),
         stopRecording: vi.fn(),
         getState: vi.fn(() => ({ isRecording: false })),
         getRecordingsBaseDir: vi.fn(() => '/mock/recordings'),
@@ -366,6 +369,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -432,6 +436,7 @@ describe('recording IPC source handling', () => {
 
       const { stopActiveRecording } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(() => ({
             meetingId: 'meeting-rapid-abort',
             startedAt: Date.now() - 2_000,
@@ -520,6 +525,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -593,6 +599,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -667,6 +674,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -714,6 +722,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -777,6 +786,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -872,6 +882,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -959,6 +970,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1018,6 +1030,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1062,6 +1075,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: true, meetingId })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1115,6 +1129,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1182,6 +1197,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1225,6 +1241,7 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
   }) {
     return registerRecordingIpc(
       {
+        completeProcessingHandoff: vi.fn(),
         stopRecording: vi.fn(() => options.stopResult),
         getState: vi.fn(() => options.state ?? { isRecording: false, meetingId: null }),
         getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
@@ -1655,6 +1672,7 @@ describe('recording IPC meeting language', () => {
     registerRecordingIpc?: typeof registerRecordingIpc
   }) {
     const recordingService = {
+      completeProcessingHandoff: vi.fn(),
       stopRecording: vi.fn(() => options.stopResult),
       getState: vi.fn(() => ({ isRecording: options.stopResult != null })),
       getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
@@ -1910,6 +1928,7 @@ describe('recording calendar attachment diagnostics', () => {
         startRecording: vi
           .fn()
           .mockResolvedValue({ meetingId: `m-${selectionEventId}`, dir: '/tmp' }),
+        completeProcessingHandoff: vi.fn(),
         stopRecording: vi.fn()
       } as any,
       {} as any,
@@ -2015,6 +2034,7 @@ describe.runIf(process.platform !== 'win32')(
       const recording = registerRecordingIpc(
         {
           getState: () => ({ isRecording: false, meetingId: null }),
+          completeProcessingHandoff: vi.fn(),
           getRecordingsBaseDir: () => baseDir
         } as any,
         { enqueue } as any,

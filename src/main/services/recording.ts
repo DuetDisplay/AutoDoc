@@ -9,12 +9,16 @@ import { normalizeMeetingLanguage, type MeetingLanguageCode } from '../../shared
 export class RecordingService {
   private shutdownPending = false
   private starting = false
+  private processingHandoffs = new Set<string>()
+  completeProcessingHandoff(meetingId: string): void {
+    this.processingHandoffs.delete(meetingId)
+  }
 
   setShutdownPending(pending: boolean): void {
     this.shutdownPending = pending
   }
   hasActiveCapture(): boolean {
-    return this.starting || this.state.isRecording
+    return this.starting || this.state.isRecording || this.processingHandoffs.size > 0
   }
   private state: RecordingState = {
     isRecording: false,
@@ -76,7 +80,7 @@ export class RecordingService {
     }
   }
 
-  stopRecording(): {
+  stopRecording(handoffToProcessing = false): {
     meetingId: string
     startedAt: number
     sourceId: string | null
@@ -91,6 +95,7 @@ export class RecordingService {
     const { meetingId, startedAt, sourceId, sourceName, recordingIntent } = this.state
     const meetingLanguage = normalizeMeetingLanguage(this.state.meetingLanguage)
 
+    if (handoffToProcessing) this.processingHandoffs.add(meetingId)
     this.state = {
       isRecording: false,
       meetingId: null,

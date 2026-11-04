@@ -1517,6 +1517,7 @@ export function registerRecordingIpc(
         if (!(isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1')) {
           transcriptionService.enqueue(meetingId)
         }
+        recordingService.completeProcessingHandoff(meetingId)
         logRecordingDebug('transcription enqueued after audio post-processing', meetingId, {
           elapsedMs: Date.now() - postProcessStartedAt,
           skippedForE2E: isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1'
@@ -1567,9 +1568,11 @@ export function registerRecordingIpc(
           isFinalizing: workingMetadata.isFinalizing ?? false,
           videoStatus: workingMetadata.videoStatus ?? null
         })
+        recordingService.completeProcessingHandoff(meetingId)
         windowsPostProcessingInFlight.delete(meetingId)
       }
     })().catch((err) => {
+      recordingService.completeProcessingHandoff(meetingId)
       windowsPostProcessingInFlight.delete(meetingId)
       void (async () => {
         noteDiskFullFailure(meetingId, err)
@@ -1934,6 +1937,7 @@ export function registerRecordingIpc(
       ) {
         transcriptionService.enqueue(meetingId)
       }
+      recordingService.completeProcessingHandoff(meetingId)
       logRecordingDebug('transcription enqueued after audio post-processing', meetingId, {
         skippedForE2E: isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1'
       })
@@ -1995,6 +1999,7 @@ export function registerRecordingIpc(
         console.error('Recording post-processing failed:', err)
       })
       .finally(() => {
+        recordingService.completeProcessingHandoff(meetingId)
         macPostProcessingInFlight.delete(meetingId)
       })
 
@@ -2005,7 +2010,7 @@ export function registerRecordingIpc(
     const stopRequestedAt = Date.now()
     let result: ReturnType<RecordingService['stopRecording']>
     try {
-      result = recordingService.stopRecording()
+      result = recordingService.stopRecording(true)
     } catch (err) {
       logAutodocFailure({
         area: 'recording',

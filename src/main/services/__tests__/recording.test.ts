@@ -41,6 +41,15 @@ describe('RecordingService', () => {
     expect(service.hasActiveCapture()).toBe(false)
   })
 
+  it('keeps capture admission closed between stop and processing handoff, releasing on completion or failure', async () => {
+    await service.startRecording('source-123', 'Synthetic workshop')
+    const stopped = service.stopRecording(true)
+    expect(service.getState().isRecording).toBe(false)
+    expect(service.hasActiveCapture()).toBe(true)
+    service.completeProcessingHandoff(stopped.meetingId)
+    expect(service.hasActiveCapture()).toBe(false)
+  })
+
   it('transitions to recording state on start', async () => {
     const paths = await service.startRecording('source-123', 'Zoom Meeting', {
       meetingSourceId: 'window:zoom',
