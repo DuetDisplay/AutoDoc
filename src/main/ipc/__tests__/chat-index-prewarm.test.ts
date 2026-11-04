@@ -251,3 +251,18 @@ it('keeps status pushes on Ask AI self-navigation and removes them when navigati
   state.options!.onChange({ ...state.status, percent: 14 })
   expect(web.send).not.toHaveBeenCalled()
 })
+
+it('warms once after a later incremental index while Ask AI remains open', async () => {
+  state.status = { state: 'ready', percent: 100, significant: false }
+  const web = sender()
+  await handler('chat:warmup')({ sender: web } as never)
+  expect(fetch).toHaveBeenCalledTimes(1)
+  state.cache = true
+  cleanup.indexChanged('notes')
+  expect(state.request).toHaveBeenCalledTimes(1)
+  state.status = { state: 'ready', percent: 100, significant: false }
+  state.options!.onChange(state.status)
+  state.options!.onIdle()
+  state.options!.onIdle()
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+})

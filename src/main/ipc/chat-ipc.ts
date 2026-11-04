@@ -279,6 +279,8 @@ export function registerChatIpc(
             })
           },
           onChange: (status) => {
+            // A later notes job can unload the writer while this page stays open.
+            if (status.state === 'ready' && openSenders.size > 0) deferredWarmup = true
             for (const sender of openSenders.values())
               if (!sender.isDestroyed?.()) sender.send('chat:index-status-changed', status)
           },
