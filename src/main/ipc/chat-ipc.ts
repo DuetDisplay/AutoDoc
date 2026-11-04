@@ -268,7 +268,10 @@ export function registerChatIpc(
     passageIndex && useAskAiIndexPrewarm()
       ? new AskAiIndexPrewarm({
           canRun: canIndex,
-          inspect: async () => passageIndex.inspect(await meetingIndex.listMeetings()),
+          inspect: async () => {
+            await waitForOllama(ollamaManager)
+            return passageIndex.inspect(await meetingIndex.listMeetings())
+          },
           prepare: async (signal, onProgress) => {
             await waitForOllama(ollamaManager, signal)
             return passageIndex.prepare(await meetingIndex.listMeetings(), canIndex, {

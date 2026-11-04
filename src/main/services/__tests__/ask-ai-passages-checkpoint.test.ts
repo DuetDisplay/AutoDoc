@@ -264,3 +264,27 @@ it('uses cached-only retrieval without joining a cold index or semantic control 
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+it('invalidates restored readiness when the installed embedding identity changes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-identity-'))
+  try {
+    storage.dir = dir
+    let identity = 'unit:digest-a'
+    const provider = {
+      model: 'unit',
+      get cacheIdentity() {
+        return identity
+      },
+      isAvailable: async () => true,
+      embed: async (texts: string[]) => texts.map(() => [1, 0])
+    }
+    const index = new AskAiPassages(provider, join(dir, 'index.enc')),
+      data = [meeting('saved')]
+    await index.prepare(data)
+    expect(await index.inspect(data)).toMatchObject({ completed: 1, semanticReady: true })
+    identity = 'unit:digest-b'
+    expect(await index.inspect(data)).toMatchObject({ completed: 0, semanticReady: false })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

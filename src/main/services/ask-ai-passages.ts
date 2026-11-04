@@ -185,7 +185,20 @@ export class AskAiPassages {
     return this.indexing !== null
   }
 
-  private async loadSavedCache(): Promise<void> {
+  private selectProviderVersion(): void {
+    const version = `passages-v2:${this.provider.cacheIdentity ?? this.provider.model}:writer180-overlap40:dim${process.env.AUTODOC_ASK_AI_VECTOR_DIM || 'full'}`
+    if (version !== this.version) {
+      this.version = version
+      this.loaded = false
+      this.vectors.clear()
+      this.passageCache.clear()
+      this.coveredMeetingIds.clear()
+      this.controlVectors = []
+      this.queryVectors.clear()
+    }
+  }
+
+  private async loadSavedCache(allowUnknownIdentity = false): Promise<void> {
     if (this.loaded) return
     if (this.cacheLoad) return this.cacheLoad
     const load = async (): Promise<void> => {
@@ -197,13 +210,13 @@ export class AskAiPassages {
         const suffix = `:writer180-overlap40:dim${process.env.AUTODOC_ASK_AI_VECTOR_DIM || 'full'}`
         if (
           cache.version === this.version ||
-          (this.version === prefix + suffix &&
+          (allowUnknownIdentity &&
+            this.version === prefix + suffix &&
             cache.version.startsWith(prefix + ':') &&
             cache.version.endsWith(suffix))
         ) {
-          const rows = cache.rows.map(([key, vector]) => [key, this.normalize(vector)] as const)
           this.version = cache.version
-          for (const [key, vector] of rows) this.vectors.set(key, vector)
+          for (const [key, vector] of cache.rows) this.vectors.set(key, this.normalize(vector))
           this.coveredMeetingIds = new Set(cache.coveredMeetingIds ?? [])
         }
       } catch {
@@ -220,7 +233,8 @@ export class AskAiPassages {
   async inspect(
     meetings: IndexedMeeting[]
   ): Promise<{ completed: number; total: number; semanticReady: boolean }> {
-    await this.loadSavedCache()
+    if (await this.provider.isAvailable()) this.selectProviderVersion()
+    await this.loadSavedCache(true)
     const passages = this.passages(meetings)
     const completed = passages.filter((p) => this.vectors.has(p.key)).length
     if (completed === passages.length)
@@ -278,16 +292,7 @@ export class AskAiPassages {
           throw new Error('Embedding availability probe temporarily unreachable')
         return 'unavailable'
       }
-      const version = `passages-v2:${this.provider.cacheIdentity ?? this.provider.model}:writer180-overlap40:dim${process.env.AUTODOC_ASK_AI_VECTOR_DIM || 'full'}`
-      if (version !== this.version) {
-        this.version = version
-        this.loaded = false
-        this.vectors.clear()
-        this.passageCache.clear()
-        this.coveredMeetingIds.clear()
-        this.controlVectors = []
-        this.queryVectors.clear()
-      }
+      this.selectProviderVersion()
       await this.loadSavedCache()
       if (process.env.AUTODOC_ASK_AI_INTENTS === 'semantic' && this.controlVectors.length === 0) {
         if (!(await canInfer())) return 'paused'
