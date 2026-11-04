@@ -225,18 +225,23 @@ describe('OllamaManager start lifecycle', () => {
       const serve = createFakeProcess(4242)
       const runtime = join(rootDir, 'models', 'ollama-runtime')
       Object.assign(manager, { process: serve, didReapAdoptedRunners: true })
-      execFileMock.mockImplementation((_file, _args, _options, callback) =>
+      let snapshots = 0
+      execFileMock.mockImplementation((_file, _args, _options, callback) => {
+        snapshots++
         callback(
           null,
-          `4250 4242 1024 ${runtime}/lib/ollama/llama-server\n4251 4250 1024 ${runtime}/lib/ollama/llama-server\n9001 9000 1024 ${runtime}/lib/ollama/llama-server\n4252 4242 1024 /other/runtime/llama-server\n`
+          `9000 1 1024 ${runtime}/ollama serve\n9001 9000 1024 ${runtime}/lib/ollama/llama-server\n4252 1 1024 /other/runtime/llama-server\n` +
+            (snapshots === 1
+              ? `4250 4242 1024 ${runtime}/lib/ollama/llama-server\n4251 4250 1024 ${runtime}/lib/ollama/llama-server\n`
+              : `4253 1 1024 ${runtime}/lib/ollama/llama-server\n`)
         )
-      )
+      })
       const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
         if (pid === serve.pid) serve.emit('exit', 1, null)
         return true
       })
       await (manager as any).killProcessAndWait(serve, 'replace-unadopted-server')
-      expect(kill.mock.calls.map(([pid]) => pid).sort()).toEqual([4242, 4250, 4251])
+      expect(kill.mock.calls.map(([pid]) => pid).sort()).toEqual([4242, 4250, 4251, 4253])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

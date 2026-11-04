@@ -1754,8 +1754,8 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  private async trackedRunnerDescendants(proc: ChildProcess): Promise<number[]> {
-    if (IS_WIN || proc.pid == null || !this.isCurrentLiveChild(proc)) return []
+  private async trackedRunnerDescendants(proc: ChildProcess, orphaned = false): Promise<number[]> {
+    if (IS_WIN || proc.pid == null || (!orphaned && !this.isCurrentLiveChild(proc))) return []
     return new Promise((resolve) => {
       execFile(
         'ps',
@@ -1775,7 +1775,21 @@ export class OllamaManager extends EventEmitter {
                 ]
               : []
           })
-          const descendants = new Set([proc.pid!])
+          const descendants = new Set(
+            orphaned
+              ? rows
+                  .filter(
+                    (row) =>
+                      commandIncludesRuntime(row.listing, this.getRuntimeDir()) &&
+                      /[\\/]ollama\s+serve\b/.test(row.listing)
+                  )
+                  .map((row) => row.pid)
+              : [proc.pid!]
+          )
+          // A concurrent restart may already have installed the next tracked
+          // child. Preserve its descendants even if ps missed its serve row.
+          if (orphaned && this.process && this.isCurrentLiveChild(this.process))
+            descendants.add(this.process.pid!)
           let previousSize = 0
           while (previousSize !== descendants.size) {
             previousSize = descendants.size
@@ -1784,7 +1798,11 @@ export class OllamaManager extends EventEmitter {
           resolve(
             parseManagedLlamaServers(
               rows
-                .filter((row) => row.pid !== proc.pid && descendants.has(row.pid))
+                .filter(
+                  (row) =>
+                    row.pid !== proc.pid &&
+                    (orphaned ? !descendants.has(row.pid) : descendants.has(row.pid))
+                )
                 .map((row) => row.listing)
                 .join('\n'),
               this.getRuntimeDir()
@@ -1814,15 +1832,26 @@ export class OllamaManager extends EventEmitter {
         /* already exited with the serve */
       }
     }
-    if (await this.waitForProcessExit(proc)) {
-      return true
+    let exited = await this.waitForProcessExit(proc)
+    if (!exited) {
+      if (proc.pid != null) {
+        await this.killProcessByPid(proc.pid)
+      } else if (!IS_WIN) {
+        proc.kill('SIGTERM')
+      }
+      exited = await this.waitForProcessExit(proc)
     }
-    if (proc.pid != null) {
-      await this.killProcessByPid(proc.pid)
-    } else if (!IS_WIN) {
-      proc.kill('SIGTERM')
-    }
-    return this.waitForProcessExit(proc)
+    // A runner can fork while the first snapshot is pending. Once the old
+    // serve has exited, reap only this runtime's now-unowned runners.
+    if (exited)
+      for (const pid of await this.trackedRunnerDescendants(proc, true)) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* already exited */
+        }
+      }
+    return exited
   }
 
   /**
