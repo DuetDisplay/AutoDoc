@@ -278,7 +278,7 @@ export function registerChatIpc(
             await waitForOllama(ollamaManager, signal)
             return passageIndex.prepare(await meetingIndex.listMeetings(), canIndex, {
               signal,
-              batchSize: 4,
+              batchSize: 16,
               onProgress,
               checkpoint: true
             })
