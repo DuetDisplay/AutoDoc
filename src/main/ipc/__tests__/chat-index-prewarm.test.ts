@@ -12,7 +12,9 @@ const state = vi.hoisted(() => ({
   options: null as null | { onIdle: () => void; onChange: (status: AskAiIndexStatus) => void },
   prepare: vi.fn(),
   retrieve: vi.fn(),
-  admissions: [] as boolean[]
+  admissions: [] as boolean[],
+  inspection: vi.fn(),
+  readiness: vi.fn()
 }))
 vi.mock('electron', () => ({
   app: { getPath: () => '/unused/unit-profile' },
@@ -42,7 +44,7 @@ vi.mock('../../services/ask-ai-index-prewarm', async (original) => ({
     get semanticReady() {
       return state.partial || this.ready
     }
-    async whenInspected() {}
+    whenInspected = state.inspection
     get unavailable() {
       return state.status.state === 'unavailable'
     }
@@ -116,7 +118,7 @@ function register() {
     {
       getAskAiModel: () => 'unit-model',
       getBaseUrl: () => 'http://localhost:11434',
-      waitUntilReady: async () => {},
+      waitUntilReady: state.readiness,
       isServerRunning: async () => true
     },
     { getModel: () => 'decoy' } as never,
@@ -127,6 +129,7 @@ function register() {
     () => 'en',
     {
       meetingIndex: {
+        ensureLoaded: async () => {},
         listMeetings: async () => [meeting],
         listInventory: async () => [meeting]
       } as never,
@@ -146,6 +149,8 @@ beforeEach(() => {
   state.cache = state.busy = state.processing = false
   state.partial = false
   state.admissions = []
+  state.inspection.mockResolvedValue(true)
+  state.readiness.mockResolvedValue(undefined)
   state.request.mockImplementation(() => {
     state.status.state = 'preparing'
   })
@@ -167,6 +172,25 @@ afterEach(() => {
   cleanup?.()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+})
+
+it('returns existing extractive evidence when inspection cannot finish, without waiting for writer readiness', async () => {
+  state.inspection.mockResolvedValue(false)
+  state.readiness.mockImplementation(() => new Promise(() => {}))
+  const web = sender()
+  const pending = handler('chat:send-stream')(
+    { sender: web } as never,
+    'stalled',
+    'Who owns Workshop?',
+    []
+  )
+  await vi.waitFor(() => expect(web.send).toHaveBeenCalledWith('chat:done', expect.anything()), {
+    timeout: 250
+  })
+  await pending
+  expect(state.inspection.mock.calls[0][0]).toBeInstanceOf(AbortSignal)
+  expect(state.readiness).not.toHaveBeenCalled()
+  expect(fetch).not.toHaveBeenCalled()
 })
 
 it('does not change ready-index query admission during recording; processing still blocks embeddings', async () => {

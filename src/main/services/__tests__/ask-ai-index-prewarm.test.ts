@@ -3,6 +3,33 @@ import { AskAiIndexPrewarm } from '../ask-ai-index-prewarm'
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 afterEach(() => vi.useRealTimers())
 
+it('bounds a stalled inspection to two seconds and cancels the request wait promptly', async () => {
+  vi.useFakeTimers()
+  const scheduler = new AskAiIndexPrewarm({
+    canRun: () => false,
+    inspect: () => new Promise(() => {}),
+    prepare: vi.fn()
+  })
+  try {
+    scheduler.request()
+    let settled = false
+    const timed = scheduler.whenInspected().then((result) => {
+      settled = true
+      return result
+    })
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(settled).toBe(true)
+    expect(await timed).toBe(false)
+    const controller = new AbortController()
+    const aborted = scheduler.whenInspected(controller.signal)
+    const assertion = expect(aborted).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await assertion
+  } finally {
+    scheduler.stop()
+  }
+})
+
 it('does not report partial preparation ready when the gate has already reopened', async () => {
   vi.useFakeTimers()
   let calls = 0

@@ -20,6 +20,7 @@ export class AskAiIndexPrewarm {
   private active: AbortController | null = null
   private checking = false
   private planning: Promise<void> | null = null
+  private inspectionComplete = false
   private failures = 0
   private retryAfter = 0
   private completed = 0
@@ -39,6 +40,7 @@ export class AskAiIndexPrewarm {
         total: number
         semanticReady?: boolean
         unavailable?: boolean
+        needsSave?: boolean
       }>
       prepare: (signal: AbortSignal, progress: Progress) => Promise<AskAiPrepareResult>
       onChange?: (status: AskAiIndexStatus) => void
@@ -54,8 +56,29 @@ export class AskAiIndexPrewarm {
   get semanticReady(): boolean {
     return this.queryReady || this.ready
   }
-  async whenInspected(): Promise<void> {
-    while (this.planning) await this.planning
+  async whenInspected(signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
+    const expired = new Promise<boolean>((resolve, reject) => {
+      timer = setTimeout(() => resolve(false), 2000)
+      if (signal) {
+        onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+    try {
+      return await Promise.race([
+        (async () => {
+          while (this.planning) await this.planning
+          return this.inspectionComplete || this.ready || this.unavailable
+        })(),
+        expired
+      ])
+    } finally {
+      clearTimeout(timer)
+      if (onAbort) signal?.removeEventListener('abort', onAbort)
+    }
   }
   get unavailable(): boolean {
     return this.status.state === 'unavailable'
@@ -75,12 +98,14 @@ export class AskAiIndexPrewarm {
     this.generation++
     this.active?.abort()
     this.queryReady = false
+    this.inspectionComplete = false
     this.setState('preparing')
     // Inspection restores/upgrades derived coverage metadata without model inference.
     const planning = this.options
       .inspect()
-      .then(({ completed, total, semanticReady, unavailable }) => {
+      .then(({ completed, total, semanticReady, unavailable, needsSave }) => {
         if (this.planning !== planning || this.stopped) return
+        this.inspectionComplete = true
         this.completed = completed
         this.total = total
         if (unavailable) {
@@ -92,7 +117,7 @@ export class AskAiIndexPrewarm {
         }
         this.queryReady = semanticReady ?? completed === total
         if (completed === total) {
-          this.dirty = false
+          this.dirty = Boolean(needsSave)
           this.setState('ready')
           this.options.onIdle?.()
           return

@@ -269,7 +269,7 @@ export function registerChatIpc(
       ? new AskAiIndexPrewarm({
           canRun: canIndex,
           inspect: async () => {
-            await waitForOllama(ollamaManager)
+            await waitForOllama(ollamaManager, AbortSignal.timeout(2000))
             return passageIndex.inspect(await meetingIndex.listMeetings())
           },
           prepare: async (signal, onProgress) => {
@@ -290,6 +290,7 @@ export function registerChatIpc(
           onIdle: () => void tryDeferredWarmup()
         })
       : null
+  if (passageIndex) passageIndex.onIdentityInvalidated = () => indexPrewarm?.request()
   const closeIndexPage = (id: number): void => {
     openSenders.delete(id)
     if (!openSenders.size) deferredWarmup = false
@@ -360,6 +361,7 @@ export function registerChatIpc(
     if (turn.kind === 'smalltalk' || turn.kind === 'acknowledgement') return undefined
     return options.acquireGenerationPriority?.(signal)
   }
+  const inspectionFallbacks = new WeakSet<AskAiAnswer>()
   const answerWithExperiment = async (
     params: Parameters<typeof answerQuestion>[0] & { searchAll?: boolean }
   ): Promise<AskAiAnswer> => {
@@ -387,7 +389,12 @@ export function registerChatIpc(
       )
       const unanchoredInitial =
         history.length === 0 && named.size === 0 && !params.scopedMeetingIds?.length
-      await indexPrewarm?.whenInspected()
+      const inspected = await indexPrewarm?.whenInspected(params.signal)
+      if (inspected === false) {
+        const result = await answerQuestion(params)
+        inspectionFallbacks.add(result)
+        return result
+      }
       const lexicalFallback = Boolean(indexPrewarm && !indexPrewarm.semanticReady)
       if (lexicalFallback)
         logAutodocEvent({
@@ -402,7 +409,7 @@ export function registerChatIpc(
         rankedIds = ids
       }
       if (unanchoredInitial) {
-        await waitForOllama(ollamaManager, params.signal)
+        if (!lexicalFallback) await waitForOllama(ollamaManager, params.signal)
         try {
           prefetched = await passageIndex.retrieveConversation(
             params.question,
@@ -585,7 +592,11 @@ export function registerChatIpc(
     })
     if (hasInventoryRequestCue(params.question)) return clarifyInventory()
     try {
-      await indexPrewarm?.whenInspected()
+      const inspected = await indexPrewarm?.whenInspected(params.signal)
+      if (inspected === false) {
+        inspectionFallbacks.add(result)
+        return result
+      }
       const lexicalFallback = Boolean(indexPrewarm && !indexPrewarm.semanticReady)
       const processing = options.isProcessing?.() ?? false
       const control =
@@ -735,6 +746,7 @@ export function registerChatIpc(
     onCountResult?: (summary: ChatCountSummary) => void,
     onPreparedSources?: (sources: ChatSourceCard[]) => void
   ): Promise<string> => {
+    if (inspectionFallbacks.has(result)) return result.content
     language = result.conversation?.replyLanguage ?? language
     if (result.alreadyLocalized) return result.content
     if (language !== 'en' && (result.intent === 'count' || result.intent === 'list')) {
@@ -1491,7 +1503,8 @@ export function registerChatIpc(
   ipcMain.handle('chat:warmup', async (event): Promise<{ warmed: boolean; reason?: string }> => {
     const wasUnavailable = indexPrewarm?.unavailable
     openIndexPage(event?.sender)
-    await indexPrewarm?.whenInspected()
+    const inspected = await indexPrewarm?.whenInspected()
+    if (inspected === false) return { warmed: false, reason: 'indexing' }
     if (wasUnavailable) {
       deferredWarmup = false
       return normalWarmup()

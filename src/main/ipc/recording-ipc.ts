@@ -1864,6 +1864,12 @@ export function registerRecordingIpc(
     metadata: MeetingMetadata,
     recording?: ReturnType<RecordingService['stopRecording']>
   ): Promise<void> {
+    let handedOff = false
+    const completeHandoff = (): void => {
+      if (handedOff) return
+      handedOff = true
+      recordingService.completeProcessingHandoff(meetingId)
+    }
     macPostProcessingInFlight.add(meetingId)
     const pending = (async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
@@ -1937,7 +1943,7 @@ export function registerRecordingIpc(
       ) {
         transcriptionService.enqueue(meetingId)
       }
-      recordingService.completeProcessingHandoff(meetingId)
+      completeHandoff()
       logRecordingDebug('transcription enqueued after audio post-processing', meetingId, {
         skippedForE2E: isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1'
       })
@@ -1999,7 +2005,7 @@ export function registerRecordingIpc(
         console.error('Recording post-processing failed:', err)
       })
       .finally(() => {
-        recordingService.completeProcessingHandoff(meetingId)
+        completeHandoff()
         macPostProcessingInFlight.delete(meetingId)
       })
 

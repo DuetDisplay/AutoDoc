@@ -4,6 +4,7 @@ import { mkdir, stat } from 'fs/promises'
 import type { AskAiPrepareResult } from './ask-ai-index-prewarm'
 import { dirname } from 'path'
 import { decryptJSON, encryptJSON } from './crypto'
+import { readAskAiCache } from './ask-ai-cache-reader'
 import type { ChatEmbeddingProvider } from './chat-retrieval'
 import { filterMeetingsForQuestionWindow } from './chat-retrieval'
 import { unicodeContentTokens } from './unicode-text'
@@ -94,11 +95,11 @@ interface VectorCache {
 
 /** Full-coverage local retrieval, with encrypted derived vectors and lexical busy fallback. */
 export class AskAiPassages {
-  private vectors = new Map<string, number[]>()
+  private vectors = new Map<string, number[] | Float64Array>()
+  onIdentityInvalidated?: () => void
   private loaded = false
   private coveredMeetingIds = new Set<string>()
   private coverageNeedsSave = false
-  private inspectionWrite: Promise<void> | null = null
   private cacheLoad: Promise<void> | null = null
   private passageCache = new Map<string, { signature: string; title: string; rows: Passage[] }>()
   private indexing: Promise<AskAiPrepareResult> | null = null
@@ -201,12 +202,14 @@ export class AskAiPassages {
     }
   }
 
-  private async loadSavedCache(allowUnknownIdentity = false): Promise<void> {
+  private async loadSavedCache(allowUnknownIdentity = false, offThread = false): Promise<void> {
     if (this.loaded) return
     if (this.cacheLoad) return this.cacheLoad
     const load = async (): Promise<void> => {
       try {
-        const cache = await decryptJSON<VectorCache>(this.cachePath)
+        const cache = offThread
+          ? await readAskAiCache(this.cachePath)
+          : await decryptJSON<VectorCache>(this.cachePath)
         // At launch the provider digest may not yet be known. Accept a saved
         // cache for this model/dimension; prepare verifies its installed digest.
         const prefix = `passages-v2:${this.provider.model}`
@@ -219,7 +222,12 @@ export class AskAiPassages {
             cache.version.endsWith(suffix))
         ) {
           this.version = cache.version
-          for (const [key, vector] of cache.rows) this.vectors.set(key, this.normalize(vector))
+          if ('rows' in cache)
+            for (const [key, vector] of cache.rows) this.vectors.set(key, this.normalize(vector))
+          else
+            cache.keys.forEach((key, i) =>
+              this.vectors.set(key, cache.values.subarray(cache.offsets[i], cache.offsets[i + 1]))
+            )
           this.coveredMeetingIds = new Set(cache.coveredMeetingIds ?? [])
           this.coverageNeedsSave = cache.coveredMeetingIds === undefined
         }
@@ -246,41 +254,26 @@ export class AskAiPassages {
     this.coveredMeetingIds = next
   }
 
-  private async persistInspectedCoverage(): Promise<void> {
-    if (!this.inspectionWrite) {
-      const pending = this.indexing
-      const write = (async () => {
-        if (pending) await pending.catch(() => {})
-        if (this.coverageNeedsSave) {
-          try {
-            await this.checkpoint('complete')
-          } catch {
-            /* Ready vectors remain usable; retry metadata on a real trigger. */
-          }
-        }
-      })()
-      const tracked = write.finally(() => {
-        if (this.inspectionWrite === tracked) this.inspectionWrite = null
-      })
-      this.inspectionWrite = tracked
-    }
-    await this.inspectionWrite
-  }
-
-  async inspect(
-    meetings: IndexedMeeting[]
-  ): Promise<{ completed: number; total: number; semanticReady: boolean; unavailable: boolean }> {
+  async inspect(meetings: IndexedMeeting[]): Promise<{
+    completed: number
+    total: number
+    semanticReady: boolean
+    unavailable: boolean
+    needsSave: boolean
+  }> {
     const available = await this.provider.isAvailable()
     const unavailable = !available && this.provider.availabilityReason !== 'unreachable'
     if (available) this.selectProviderVersion()
-    await this.loadSavedCache(true)
-    const passages = this.passages(meetings)
+    await this.loadSavedCache(true, true)
+    const passages: Passage[] = []
+    for (const meeting of meetings) {
+      passages.push(...this.passages([meeting]))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
     const completed = passages.filter((p) => this.vectors.has(p.key)).length
     if (completed === passages.length) {
       this.markCovered(passages)
-      // Upgrade a legacy complete cache once, so a later paused new-meeting
-      // update retains its proven old coverage across another launch.
-      if (this.coverageNeedsSave) await this.persistInspectedCoverage()
+      // Persistence belongs to prepare(), after inference gates open.
     }
     const semanticReady =
       completed === passages.length ||
@@ -291,14 +284,18 @@ export class AskAiPassages {
       completed,
       total: passages.length,
       semanticReady: !unavailable && semanticReady,
-      unavailable
+      unavailable,
+      needsSave: this.coverageNeedsSave
     }
   }
 
   private cacheData(): VectorCache {
     return {
       version: this.version,
-      rows: [...this.vectors],
+      rows: [...this.vectors].map(([key, vector]) => [
+        key,
+        Array.isArray(vector) ? vector : Array.from(vector)
+      ]),
       coveredMeetingIds: [...this.coveredMeetingIds]
     }
   }
@@ -333,7 +330,7 @@ export class AskAiPassages {
     } = {}
   ): Promise<AskAiPrepareResult> {
     if (!(await canInfer())) return 'paused'
-    while (this.indexing || this.inspectionWrite) await (this.inspectionWrite ?? this.indexing)
+    while (this.indexing) await this.indexing
     const work = async (): Promise<AskAiPrepareResult> => {
       if (!(await canInfer())) return 'paused'
       if (!(await this.provider.isAvailable())) {
@@ -408,7 +405,10 @@ export class AskAiPassages {
           if (options.checkpoint) await this.checkpoint('complete')
           else {
             await mkdir(dirname(this.cachePath), { recursive: true })
-            await encryptJSON({ version: this.version, rows: [...this.vectors] }, this.cachePath)
+            await encryptJSON(
+              { version: this.version, rows: this.cacheData().rows },
+              this.cachePath
+            )
           }
         }
         finished = true
@@ -432,6 +432,20 @@ export class AskAiPassages {
     }
   }
 
+  private async semanticAvailable(cachedOnly: boolean): Promise<boolean> {
+    if (!(await this.provider.isAvailable())) return false
+    if (cachedOnly) {
+      const before = this.version
+      this.selectProviderVersion()
+      if (this.version !== before) {
+        await this.loadSavedCache(false, true)
+        this.onIdentityInvalidated?.()
+      }
+      return this.vectors.size > 0
+    }
+    return true
+  }
+
   private async queryVector(question: string): Promise<number[]> {
     const cached = this.queryVectors.get(question)
     if (cached) return cached
@@ -450,6 +464,7 @@ export class AskAiPassages {
   ): Promise<string | null> {
     if (process.env.AUTODOC_ASK_AI_INTENTS !== 'semantic') return null
     if (!cachedOnly) await this.prepare(meetings)
+    if (cachedOnly && !(await this.semanticAvailable(true))) return null
     if (!this.controlVectors.length) return null
     const query = await this.queryVector(question)
     const scores = new Map<string, number>()
@@ -521,7 +536,7 @@ export class AskAiPassages {
     if (canInfer()) {
       if (!cachedOnly) await this.prepare(meetings, canInfer)
       passages = this.passages(scoped)
-      if (canInfer() && (await this.provider.isAvailable())) {
+      if (canInfer() && (await this.semanticAvailable(cachedOnly))) {
         const queries = history.length ? [question, contextual] : [question]
         const missing = queries.filter((query) => !this.queryVectors.has(query))
         if (missing.length) {
@@ -805,8 +820,12 @@ export class AskAiPassages {
       .filter((r) => r.score > 0)
       .sort((a, b) => b.score - a.score)
     let semantic: Array<{ p: Passage; score: number }> = []
+    if (cachedOnly) await this.semanticAvailable(true)
     const cachedQuery = this.queryVectors.get(question)
-    if (!lexicalFact && (cachedQuery || (canInfer() && (await this.provider.isAvailable())))) {
+    if (
+      !lexicalFact &&
+      (cachedQuery || (canInfer() && (await this.semanticAvailable(cachedOnly))))
+    ) {
       const query = cachedQuery ?? (canInfer() ? await this.queryVector(question) : null)
       if (query) {
         semantic = passages

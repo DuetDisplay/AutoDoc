@@ -66,6 +66,7 @@ it('uses starting copy at zero and exposes current progress outside the live ann
   const banner = container.querySelector('[data-ask-ai-index-banner]')!
   expect(banner).toHaveTextContent('Preparing your meetings')
   expect(banner).not.toHaveTextContent('0%')
+  expect(container.querySelector('[data-ask-ai-index-announcement]')).toHaveTextContent('paused')
   expect(banner.querySelector('[aria-hidden="true"]')).toBeNull()
   expect(banner.closest('[aria-live]')).toBeNull()
   act(() =>

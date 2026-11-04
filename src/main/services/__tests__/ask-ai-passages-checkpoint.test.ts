@@ -21,6 +21,7 @@ vi.mock('../windows-key-protection', () => ({
 }))
 // Real AES-GCM and filename authentication; only OS key storage is mocked.
 import { decryptJSON } from '../crypto'
+import * as cacheCrypto from '../crypto'
 function meeting(id: string, count = 1): IndexedMeeting {
   return {
     meetingId: id,
@@ -310,7 +311,15 @@ it('keeps new-meeting semantics when a previously empty recording receives notes
       total: 1,
       semanticReady: true
     })
-    await upgraded.inspect([saved, empty])
+    expect(upgradeWrite).not.toHaveBeenCalled()
+    const mainDecrypt = vi.spyOn(cacheCrypto, 'decryptJSON')
+    const inspectedAgain = new AskAiPassages(provider, file)
+    const gatedWrite = vi.spyOn(inspectedAgain as any, 'checkpoint')
+    await inspectedAgain.inspect([saved, empty])
+    expect(mainDecrypt).not.toHaveBeenCalled()
+    expect(gatedWrite).not.toHaveBeenCalled()
+    mainDecrypt.mockRestore()
+    await upgraded.prepare([saved, empty], () => true, { checkpoint: true })
     expect(upgradeWrite).toHaveBeenCalledTimes(1)
     expect((await decryptJSON<{ coveredMeetingIds: string[] }>(file)).coveredMeetingIds).toEqual([
       'saved'
@@ -328,6 +337,52 @@ it('keeps new-meeting semantics when a previously empty recording receives notes
       semanticReady: true
     })
     expect(provider.embed).toHaveBeenCalledTimes(1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it('revalidates an unknown saved digest before a cached-only semantic query', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-index-unknown-identity-'))
+  try {
+    storage.dir = dir
+    let available = true,
+      identity = 'unit:digest-a'
+    const provider = {
+      model: 'unit',
+      get cacheIdentity() {
+        return identity
+      },
+      get availabilityReason() {
+        return available ? ('available' as const) : ('unreachable' as const)
+      },
+      isAvailable: async () => available,
+      embed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0]))
+    }
+    const file = join(dir, 'index.enc'),
+      data = [meeting('saved')]
+    await new AskAiPassages(provider, file).prepare(data)
+    available = false
+    identity = 'unit:unknown'
+    const restored = new AskAiPassages(provider, file)
+    expect(await restored.inspect(data)).toMatchObject({ semanticReady: true })
+    available = true
+    identity = 'unit:digest-b'
+    provider.embed.mockClear()
+    const answer = await restored.retrieveConversation(
+      'Synthetic fact?',
+      data,
+      [],
+      [],
+      undefined,
+      undefined,
+      () => true,
+      [],
+      undefined,
+      true
+    )
+    expect(answer?.retrievalConfidence?.score).toBe(0)
+    expect(provider.embed).not.toHaveBeenCalled()
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

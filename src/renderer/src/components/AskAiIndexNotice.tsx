@@ -54,13 +54,13 @@ export function AskAiIndexNotice(): ReactElement {
     setAnnouncement(
       shown
         ? t(
-            copyState === 'paused'
+            status.state === 'paused'
               ? 'askAi.indexingPausedAnnouncement'
               : 'askAi.indexingPreparingAnnouncement'
           )
         : ''
     )
-  }, [shown, copyState, t])
+  }, [shown, status.state, t])
 
   return (
     <div>
