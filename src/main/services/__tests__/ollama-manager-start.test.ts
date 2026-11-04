@@ -160,6 +160,32 @@ function mockServeOrTaskkill(
 }
 
 describe('OllamaManager start lifecycle', () => {
+  it('discards serve stdout on Mac and Windows so request logs cannot fill an unread pipe', async () => {
+    for (const platform of ['darwin', 'win32'] as const) {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-stdout-'))
+      try {
+        const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir, platform)
+        const serve = createFakeProcess(4242)
+        mockServeOrTaskkill(spawnMock, () => serve)
+        const manager = new OllamaManager()
+        manager.latchCpuAccelerator('test')
+        stubStartLifecycle(manager)
+        vi.useFakeTimers()
+        const started = manager.start({ forceRespawn: true })
+        await vi.advanceTimersByTimeAsync(1000)
+        serve.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+        await vi.advanceTimersByTimeAsync(1000)
+        await started
+        expect(serveSpawnCalls(spawnMock)[0][2]).toMatchObject({
+          stdio: ['ignore', 'ignore', 'pipe']
+        })
+      } finally {
+        vi.useRealTimers()
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    }
+  })
+
   it('adopts a busy live owned serve after a short probe fails and resetReady clears its marker', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-busy-adopt-'))
     try {
