@@ -334,6 +334,11 @@ export interface RecordingTrackingContext {
   selectionEventId?: string | null
 }
 
+export type RecordingChunkResult =
+  | { status: 'written' }
+  | { status: 'ignored' }
+  | { status: 'failed'; code: string }
+
 export interface RecordingState {
   isRecording: boolean
   meetingId: string | null

@@ -222,6 +222,8 @@ export const en = {
   'recording.record': 'Record',
   'recording.stop': 'Stop',
   'recording.stopRecording': 'Stop Recording',
+  'recording.saveFailedStopped':
+    "Recording stopped because AutoDoc couldn't save it. Some of it may be missing. Check your free disk space before recording again.",
   'recording.startNotes': 'Start AI Notes',
   'recording.chooseWindow': 'Choose a window.',
   'recording.selectWindow': 'Select window',
@@ -335,6 +337,9 @@ export const en = {
   'meeting.dangerZone': 'Danger Zone',
   'meeting.cannotUndo': 'This action cannot be undone.',
   'meeting.deleteRecording': 'Delete recording',
+  'meeting.deleteBlocked':
+    'Stop the recording and wait for it to finish saving before deleting it.',
+  'meeting.deleteFailed': "Couldn't delete this recording. Try again.",
   'meeting.deleteRecordingHint': 'Permanently remove all audio, video, transcript, and notes',
   'meeting.confirmDelete': 'Confirm Delete',
 

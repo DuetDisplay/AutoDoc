@@ -24,6 +24,7 @@ import { createFfmpegExitError, withSentryFingerprint } from '../services/sentry
 import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
 import type {
   CalendarEvent,
+  RecordingChunkResult,
   RecordingEntry,
   RecordingSource,
   RecordingState,
@@ -968,6 +969,16 @@ async function decryptAudioForMux(filePath: string, tempFiles: string[]): Promis
   return filePath
 }
 
+/** Only a confirmed ENOENT counts: other I/O errors must not read as a deleted recording. */
+export async function isMeetingDirMissing(meetingDir: string): Promise<boolean> {
+  try {
+    await stat(meetingDir)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+}
+
 async function maybeReportRapidAbortWithoutMedia(params: {
   meetingDir: string
   meetingId: string
@@ -1106,6 +1117,20 @@ export function registerRecordingIpc(
   const windowsPostProcessingInFlight = new Set<string>()
   const macPostProcessingInFlight = new Set<string>()
   const videoCaptureEndedEarlyMeetings = new Set<string>()
+  // First chunk-write failure per recording. Each recording gets a new ID, so entries never need
+  // clearing, and they keep later chunks from writing after a gap while capture shuts down.
+  const chunkWriteFailures = new Map<string, string>()
+  const isRecordingBusy = (meetingId: string): boolean => {
+    const { isRecording, meetingId: activeMeetingId } = recordingService.getState()
+    return (
+      (isRecording && activeMeetingId === meetingId) ||
+      windowsPendingFinalization.has(meetingId) ||
+      windowsPostProcessingInFlight.has(meetingId) ||
+      macPostProcessingInFlight.has(meetingId) ||
+      windowsVideoJobInFlight.has(meetingId) ||
+      windowsVideoJobQueue.includes(meetingId)
+    )
+  }
   // Meetings whose post-processing failed because the disk is full, mapped to when automatic
   // recovery may try them again. Recovery skips them until then so it stops re-running (and
   // failing) every pass; a manual retry or an app restart clears the hold immediately.
@@ -1473,10 +1498,18 @@ export function registerRecordingIpc(
       })
       .finally(() => {
         windowsVideoJobInFlight.delete(meetingId)
+        broadcastEntryUpdated(meetingId)
         postProcessingLanguages.delete(meetingId)
         windowsVideoJobProcessing = false
         processNextWindowsVideoJob()
       })
+  }
+
+  function releaseMissingWindowsMeeting(meetingId: string): void {
+    logRecordingDebug('meeting folder is gone; skipping finalization', meetingId)
+    windowsPendingFinalization.delete(meetingId)
+    recordingService.completeProcessingHandoff(meetingId)
+    broadcastEntryUpdated(meetingId)
   }
 
   function runRecordingPostProcessing(meetingId: string, metadata: MeetingMetadata): void {
@@ -1499,6 +1532,11 @@ export function registerRecordingIpc(
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       try {
+        if (await isMeetingDirMissing(meetingDir)) {
+          releaseMissingWindowsMeeting(meetingId)
+          return
+        }
+
         const ffmpegPath = await resolveFfmpegPath(meetingId)
 
         try {
@@ -1570,6 +1608,7 @@ export function registerRecordingIpc(
         })
         recordingService.completeProcessingHandoff(meetingId)
         windowsPostProcessingInFlight.delete(meetingId)
+        broadcastEntryUpdated(meetingId)
       }
     })().catch((err) => {
       recordingService.completeProcessingHandoff(meetingId)
@@ -1875,6 +1914,11 @@ export function registerRecordingIpc(
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, meetingId)
       let videoProcessingFailed = false
+      if (await isMeetingDirMissing(meetingDir)) {
+        logRecordingDebug('meeting folder is gone; skipping post-processing', meetingId)
+        broadcastEntryUpdated(meetingId)
+        return
+      }
       await maybeReportRapidAbortWithoutMedia({
         meetingDir,
         meetingId: meetingId,
@@ -2007,6 +2051,7 @@ export function registerRecordingIpc(
       .finally(() => {
         completeHandoff()
         macPostProcessingInFlight.delete(meetingId)
+        broadcastEntryUpdated(meetingId)
       })
 
     return pending
@@ -2082,7 +2127,8 @@ export function registerRecordingIpc(
           scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)
           broadcastEntryUpdated(result.meetingId)
         })
-        .catch((err) => {
+        .catch(async (err) => {
+          if (await isMeetingDirMissing(meetingDir)) return
           logAutodocFailure({
             area: 'recording',
             message: 'Failed to save recording metadata during Windows stop finalization',
@@ -2193,6 +2239,10 @@ export function registerRecordingIpc(
     })
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
+    if (await isMeetingDirMissing(meetingDir)) {
+      releaseMissingWindowsMeeting(meetingId)
+      return
+    }
     const pendingMetadataFromMap = windowsPendingFinalization.get(meetingId) ?? null
     const metadata = (await readMetadata(meetingDir)) ?? pendingMetadataFromMap
     if (!metadata) {
@@ -2312,6 +2362,7 @@ export function registerRecordingIpc(
       date: startedAt,
       durationSeconds,
       isFinalizing,
+      deleteBlocked: isRecordingBusy(meetingId),
       videoProcessingFailed: metadata?.videoProcessingFailed,
       videoStatus: metadata?.videoStatus,
       videoCaptureEndedEarly: metadata?.videoCaptureEndedEarly
@@ -2354,15 +2405,17 @@ export function registerRecordingIpc(
       type: 'video' | 'mic' | 'system',
       chunk: ArrayBuffer,
       segmentIndex = 0
-    ) => {
+    ): Promise<RecordingChunkResult> => {
       const currentState = recordingService.getState()
       const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
       if (
         (!currentState.isRecording || currentState.meetingId !== meetingId) &&
         !allowFinalizingWrite
       ) {
-        return // Ignore chunks for stale or mismatched recordings
+        return { status: 'ignored' } // Stale or mismatched recording
       }
+      const firstFailure = chunkWriteFailures.get(meetingId)
+      if (firstFailure) return { status: 'failed', code: firstFailure }
       const baseDir = recordingService.getRecordingsBaseDir()
       const filename = getSegmentFilename(type, segmentIndex)
       const filePath = join(baseDir, meetingId, filename)
@@ -2375,15 +2428,21 @@ export function registerRecordingIpc(
             bytes: chunk.byteLength
           })
         }
+        return { status: 'written' }
       } catch (err) {
-        logAutodocFailure({
-          area: 'recording',
-          message: 'Failed to write recording chunk',
-          error: err,
-          meetingId,
-          context: { type, filePath }
-        })
-        throw err
+        const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN'
+        if (!chunkWriteFailures.has(meetingId)) {
+          chunkWriteFailures.set(meetingId, code)
+          logAutodocFailure({
+            area: 'recording',
+            message: 'Failed to write recording chunk',
+            error: err,
+            meetingId,
+            context: { type, segmentIndex, filePath },
+            fingerprint: ['recording-chunk-write', code]
+          })
+        }
+        return { status: 'failed', code: chunkWriteFailures.get(meetingId) ?? code }
       }
     }
   )
@@ -2499,13 +2558,23 @@ export function registerRecordingIpc(
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
     const dirStat = await stat(meetingDir).catch(() => null)
-    if (!dirStat?.isDirectory()) return
+    if (!dirStat?.isDirectory()) return { status: 'deleted' }
     logAutodocEvent({
       area: 'recording',
       message: 'recording:delete requested',
       meetingId,
       context: await getDeletionDiagnostics(meetingId)
     })
+    // Checked after the awaits above, with nothing async before rm.
+    if (isRecordingBusy(meetingId)) {
+      logAutodocEvent({
+        area: 'recording',
+        level: 'warn',
+        message: 'recording:delete refused because the recording is busy',
+        meetingId
+      })
+      return { status: 'busy' }
+    }
     await rm(meetingDir, { recursive: true, force: true })
     broadcastEntryUpdated(meetingId)
     logAutodocEvent({
@@ -2514,6 +2583,7 @@ export function registerRecordingIpc(
       meetingId,
       context: await getDeletionDiagnostics(meetingId)
     })
+    return { status: 'deleted' }
   })
 
   async function recoverInterruptedRecordings(): Promise<void> {

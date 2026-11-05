@@ -82,6 +82,7 @@ interface CaptureHandles {
 
 let activeCapture: CaptureHandles | null = null
 let unrecoverableCaptureHandler: (() => Promise<void>) | null = null
+let lastChunkSaveFailureMeetingId: string | null = null
 let videoDisabledHandler: ((meetingId: string) => Promise<void> | void) | null = null
 const RECORDER_STOP_TIMEOUT_MS = 5_000
 const RECOVERY_DEBOUNCE_MS = 750
@@ -604,6 +605,25 @@ function getPendingRecoveryValidationSources(
   return pendingSources
 }
 
+/** Stops the recording once, however many tracks and chunks fail after the first. */
+function handleChunkSaveFailure(meetingId: string): void {
+  if (lastChunkSaveFailureMeetingId === meetingId) return
+  lastChunkSaveFailureMeetingId = meetingId
+  useToastStore.getState().showToast({
+    type: 'warning',
+    messageKey: 'recording.saveFailedStopped',
+    message:
+      "Recording stopped because AutoDoc couldn't save it. Some of it may be missing. Check your free disk space before recording again."
+  })
+  if (activeCapture?.meetingId !== meetingId) return
+  // Not awaited: stopping drains pendingChunkWrites, which still holds the write that failed.
+  void stopCapture()
+    .then(() => unrecoverableCaptureHandler?.())
+    .catch((err) => {
+      console.error('Failed to stop recording after a chunk could not be saved:', err)
+    })
+}
+
 function trackChunkWrite(
   pendingChunkWrites: Set<Promise<void>>,
   meetingId: string,
@@ -613,10 +633,18 @@ function trackChunkWrite(
 ): void {
   const savePromise: Promise<void> = (async () => {
     const buffer = await data.arrayBuffer()
-    await window.electronAPI.invoke('recording:save-chunk', meetingId, type, buffer, segmentIndex)
+    const result = await window.electronAPI.invoke(
+      'recording:save-chunk',
+      meetingId,
+      type,
+      buffer,
+      segmentIndex
+    )
+    if (result.status === 'failed') handleChunkSaveFailure(meetingId)
   })()
     .catch((err) => {
       console.error(`Failed to persist ${type} recording chunk:`, err)
+      handleChunkSaveFailure(meetingId)
     })
     .finally(() => {
       pendingChunkWrites.delete(savePromise)

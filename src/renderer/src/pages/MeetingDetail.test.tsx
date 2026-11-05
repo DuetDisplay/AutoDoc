@@ -1,4 +1,5 @@
 import { useChatStore } from '../stores/chat'
+import { useToastStore } from '../stores/toast'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -86,6 +87,64 @@ async function renderMeetingDetail() {
   })
   return result!
 }
+
+describe('deleting a recording', () => {
+  async function openSettings() {
+    await renderMeetingDetail()
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings', exact: true }))
+  }
+
+  async function confirmDelete() {
+    await userEvent.click(screen.getByRole('button', { name: 'Delete', exact: true }))
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm Delete', exact: true }))
+  }
+
+  const blockedReason = 'Stop the recording and wait for it to finish saving before deleting it.'
+
+  it('disables Delete and explains why while the recording is busy', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:get-detail', {
+      title: 'Test Meeting',
+      sourceName: 'Zoom',
+      date: Date.now(),
+      durationSeconds: 300,
+      deleteBlocked: true
+    })
+    await openSettings()
+
+    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+    expect(screen.getByText(blockedReason)).toBeInTheDocument()
+  })
+
+  it('stays on the page and explains when main refuses a stale Delete', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:delete', { status: 'busy' })
+    await openSettings()
+
+    await confirmDelete()
+
+    expect(await screen.findByText(blockedReason)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+  })
+
+  it('shows a message and stays on the page when Delete fails unexpectedly', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:delete', () => {
+      throw new Error('EPERM')
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await openSettings()
+
+    await confirmDelete()
+
+    await waitFor(() =>
+      expect(useToastStore.getState().activeToast).toMatchObject({
+        messageKey: 'meeting.deleteFailed'
+      })
+    )
+    expect(screen.getByText('Delete recording')).toBeInTheDocument()
+  })
+})
 
 describe('memory failure guidance', () => {
   it('retains previous results on Windows and distinguishes explicit Reprocess', async () => {

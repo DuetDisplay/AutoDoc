@@ -1,5 +1,5 @@
 import type { AskAiIndexStatus } from '../shared/ask-ai-index-status'
-import type { ChatCountSummary } from '../shared/types'
+import type { ChatCountSummary, RecordingChunkResult } from '../shared/types'
 import type { SpeechLicenseNotice } from '../shared/speech-licenses'
 import type { MemoryFailure } from '../shared/memory-failure'
 import type {
@@ -403,12 +403,12 @@ export interface IpcInvokeReturns {
   'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
   'recording:finalize-stop': void
   'recording:get-state': RecordingState
-  'recording:save-chunk': void
+  'recording:save-chunk': RecordingChunkResult
   'recording:save-segment-timing': void
   'recording:save-segment-end': void
   'recording:video-capture-ended-early': void
   'recording:update-title': void
-  'recording:delete': void
+  'recording:delete': { status: 'deleted' | 'busy' }
   'recording:retry-video': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-memory-failure': MemoryFailure | undefined
@@ -449,6 +449,7 @@ export interface IpcInvokeReturns {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    deleteBlocked?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus
     videoCaptureEndedEarly?: boolean

@@ -1,4 +1,5 @@
 import { useChatStore } from '../stores/chat'
+import { useToastStore } from '../stores/toast'
 import { useAskAiAvailable } from '../stores/ask-ai-availability'
 import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -352,6 +353,7 @@ export function MeetingDetail() {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    deleteBlocked?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
     videoCaptureEndedEarly?: boolean
@@ -1427,7 +1429,22 @@ export function MeetingDetail() {
 
   const handleDelete = async () => {
     if (!id) return
-    await window.electronAPI.invoke('recording:delete', id)
+    setShowDeleteConfirm(false)
+    try {
+      const { status } = await window.electronAPI.invoke('recording:delete', id)
+      if (status === 'busy') {
+        setDetail((current) => current && { ...current, deleteBlocked: true })
+        return
+      }
+    } catch (err) {
+      console.error('Failed to delete recording:', err)
+      useToastStore.getState().showToast({
+        type: 'warning',
+        messageKey: 'meeting.deleteFailed',
+        message: "Couldn't delete this recording. Try again."
+      })
+      return
+    }
     trackEvent('recording_deleted')
     navigate('/recordings')
   }
@@ -2029,13 +2046,16 @@ export function MeetingDetail() {
                     {t('meeting.deleteRecording')}
                   </div>
                   <div className="text-[11px] text-ink-faint">
-                    {t('meeting.deleteRecordingHint')}
+                    {detail?.deleteBlocked
+                      ? t('meeting.deleteBlocked')
+                      : t('meeting.deleteRecordingHint')}
                   </div>
                 </div>
-                {!showDeleteConfirm ? (
+                {!showDeleteConfirm || detail?.deleteBlocked ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark hover:bg-clay-light transition-colors"
+                    disabled={detail?.deleteBlocked}
+                    className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark enabled:hover:bg-clay-light disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {t('common.delete')}
                   </button>
