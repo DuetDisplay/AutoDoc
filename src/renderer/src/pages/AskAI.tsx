@@ -610,34 +610,33 @@ export function AskAI(): ReactElement {
                           })}
                         </p>
                       )}
-                      {msg.sources &&
-                        msg.sources.length > 0 &&
-                        (msg.inventoryCount !== undefined ||
-                          msg.meetingScope ||
-                          msg.scopedMeetingIds?.length) && (
-                          <>
-                            <div className="flex flex-wrap gap-1.5 pt-1">
-                              {msg.sources.map((source) => (
-                                <button
-                                  key={`${source.n}-${source.meetingId}`}
-                                  data-ask-ai-source
-                                  data-meeting-id={source.meetingId}
-                                  type="button"
-                                  onClick={() => openSource(source)}
-                                  className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
-                                >
-                                  <span className="font-medium">[{source.n}]</span>{' '}
-                                  <span className="text-ink-muted">{source.title}</span>
-                                  {formatSourceTime(source.startMs) && (
-                                    <span className="text-ink-faint">
-                                      {' '}
-                                      · {formatSourceTime(source.startMs)}
-                                    </span>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                            {!msg.meetingScope && !msg.scopedMeetingIds?.length && (
+                      {msg.sources && msg.sources.length > 0 && (
+                        <>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {msg.sources.map((source) => (
+                              <button
+                                key={`${source.n}-${source.meetingId}`}
+                                data-ask-ai-source
+                                data-meeting-id={source.meetingId}
+                                type="button"
+                                onClick={() => openSource(source)}
+                                className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
+                              >
+                                <span className="font-medium">[{source.n}]</span>{' '}
+                                <span className="text-ink-muted">{source.title}</span>
+                                {formatSourceTime(source.startMs) && (
+                                  <span className="text-ink-faint">
+                                    {' '}
+                                    · {formatSourceTime(source.startMs)}
+                                  </span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                          {!msg.meetingScope &&
+                            !msg.scopedMeetingIds?.length &&
+                            msg.inventoryCount !== undefined &&
+                            msg.inventoryCount > 1 && (
                               <p
                                 data-ask-ai-coverage
                                 role="note"
@@ -654,13 +653,13 @@ export function AskAI(): ReactElement {
                                   totalMeetings: translatePlural(
                                     language,
                                     'meetings',
-                                    msg.inventoryCount!
+                                    msg.inventoryCount
                                   )
                                 })}
                               </p>
                             )}
-                          </>
-                        )}
+                        </>
+                      )}
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
                         <div className="grid min-w-0 grid-cols-1 gap-2">
                           {msg.clarificationOptions.map((option) => (

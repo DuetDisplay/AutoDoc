@@ -808,3 +808,48 @@ it('restores coverage for saved source chips that predate inventory metadata', a
     await screen.findByText('Based on 1 passage from 1 of your 102 meetings.')
   ).toBeInTheDocument()
 })
+
+it('hides coverage for a one-meeting library but keeps the source chips', () => {
+  resetRendererStores()
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  installMockElectronApi({ 'ollama:check-status': true })
+  useChatStore.setState({
+    messages: [
+      {
+        id: 'one',
+        role: 'assistant',
+        content: 'Answer.',
+        status: 'complete',
+        sources: [coverageSource(1, 'a')],
+        inventoryCount: 1
+      }
+    ]
+  })
+  render(<AskAI />)
+  expect(document.querySelectorAll('[data-ask-ai-source]')).toHaveLength(1)
+  expect(document.querySelector('[data-ask-ai-coverage]')).toBeNull()
+})
+
+it('keeps saved source chips when the library count cannot be read', async () => {
+  resetRendererStores()
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  const api = installMockElectronApi({
+    'ollama:check-status': true,
+    'chat:inventory-count': () => Promise.reject(new Error('unavailable'))
+  })
+  useChatStore.setState({
+    messages: [
+      {
+        id: 'saved',
+        role: 'assistant',
+        content: 'Saved answer.',
+        status: 'complete',
+        sources: [coverageSource(1, 'a')]
+      }
+    ]
+  })
+  render(<AskAI />)
+  await waitFor(() => expect(api.invoke).toHaveBeenCalledWith('chat:inventory-count'))
+  expect(document.querySelectorAll('[data-ask-ai-source]')).toHaveLength(1)
+  expect(document.querySelector('[data-ask-ai-coverage]')).toBeNull()
+})
