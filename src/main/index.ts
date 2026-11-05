@@ -1411,6 +1411,8 @@ app.whenReady().then(async () => {
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     getBaseUrl: () => managedOllamaManager.getBaseUrl(),
     getAskAiModel: () => managedOllamaManager.getAskAiModel(),
+    getAskAiAvailability: () => managedOllamaManager.getAskAiAvailability(),
+    resolveAskAiAvailability: () => managedOllamaManager.resolveAskAiAvailability(),
     on: (event, listener) => managedOllamaManager.on(event, listener)
   }
   const segmentationService = new SegmentationService(

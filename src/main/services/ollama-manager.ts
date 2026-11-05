@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { askAiAvailabilityOverride, isAskAiAvailable } from './ask-ai-availability'
 import { askAiRuntimeDefaults } from './ask-ai-policy'
 import { access, mkdir, chmod, rm, copyFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
@@ -378,6 +379,9 @@ export class OllamaManager extends EventEmitter {
   private testServerRunning = false
   private didReapAdoptedRunners = false
   private acceleratorDecision: OllamaAcceleratorDecision | null = null
+  // Whether Ask AI is offered on this machine. Decided once per launch, null until then.
+  private askAiAvailability: boolean | null = null
+  private askAiAvailabilityResolution: Promise<boolean> | null = null
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -473,6 +477,52 @@ export class OllamaManager extends EventEmitter {
     return this.askAiModel
   }
 
+  /** True when Ask AI is offered, false when hidden, null while the decision is unknown. */
+  getAskAiAvailability(): boolean | null {
+    return askAiAvailabilityOverride() ?? this.askAiAvailability
+  }
+
+  /**
+   * Resolves the launch-stable Ask AI decision from the profile model and the Ollama
+   * accelerator. Neither needs the serve to be running, so this can run at launch. A failed
+   * detection resolves to hidden, like the CPU fallback. Emits 'ask-ai-availability' on change.
+   */
+  resolveAskAiAvailability(): Promise<boolean> {
+    const override = askAiAvailabilityOverride()
+    if (override !== null) return Promise.resolve(override)
+    this.askAiAvailabilityResolution ??= this.detectAskAiAvailability()
+    return this.askAiAvailabilityResolution
+  }
+
+  private async detectAskAiAvailability(): Promise<boolean> {
+    let available = false
+    try {
+      const profileModel = (await this.resolveModel?.()) || this.profileModel
+      const decision = await this.resolveAcceleratorDecision()
+      available = isAskAiAvailable({ profileModel, accelerator: decision.accelerator })
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ask ai availability resolved',
+        context: { available, profileModel, accelerator: decision.accelerator }
+      })
+    } catch (error) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ask ai availability detection failed; hiding ask ai',
+        level: 'warn',
+        context: { error: error instanceof Error ? error.message : String(error) }
+      })
+    }
+    this.setAskAiAvailability(available)
+    return available
+  }
+
+  private setAskAiAvailability(available: boolean): void {
+    if (this.askAiAvailability === available) return
+    this.askAiAvailability = available
+    this.emit('ask-ai-availability', available)
+  }
+
   getNotesAccelerator(): OllamaAccelerator {
     if (this.acceleratorDecision) {
       return this.acceleratorDecision.accelerator
@@ -507,6 +557,8 @@ export class OllamaManager extends EventEmitter {
       message: 'ollama accelerator latched to cpu',
       context: { reason }
     })
+    // Ask AI is not offered on CPU; the runner that died was its only GPU path.
+    if (this.askAiAvailability === true) this.setAskAiAvailability(false)
   }
 
   recoverUnhealthyRuntime(): Promise<void> {
@@ -2181,6 +2233,9 @@ export class OllamaManager extends EventEmitter {
 
   private async pullOptionalEmbeddingModel(epoch: number): Promise<void> {
     if (!SHOULD_PULL_ASK_AI_EMBEDDING_MODEL) return
+    // Only Ask AI uses this model, so a machine that hides Ask AI should not download it.
+    if (!(await this.resolveAskAiAvailability())) return
+    this.assertStartEpoch(epoch)
     const model = process.env.AUTODOC_ASK_AI_EMBEDDING_MODEL ?? DEFAULT_OLLAMA_EMBEDDING_MODEL
     try {
       await this.pullModel(model, epoch)

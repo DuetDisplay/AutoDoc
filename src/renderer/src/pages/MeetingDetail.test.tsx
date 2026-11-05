@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MeetingDetail } from './MeetingDetail'
+import { resetAskAiAvailabilityForTests } from '../stores/ask-ai-availability'
 import {
   createMeetingSegments,
   createTranscript,
@@ -1698,4 +1699,26 @@ it('opens a fresh scoped Ask AI conversation from the meeting detail action', as
   })
   expect(useChatStore.getState().messages).toEqual([])
   expect(api.invoke).toHaveBeenCalledWith('chat:new')
+})
+
+it('hides the Ask AI action where Ask AI is unavailable', async () => {
+  resetAskAiAvailabilityForTests(false)
+  installMockElectronApi({
+    'recording:get-detail': { title: 'Lumen workshop', date: 0, durationSeconds: 60 },
+    'transcription:get-status': 'complete',
+    'segmentation:get-status': 'complete',
+    'transcription:get-transcript': [],
+    'segmentation:get-segments': createMeetingSegments(),
+    'recording:get-media': { hasVideo: false, hasAudio: false, mediaBaseUrl: null },
+    'speakers:get': {}
+  })
+  render(
+    <MemoryRouter initialEntries={['/recordings/test-123']}>
+      <Routes>
+        <Route path="/recordings/:id" element={<MeetingDetail />} />
+      </Routes>
+    </MemoryRouter>
+  )
+  expect(await screen.findByRole('button', { name: 'Transcript' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Ask about this meeting' })).not.toBeInTheDocument()
 })

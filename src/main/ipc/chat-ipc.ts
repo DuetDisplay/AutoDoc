@@ -181,7 +181,13 @@ export interface OllamaRuntime {
   isServerRunning(): Promise<boolean>
   getBaseUrl(): string
   getAskAiModel(): string
-  on?(event: 'server-ready', listener: () => void): unknown
+  /** Whether Ask AI is offered on this machine: null while unknown, stable for the launch. */
+  getAskAiAvailability?(): boolean | null
+  resolveAskAiAvailability?(): Promise<boolean>
+  on?(
+    event: 'server-ready' | 'ask-ai-availability',
+    listener: (available?: boolean) => void
+  ): unknown
 }
 
 interface ChatStreamPayload {
@@ -261,6 +267,12 @@ export function registerChatIpc(
   const passageIndex = useAskAiPassages()
     ? new AskAiPassages(passageEmbeddingProvider, passageCachePath)
     : null
+  // Machines that cannot run Ask AI well hide it, so nothing below may use them in the
+  // background until the launch-time decision allows it. A runtime without the decision allows it.
+  const askAiAvailability = (): boolean | null =>
+    ollamaManager.getAskAiAvailability ? ollamaManager.getAskAiAvailability() : true
+  const availabilitySenders = new Set<WebContents>()
+  const deferredIndexChanges: Array<Parameters<typeof indexChanged>> = []
   const openSenders = new Map<number, WebContents>()
   const observedSenders = new WeakSet<WebContents>()
   let openedOnce = false
@@ -296,13 +308,17 @@ export function registerChatIpc(
           onIdle: () => void tryDeferredWarmup()
         })
       : null
-  if (passageIndex) passageIndex.onIdentityInvalidated = () => indexPrewarm?.request()
+  if (passageIndex)
+    passageIndex.onIdentityInvalidated = () => {
+      if (askAiAvailability() === true) indexPrewarm?.request()
+    }
   const closeIndexPage = (id: number): void => {
     openSenders.delete(id)
     if (!openSenders.size) deferredWarmup = false
   }
   const openIndexPage = (sender?: WebContents): void => {
-    if (!indexPrewarm || !sender || openSenders.has(sender.id)) return
+    if (!indexPrewarm || !sender || openSenders.has(sender.id) || askAiAvailability() !== true)
+      return
     openedOnce = true
     openSenders.set(sender.id, sender)
     if (!observedSenders.has(sender)) {
@@ -324,6 +340,12 @@ export function registerChatIpc(
   }
   const indexChanged = (trigger: 'launch' | 'notes' | 'model' = 'notes', model?: string): void => {
     if (!indexPrewarm) return
+    const available = askAiAvailability()
+    if (available !== true) {
+      // Launch can ask before the decision is known; replay once it allows Ask AI.
+      if (available === null) deferredIndexChanges.push([trigger, model])
+      return
+    }
     if (trigger === 'model') {
       if (
         model !== passageEmbeddingProvider.model ||
@@ -333,6 +355,20 @@ export function registerChatIpc(
       passageEmbeddingProvider.invalidateAvailability()
     } else if (!existsSync(passageCachePath)) return
     indexPrewarm.request()
+  }
+  if (ollamaManager.getAskAiAvailability) {
+    ollamaManager.on?.('ask-ai-availability', (available) => {
+      for (const sender of availabilitySenders)
+        if (!sender.isDestroyed?.()) sender.send('chat:availability-changed', available === true)
+      if (available === true) {
+        for (const change of deferredIndexChanges.splice(0)) indexChanged(...change)
+      } else {
+        deferredIndexChanges.length = 0
+        // Latched to CPU for the rest of the launch: stop any index work in progress.
+        indexPrewarm?.stop()
+      }
+    })
+    void ollamaManager.resolveAskAiAvailability?.()
   }
   async function tryDeferredWarmup(): Promise<void> {
     if (
@@ -1447,7 +1483,8 @@ export function registerChatIpc(
   })
 
   async function warmupAttempt(): Promise<{ warmed: boolean; reason?: string }> {
-    if (process.env.AUTODOC_ASK_AI_WARMUP === '0') return { warmed: false, reason: 'disabled' }
+    if (process.env.AUTODOC_ASK_AI_WARMUP === '0' || askAiAvailability() !== true)
+      return { warmed: false, reason: 'disabled' }
     if (options.canWarmup && !(await options.canWarmup())) {
       logAutodocEvent({
         area: 'chat',
@@ -1495,11 +1532,20 @@ export function registerChatIpc(
       })
     return warmupPromise
   }
+  ipcMain.handle('chat:availability', async (event): Promise<boolean> => {
+    const sender = event?.sender
+    if (sender && !availabilitySenders.has(sender)) {
+      availabilitySenders.add(sender)
+      sender.once?.('destroyed', () => availabilitySenders.delete(sender))
+    }
+    return (await ollamaManager.resolveAskAiAvailability?.()) ?? true
+  })
   ipcMain.handle('chat:index-status', (event): AskAiIndexStatus => {
     openIndexPage(event?.sender)
     return indexPrewarm?.snapshot() ?? idleStatus()
   })
   ipcMain.handle('chat:warmup', async (event): Promise<{ warmed: boolean; reason?: string }> => {
+    if (askAiAvailability() !== true) return { warmed: false, reason: 'disabled' }
     const wasUnavailable = indexPrewarm?.unavailable
     openIndexPage(event?.sender)
     const inspected = await indexPrewarm?.whenInspected()

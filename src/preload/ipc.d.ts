@@ -264,6 +264,7 @@ export interface IpcInvokeEvents {
     scopedMeetingIds?: string[],
     searchAll?: boolean
   ]
+  'chat:availability': []
   'chat:index-status': []
   'chat:inventory-count': []
   'chat:warmup': []
@@ -456,6 +457,7 @@ export interface IpcInvokeReturns {
   'chat:notes-work': Array<{ meetingId: string; title: string }>
   'chat:cancel': void
   'chat:send-stream': void
+  'chat:availability': boolean
   'chat:index-status': AskAiIndexStatus
   'chat:inventory-count': number
   'chat:warmup': { warmed: boolean; reason?: string }
@@ -515,6 +517,7 @@ export interface IpcInvokeReturns {
 }
 
 export interface IpcOnEvents {
+  'chat:availability-changed': [available: boolean]
   'chat:index-status-changed': [status: AskAiIndexStatus]
   'recording:prepare-to-quit': [requestId: string]
   'recording:status-changed': [state: RecordingState]

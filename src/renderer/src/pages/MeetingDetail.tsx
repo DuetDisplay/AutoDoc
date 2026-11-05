@@ -1,4 +1,5 @@
 import { useChatStore } from '../stores/chat'
+import { useAskAiAvailable } from '../stores/ask-ai-availability'
 import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
@@ -301,6 +302,7 @@ function EditableText({
 export function MeetingDetail() {
   const { t, language } = useI18n()
   const { id } = useParams<{ id: string }>()
+  const askAiAvailable = useAskAiAvailable()
   const titleLanguageRef = useRef(language)
   useEffect(() => {
     if (titleLanguageRef.current === language) return
@@ -1594,19 +1596,21 @@ export function MeetingDetail() {
           ))}
         </div>
         <div className="ml-auto flex max-w-full flex-wrap items-start justify-end gap-2 pb-1.5">
-          <button
-            type="button"
-            disabled={!id || !detail}
-            onClick={() => {
-              if (!id || !detail) return
-              useChatStore.getState().startMeetingChat({ meetingId: id, title: detail.title })
-              void window.electronAPI.invoke('chat:new')
-              navigate(ROUTES.askAi)
-            }}
-            className="i18n-btn rounded-lg border border-border bg-bg-card px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
-          >
-            {t('askAi.askMeeting')}
-          </button>
+          {askAiAvailable === true && (
+            <button
+              type="button"
+              disabled={!id || !detail}
+              onClick={() => {
+                if (!id || !detail) return
+                useChatStore.getState().startMeetingChat({ meetingId: id, title: detail.title })
+                void window.electronAPI.invoke('chat:new')
+                navigate(ROUTES.askAi)
+              }}
+              className="i18n-btn rounded-lg border border-border bg-bg-card px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
+            >
+              {t('askAi.askMeeting')}
+            </button>
+          )}
           <MeetingExportMenu
             disabled={notesActionsDisabled}
             disabledReason={notesActionsDisabledReason}

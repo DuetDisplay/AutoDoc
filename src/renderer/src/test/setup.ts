@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom'
+import { resetAskAiAvailabilityForTests } from '../stores/ask-ai-availability'
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -19,3 +20,6 @@ vi.stubGlobal('electronAPI', {
   invoke: vi.fn().mockResolvedValue({}),
   on: vi.fn(() => vi.fn())
 })
+
+// Ask AI is offered unless a test says otherwise; its own tests reset this to null or false.
+beforeEach(() => resetAskAiAvailabilityForTests(true))

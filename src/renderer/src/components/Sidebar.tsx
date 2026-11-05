@@ -8,6 +8,7 @@ import type {
   WhisperSetupStatus
 } from '../../../shared/types'
 import { trackEvent } from '../services/analytics'
+import { useAskAiAvailable } from '../stores/ask-ai-availability'
 import { useT } from '../services/i18n'
 import { AppearanceSwitch } from './AppearanceSwitch'
 import { getOllamaSetupLabel, getWhisperSetupLabel } from '../services/setup-status-labels'
@@ -27,11 +28,12 @@ function WaveformIcon({ className }: { className?: string }) {
 
 export function Sidebar() {
   const t = useT()
+  const askAiAvailable = useAskAiAvailable()
   const navItems = [
     { to: ROUTES.upcoming, label: t('nav.upcoming') },
     { to: ROUTES.recordings, label: t('nav.recordings') },
     { to: ROUTES.search, label: t('nav.search') },
-    { to: ROUTES.askAi, label: t('nav.askAi') }
+    ...(askAiAvailable === true ? [{ to: ROUTES.askAi, label: t('nav.askAi') }] : [])
   ]
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
