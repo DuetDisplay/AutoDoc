@@ -63,7 +63,7 @@ import { LocalProcessingCoordinator } from './services/local-processing-coordina
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
-import { registerChatIpc } from './ipc/chat-ipc'
+import { registerChatIpc, type OllamaRuntime } from './ipc/chat-ipc'
 import { MeetingIndexService } from './services/meeting-index'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import {
@@ -1405,12 +1405,13 @@ app.whenReady().then(async () => {
       managedOllamaManager.maybeRecycleBloatedRunners(meetingId),
     getNotesAccelerator: () => managedOllamaManager.getNotesAccelerator()
   }
-  const ollamaRuntime = {
+  const ollamaRuntime: Required<OllamaRuntime> = {
     beginInteractiveRequest: () => managedOllamaManager.beginInteractiveRequest(),
     waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     getBaseUrl: () => managedOllamaManager.getBaseUrl(),
-    getAskAiModel: () => managedOllamaManager.getAskAiModel()
+    getAskAiModel: () => managedOllamaManager.getAskAiModel(),
+    on: (event, listener) => managedOllamaManager.on(event, listener)
   }
   const segmentationService = new SegmentationService(
     notesOllamaProvider,

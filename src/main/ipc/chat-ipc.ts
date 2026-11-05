@@ -175,7 +175,7 @@ interface FastPlanDecision {
   confidence: 'high' | 'low'
 }
 
-interface OllamaRuntime {
+export interface OllamaRuntime {
   beginInteractiveRequest?(): () => void
   waitUntilReady(): Promise<void>
   isServerRunning(): Promise<boolean>
@@ -409,8 +409,9 @@ export function registerChatIpc(
       const onRanked = (ids: string[]): void => {
         rankedIds = ids
       }
+      // A check during Ollama startup would turn semantic search off for this question.
+      if (!lexicalFallback) await waitForOllama(ollamaManager, params.signal)
       if (unanchoredInitial) {
-        if (!lexicalFallback) await waitForOllama(ollamaManager, params.signal)
         try {
           prefetched = await passageIndex.retrieveConversation(
             params.question,

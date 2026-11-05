@@ -319,6 +319,20 @@ it('warms once after a later incremental index while Ask AI remains open', async
   await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
 })
 
+it('waits for Ollama before retrieving for a question that names a meeting', async () => {
+  state.status.state = 'ready'
+  let ready = (): void => {}
+  state.readiness.mockReturnValue(new Promise<void>((resolve) => (ready = resolve)))
+  const web = sender()
+  await handler('chat:new')({ sender: web } as never)
+  const sent = handler('chat:send-stream')({ sender: web } as never, 'a', 'Who owns Workshop?', [])
+  await vi.waitFor(() => expect(state.readiness).toHaveBeenCalled())
+  expect(state.retrieve).not.toHaveBeenCalled()
+  ready()
+  await sent
+  expect(state.retrieve).toHaveBeenCalled()
+})
+
 it('rechecks embedding availability once the Ollama server becomes ready', async () => {
   const tags = new Response(JSON.stringify({ models: [{ name: DEFAULT_OLLAMA_EMBEDDING_MODEL }] }))
   vi.mocked(fetch).mockReset()
