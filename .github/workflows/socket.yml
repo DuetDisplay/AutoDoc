@@ -16,7 +16,7 @@ on:
       - worker/package.json
       - worker/package-lock.json
   schedule:
-    # 03:00 UTC is 11:00 PM in America/New_York during daylight saving time.
+    # 03:00 UTC is 10 PM EST / 11 PM EDT on the previous day in New York.
     - cron: '0 3 * * *'
   workflow_dispatch:
 
@@ -75,7 +75,12 @@ jobs:
             export GITHUB_EVENT_NAME=push
           fi
 
+          # Match the public repository already tracked by the Socket GitHub app.
           socketcli \
             --target-path "$GITHUB_WORKSPACE" \
+            --repo AutoDoc \
+            --workspace Autodoc-Local \
+            --owner DuetDisplay \
+            --repo-is-public \
             --scm github \
             --pr-number "$PR_NUMBER"
