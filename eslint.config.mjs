@@ -13,7 +13,7 @@ export default defineConfig(
       '**/dist-qa',
       '**/out',
       'vendor/**',
-      // Local app profiles and evidence.
+      // Local app profiles/evidence. Keep authored application and test source under lint.
       'artifacts/**'
     ]
   },
