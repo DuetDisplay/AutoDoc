@@ -4,7 +4,7 @@ import { isDiskFullError } from './disk-full'
 const RUNTIME_MISSING_PATTERN = /speech runtime is missing/i
 const VERIFICATION_PATTERN = /SHA256|unexpected size/i
 const DOWNLOAD_PATTERN =
-  /Failed to download|fetch failed|failed to fetch|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|getaddrinfo|UND_ERR_|socket hang up|network error|offline|timed out|aborted/i
+  /Failed to download|fetch failed|failed to fetch|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|getaddrinfo|UND_ERR_|socket hang up|network error|offline|timed out|aborted|terminated|was incomplete/i
 
 /**
  * Maps a Mac meeting-language setup failure to a small set of causes the UI can

@@ -4,7 +4,6 @@ import { askAiRuntimeDefaults } from './ask-ai-policy'
 import { access, mkdir, chmod, rm, copyFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { createWriteStream } from 'fs'
 import { spawn, execFile, execFileSync, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { totalmem } from 'os'
@@ -28,6 +27,7 @@ import {
   createOllamaModelLoadFailedError,
   isOllamaModelLoadFailureText
 } from './ollama-model-load-failure'
+import { downloadVerifiedFile } from './resumable-download'
 import {
   createDefaultOllamaModelsDirDeps,
   resolveOllamaModelsDir,
@@ -48,6 +48,9 @@ import {
 import { detectWindowsHardwareProfile } from './windows-transcription-runtime'
 
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
+// Published digests for this version; update them together with the version above.
+const OLLAMA_DARWIN_SHA256 = '9f95b794325857d412c1a795db78fbb35aee3567a0b81868917606cdb2d693cb'
+const OLLAMA_WINDOWS_SHA256 = 'c869517b0852372d694c2978564a73b5aa70eaafe96d73aab1783971f7c2f9d2'
 const IS_WIN = process.platform === 'win32'
 
 // QA must never adopt or terminate the production app's managed Ollama process.
@@ -2290,7 +2293,7 @@ export class OllamaManager extends EventEmitter {
     const url = `https://github.com/ollama/ollama/releases/download/${OLLAMA_DOWNLOAD_VERSION}/ollama-windows-amd64.zip`
     const zipPath = join(runtimeDir, 'ollama.zip')
 
-    await this.downloadToFile(url, zipPath)
+    await this.downloadToFile(url, zipPath, OLLAMA_WINDOWS_SHA256)
 
     // Extract using PowerShell's Expand-Archive
     await new Promise<void>((resolve, reject) => {
@@ -2320,7 +2323,7 @@ export class OllamaManager extends EventEmitter {
     const archivePath = join(runtimeDir, archiveName)
     const url = `https://github.com/ollama/ollama/releases/download/${OLLAMA_DOWNLOAD_VERSION}/${archiveName}`
 
-    await this.downloadToFile(url, archivePath)
+    await this.downloadToFile(url, archivePath, OLLAMA_DARWIN_SHA256)
 
     await new Promise<void>((resolve, reject) => {
       execFile('tar', ['xzf', archivePath, '-C', runtimeDir], (err) => {
@@ -2334,39 +2337,12 @@ export class OllamaManager extends EventEmitter {
     await rm(archivePath, { force: true })
   }
 
-  private async downloadToFile(url: string, destPath: string): Promise<void> {
-    const response = await fetch(url, { redirect: 'follow' })
-    if (!response.ok) {
-      throw new Error(`Failed to download Ollama: ${response.status} ${response.statusText}`)
-    }
-
-    const totalBytes = Number(response.headers.get('content-length') ?? 0)
-    let downloadedBytes = 0
-
-    const fileStream = createWriteStream(destPath)
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error('No response body for Ollama download')
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        fileStream.write(value)
-        downloadedBytes += value.length
-        this.emit('download-progress', {
-          file: 'ollama',
-          percent: totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0,
-          bytesDownloaded: downloadedBytes,
-          bytesTotal: totalBytes
-        })
+  private async downloadToFile(url: string, destPath: string, sha256: string): Promise<void> {
+    await downloadVerifiedFile([url], destPath, sha256, 'Ollama', {
+      onBytes: ({ percent, bytesDownloaded, bytesTotal }) => {
+        this.emit('download-progress', { file: 'ollama', percent, bytesDownloaded, bytesTotal })
       }
-    } finally {
-      fileStream.end()
-      await new Promise<void>((resolve, reject) => {
-        fileStream.on('finish', resolve)
-        fileStream.on('error', reject)
-      })
-    }
+    })
   }
 
   private async fileExists(targetPath: string): Promise<boolean> {
