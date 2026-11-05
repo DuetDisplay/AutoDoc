@@ -1,3 +1,4 @@
+import { AskAiQueryTranslator } from '../services/ask-ai-query-translation'
 import { AskAiIndexPrewarm, useAskAiIndexPrewarm } from '../services/ask-ai-index-prewarm'
 import type { AskAiIndexStatus } from '../../shared/ask-ai-index-status'
 import { existsSync } from 'fs'
@@ -231,6 +232,8 @@ export function registerChatIpc(
     meetingIndex?: MeetingIndexService
     canWarmup?: () => boolean | Promise<boolean>
     isProcessing?: () => boolean
+    isCapturing?: () => boolean
+    onCaptureStart?: (listener: () => void) => () => void
     acquireGenerationPriority?: (signal?: AbortSignal) => Promise<(() => void) | undefined>
     getPendingNotesIds?: () => string[]
     getWriterContextTokens?: () => number
@@ -255,8 +258,26 @@ export function registerChatIpc(
   })
   const passageCachePath = join(app.getPath('userData'), 'cache', 'ask-ai-passages.enc')
   const passageEmbeddingProvider = new OllamaEmbeddingProvider(ollamaManager.getBaseUrl())
+  let warmedWriter: { model: string; numCtx: number } | null = null
+  const translator = new AskAiQueryTranslator({
+    baseUrl: () => ollamaManager.getBaseUrl(),
+    model: writerModel,
+    numCtx: () => appendWriterContexts(writerContextTokens()).numCtx,
+    canInfer: () => !(options.isProcessing?.() ?? false) && !(options.isCapturing?.() ?? false),
+    isReady: () =>
+      Boolean(
+        warmedWriter &&
+        warmedWriter.model === writerModel() &&
+        warmedWriter.numCtx === appendWriterContexts(writerContextTokens()).numCtx
+      ),
+    waitReady: (signal) => waitForOllama(ollamaManager, signal)
+  })
+  const unsubscribeCapture = options.onCaptureStart?.(() => translator.cancelActive())
   const passageIndex = useAskAiPassages()
-    ? new AskAiPassages(passageEmbeddingProvider, passageCachePath)
+    ? new AskAiPassages(passageEmbeddingProvider, passageCachePath, {
+        translateQuery: (question, targets, signal) =>
+          translator.translate(question, targets, signal)
+      })
     : null
   const openSenders = new Map<number, WebContents>()
   const observedSenders = new WeakSet<WebContents>()
@@ -1461,22 +1482,25 @@ export function registerChatIpc(
       if (options.canWarmup && !(await options.canWarmup()))
         return { warmed: false, reason: 'busy' }
       return await withAskAiWriterLoadFallback(writerContextTokens(), async () => {
+        const model = writerModel(),
+          numCtx = appendWriterContexts(writerContextTokens()).numCtx
         const res = await fetch(`${ollamaManager.getBaseUrl()}/api/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: writerModel(),
+            model,
             prompt: ' ',
             stream: false,
             keep_alive: CHAT_OLLAMA_KEEP_ALIVE,
             options: {
               num_predict: 1,
               temperature: 0,
-              num_ctx: appendWriterContexts(writerContextTokens()).numCtx
+              num_ctx: numCtx
             }
           })
         })
         if (!res.ok) throw new Error(`Ollama returned ${res.status}: ${await res.text()}`)
+        warmedWriter = { model, numCtx }
         return { warmed: true }
       })
     } catch {
@@ -1866,6 +1890,8 @@ export function registerChatIpc(
       indexPrewarm?.stop()
       openSenders.clear()
       conversationHolds.shutdown()
+      translator.cancelActive()
+      unsubscribeCapture?.()
     },
     { indexChanged, getIndexStatus: () => indexPrewarm?.snapshot() ?? idleStatus() }
   )

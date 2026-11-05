@@ -107,3 +107,19 @@ describe('RecordingService', () => {
     expect(() => service.stopRecording()).toThrow('Not recording')
   })
 })
+
+it('notifies translation cancellation synchronously when capture admission closes, and unsubscribes', async () => {
+  const service = new RecordingService()
+  const listener = vi.fn(() => {
+    expect(service.hasActiveCapture()).toBe(true)
+    expect(service.getState().isRecording).toBe(false)
+  })
+  const unsubscribe = service.onCaptureStart(listener)
+  const starting = service.startRecording('synthetic-source', 'Synthetic recording')
+  expect(listener).toHaveBeenCalledTimes(1)
+  await starting
+  service.stopRecording()
+  unsubscribe()
+  await service.startRecording('synthetic-source', 'Synthetic second recording')
+  expect(listener).toHaveBeenCalledTimes(1)
+})

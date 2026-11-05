@@ -1,3 +1,10 @@
+import { askAiTranslationTargets, type AskAiQueryTranslation } from './ask-ai-query-translation'
+import {
+  normalizeDuplicateEvidence,
+  reserveAskAiTopMatch,
+  useAskAiTopMatch,
+  useAskAiQueryTranslation
+} from './ask-ai-top-match'
 import { createHash } from 'crypto'
 import { useAskAiAppendFollowups } from './ask-ai-writer-session'
 import { mkdir, stat } from 'fs/promises'
@@ -108,7 +115,14 @@ export class AskAiPassages {
   private version: string
   constructor(
     private provider: ChatEmbeddingProvider,
-    private cachePath: string
+    private cachePath: string,
+    private options: {
+      translateQuery?: (
+        question: string,
+        targets: string[],
+        signal?: AbortSignal
+      ) => Promise<AskAiQueryTranslation[]>
+    } = {}
   ) {
     this.version = `passages-v2:${provider.model}:writer180-overlap40:dim${process.env.AUTODOC_ASK_AI_VECTOR_DIM || 'full'}`
   }
@@ -551,6 +565,25 @@ export class AskAiPassages {
       }
     }
     signal?.throwIfAborted()
+    const translated: Array<{ language: string; text: string; vector: number[] }> = []
+    if (vectors.length && useAskAiQueryTranslation() && canInfer() && this.options.translateQuery) {
+      const targets = askAiTranslationTargets(question, history, scoped)
+      if (targets.length) {
+        const queries = await this.options.translateQuery(question, targets, signal)
+        if (queries.length && canInfer()) {
+          try {
+            const raw = await this.provider.embed(
+              queries.map((query) => this.textInput(query.text, true))
+            )
+            const rows = queries.map((query, i) => ({ ...query, vector: this.normalize(raw[i]) }))
+            translated.push(...rows)
+          } catch {
+            /* Translation is optional; original retrieval remains usable. */
+          }
+        }
+      }
+    }
+    signal?.throwIfAborted()
     const cosine = (passage: Passage, vector?: number[]): number => {
       const stored = this.vectors.get(passage.key)
       return vector && stored?.length === vector.length
@@ -584,6 +617,37 @@ export class AskAiPassages {
         if (score <= 0) return
         ranked.set(p.key, { p, score: (ranked.get(p.key)?.score ?? 0) + weight / (12 + i) })
       })
+    const translatedKeys = new Set<string>()
+    const translatedTop: Passage[] = []
+    const originalBest = translated.length
+      ? Math.max(...passages.map((p) => cosine(p, vectors[0])))
+      : 0
+    for (const query of translated) {
+      const words = [...new Set(unicodeContentTokens(query.text, 2))]
+      const pool = passages.filter(
+        (p) =>
+          scoped.find((meeting) => meeting.meetingId === p.meetingId)?.meetingLanguage ===
+          query.language
+      )
+      const list = pool
+        .map((p) => ({
+          p,
+          similarity: cosine(p, query.vector),
+          score: lexical(`${p.title} ${p.text}`, words) + Math.max(0, cosine(p, query.vector)) * 4
+        }))
+        .sort((a, b) => b.score - a.score)
+      for (const [i, { p, similarity, score }] of list.entries()) {
+        if (similarity < originalBest - 0.07 || score <= 0) continue
+        translatedKeys.add(p.key)
+        ranked.set(p.key, { p, score: (ranked.get(p.key)?.score ?? 0) + 1.25 / (12 + i) })
+      }
+      const best = pool
+        .filter((p) => cosine(p, query.vector) >= originalBest - 0.07)
+        .reduce<
+          Passage | undefined
+        >((top, p) => (!top || cosine(p, query.vector) > cosine(top, query.vector) ? p : top), undefined)
+      if (best) translatedTop.push(best)
+    }
     const meetingScores = new Map<string, number>()
     for (const p of passages)
       meetingScores.set(
@@ -673,6 +737,8 @@ export class AskAiPassages {
       }
     }
     if (broad) for (const { p } of ranked.values()) eligible.add(p.meetingId)
+    const originalEligible = new Set(eligible)
+    for (const { p } of ranked.values()) if (translatedKeys.has(p.key)) eligible.add(p.meetingId)
     const ordered = [...ranked.values()].sort((a, b) => b.score - a.score)
     // Experiment only: preserve the normal cap unless explicitly requested.
     const maxPassages = process.env.AUTODOC_ASK_AI_MAX_PASSAGES === '12' ? 12 : 8
@@ -709,7 +775,7 @@ export class AskAiPassages {
         }
     }
     for (const { p } of ordered) {
-      if (eligible.has(p.meetingId)) add(p)
+      if (originalEligible.has(p.meetingId) || translatedKeys.has(p.key)) add(p)
       if (picked.length >= maxPassages) break
     }
     const primaryMeetingIds = named.size
@@ -718,6 +784,29 @@ export class AskAiPassages {
           ordered.find(({ p }) => picked.some((chosen) => chosen.key === p.key))?.p.meetingId ??
             picked[0]?.meetingId
         ].filter((id): id is string => Boolean(id))
+    if (useAskAiTopMatch() && vectors.length) {
+      const best = passages.reduce((top, p) =>
+        cosine(p, vectors[0]) > cosine(top, vectors[0]) ? p : top
+      )
+      const reserved = new Set<string>()
+      const reservation = { named: named.size > 0, eligible, carried, counts, reserved }
+      reserveAskAiTopMatch(picked, best, reservation)
+      // At most one translated reservation across all target languages.
+      const bestTranslated = translatedTop.reduce<Passage | undefined>((top, p) => {
+        const score = (candidate: Passage): number =>
+          Math.max(
+            ...translated
+              .filter(
+                (query) =>
+                  scoped.find((meeting) => meeting.meetingId === candidate.meetingId)
+                    ?.meetingLanguage === query.language
+              )
+              .map((query) => cosine(candidate, query.vector))
+          )
+        return !top || score(p) > score(top) ? p : top
+      }, undefined)
+      reserveAskAiTopMatch(picked, bestTranslated, reservation)
+    }
     if (!picked.length) return null
     // Pick order is relevance order; the sort below is for stable writer input only, and the
     // returned object stays byte-identical, so the ranking is reported through a callback.
@@ -929,11 +1018,4 @@ export class AskAiPassages {
       selectedTitles: [...new Set(picked.map((p) => p.title))]
     }
   }
-}
-
-function normalizeDuplicateEvidence(text: string): string {
-  return text
-    .replace(/^Overview\s*·\s*/iu, '')
-    .replace(/^(?:me|them|speaker\s*\d+)\s*:\s*/iu, '')
-    .trim()
 }

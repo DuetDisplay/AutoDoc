@@ -2349,6 +2349,8 @@ app.whenReady().then(async () => {
       meetingIndex,
       getWriterContextTokens: () => notesOllamaProvider.getGenerationContextTokens(),
       getPendingNotesIds: () => segmentationService.getPendingMeetingIds(),
+      isCapturing: () => recordingService.hasActiveCapture(),
+      onCaptureStart: (listener) => recordingService.onCaptureStart(listener),
       isProcessing: () =>
         transcriptionService.hasActiveOrQueuedWork() ||
         (segmentationService.hasActiveOrQueuedWork() &&
