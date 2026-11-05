@@ -30,6 +30,7 @@ function createFakeProcess(pid: number): EventEmitter & {
   stderr: EventEmitter
   exitCode: number | null
   signalCode: NodeJS.Signals | null
+  holdClose: boolean
   kill: Mock
 } {
   const stderr = new EventEmitter()
@@ -38,12 +39,21 @@ function createFakeProcess(pid: number): EventEmitter & {
     stderr: EventEmitter
     exitCode: number | null
     signalCode: NodeJS.Signals | null
+    holdClose: boolean
     kill: Mock
   }
   proc.pid = pid
   proc.stderr = stderr
   proc.exitCode = null
   proc.signalCode = null
+  // Like a real child, 'close' follows 'exit' once stdio drains, unless a test holds it open.
+  proc.holdClose = false
+  const emit = proc.emit.bind(proc)
+  proc.emit = (event: string | symbol, ...args: unknown[]): boolean => {
+    const handled = emit(event, ...args)
+    if (event === 'exit' && !proc.holdClose) emit('close', ...args)
+    return handled
+  }
   proc.kill = vi.fn(() => {
     proc.exitCode = 1
     proc.emit('exit', 1, null)
@@ -682,6 +692,203 @@ describe('OllamaManager start lifecycle', () => {
       } finally {
         await rm(rootDir, { recursive: true, force: true })
       }
+    })
+
+    describe('an unexpected exit of a ready serve', () => {
+      function failureReports(loaded: LoadedOllamaManager) {
+        return loaded.logAutodocFailure.mock.calls
+          .map((call) => call[0])
+          .filter((report) => report?.message === 'ollama server process exited')
+      }
+
+      it.each([
+        ['exit code 1', 1, null],
+        ['exit code 0', 0, null],
+        ['a signal', null, 'SIGTERM']
+      ] as const)('asks for recovery after %s', async (_label, code, signal) => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+
+          serveProc.emit('exit', code, signal)
+
+          expect(onUnexpectedExit).toHaveBeenCalledTimes(1)
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('does not ask for recovery after a stop the app requested', async () => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+          vi.spyOn(manager as never, 'killProcessByPid').mockResolvedValue(undefined as never)
+
+          manager.stop()
+          serveProc.emit('exit', 1, null)
+
+          expect(onUnexpectedExit).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('does not ask for recovery after a kill the app marked as its own', async () => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+          ;(
+            manager as unknown as { markIntentionalKill: (p: unknown, r: string) => void }
+          ).markIntentionalKill(serveProc, 'recover-unhealthy-runtime')
+
+          serveProc.emit('exit', 1, null)
+
+          expect(onUnexpectedExit).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('does not ask for recovery when the model failed to load', async () => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+          serveProc.stderr.emit(
+            'data',
+            Buffer.from('llama_model_loader: failed to load model from models\\x.gguf\n')
+          )
+
+          serveProc.emit('exit', 1, null)
+
+          expect(onUnexpectedExit).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('includes stderr that arrives after exit in the single report', async () => {
+        const { loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          serveProc.holdClose = true
+          serveProc.emit('exit', 1, null)
+          serveProc.stderr.emit('data', Buffer.from('Error: listen tcp: bind failed\n'))
+          serveProc.emit('close', 1, null)
+          await vi.advanceTimersByTimeAsync(2_000)
+
+          const reports = failureReports(loaded)
+          expect(reports).toHaveLength(1)
+          expect(reports[0].context.stderrTail).toContain('bind failed')
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('reports after a short wait when stderr never closes', async () => {
+        const { loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          serveProc.holdClose = true
+          serveProc.emit('exit', 1, null)
+          expect(failureReports(loaded)).toHaveLength(0)
+
+          await vi.advanceTimersByTimeAsync(1_500)
+          expect(failureReports(loaded)).toHaveLength(1)
+
+          serveProc.emit('close', 1, null)
+          expect(failureReports(loaded)).toHaveLength(1)
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it.each([
+        ['exit code 0', 0, null],
+        ['a signal', null, 'SIGTERM']
+      ] as const)(
+        'reports %s once per session and still logs later ones',
+        async (_l, code, sig) => {
+          const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+          try {
+            const onUnexpectedExit = vi.fn()
+            manager.on('unexpected-exit', onUnexpectedExit)
+            serveProc.emit('exit', code, sig)
+            expect(failureReports(loaded)).toHaveLength(1)
+            expect(failureReports(loaded)[0].fingerprint).toEqual([
+              'ollama-server-exited',
+              code !== null ? String(code) : `signal-${sig}`
+            ])
+
+            const replacement = createFakeProcess(5252)
+            loaded.spawnMock.mockReturnValue(replacement)
+            const restarted = manager.start()
+            await vi.advanceTimersByTimeAsync(1_000)
+            replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+            await restarted
+            loaded.logAutodocEvent.mockClear()
+
+            replacement.emit('exit', code, sig)
+
+            expect(failureReports(loaded)).toHaveLength(1)
+            expect(onUnexpectedExit).toHaveBeenCalledTimes(2)
+            expect(loaded.logAutodocEvent).toHaveBeenCalledWith(
+              expect.objectContaining({ message: 'ollama server process exited', level: 'warn' })
+            )
+          } finally {
+            await rm(rootDir, { recursive: true, force: true })
+          }
+        }
+      )
+    })
+
+    describe('the Vulkan fallback during recovery', () => {
+      function useVulkan(manager: InstanceType<LoadedOllamaManager['OllamaManager']>) {
+        ;(manager as unknown as { acceleratorDecision: unknown }).acceleratorDecision = {
+          accelerator: 'vulkan',
+          env: {}
+        }
+        return vi.spyOn(manager, 'latchCpuAccelerator')
+      }
+
+      it('keeps Vulkan when the serve is already dead', async () => {
+        const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          const latch = useVulkan(manager)
+          serveProc.emit('exit', 1, null)
+          const replacement = createFakeProcess(5252)
+          loaded.spawnMock.mockReturnValue(replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(2_000)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(latch).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('still falls back to CPU when the serve is alive but unhealthy', async () => {
+        const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          await vi.advanceTimersByTimeAsync(61_000)
+          const latch = useVulkan(manager)
+          const replacement = createFakeProcess(5252)
+          replaceServeOnKill(loaded, serveProc, replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(2_000)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(latch).toHaveBeenCalledTimes(1)
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
     })
 
     it('stops reporting a starting serve once the process has exited', async () => {

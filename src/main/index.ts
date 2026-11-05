@@ -142,6 +142,7 @@ import {
   isOllamaPostWakeSchedulerActive,
   runOllamaWakeCheck
 } from './services/ollama-post-wake'
+import { createOllamaBackgroundRecovery } from './services/ollama-background-recovery'
 import { markOllamaResumed } from './services/ollama-resume'
 import {
   areBackgroundOllamaRestartsPaused,
@@ -1139,6 +1140,7 @@ app.whenReady().then(async () => {
   // Set while the notes model is known not to load; the status stays failed until the
   // user retries, instead of reporting ready just because the serve answers.
   let ollamaModelLoadLatched = false
+  let ollamaHasBeenReady = false
 
   const markOllamaSetupReady = (): void => {
     if (ollamaModelLoadLatched) {
@@ -1151,6 +1153,7 @@ app.whenReady().then(async () => {
       }
       return
     }
+    ollamaHasBeenReady = true
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
@@ -1195,7 +1198,14 @@ app.whenReady().then(async () => {
     process.platform === 'win32'
       ? new OllamaSetupCoordinator(managedOllamaManager, {
           retryDelaysMs: WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS,
-          onAttemptStart: markOllamaSetupStarting,
+          onAttemptStart: (attempt) => {
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama setup attempt started',
+              context: { attempt }
+            })
+            markOllamaSetupStarting()
+          },
           onFinalError: markOllamaSetupFailed,
           isCancellationError: isOllamaStartCancelledError
         })
@@ -1211,6 +1221,7 @@ app.whenReady().then(async () => {
   ): Promise<void> => {
     if (options.userInitiated) {
       ollamaRuntimeRecovery.clearModelLoadLatch()
+      ollamaBackgroundRecovery.resetBudget()
     }
     if (windowsOllamaSetupCoordinator) {
       return windowsOllamaSetupCoordinator.ensureRunning(options).then(() => {
@@ -1357,20 +1368,21 @@ app.whenReady().then(async () => {
       throw error
     }
   }
+  const isOllamaLifecycleEpochCurrent = (epoch: number): boolean => {
+    try {
+      managedOllamaManager.assertLifecycleEpoch(epoch)
+      return true
+    } catch {
+      return false
+    }
+  }
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     isServeStarting: () => managedOllamaManager.isServeStarting(),
     waitForStartingServe: () => managedOllamaManager.waitForStartingServe(),
     captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
-    isEpochCurrent: (epoch) => {
-      try {
-        managedOllamaManager.assertLifecycleEpoch(epoch)
-        return true
-      } catch {
-        return false
-      }
-    },
+    isEpochCurrent: isOllamaLifecycleEpochCurrent,
     isPaused: postWakePolicy.pauseEnabled ? areBackgroundOllamaRestartsPaused : undefined,
     delayMs: postWakePolicy.delayMs,
     retryDelaysMs: postWakePolicy.retryDelaysMs,
@@ -1382,6 +1394,20 @@ app.whenReady().then(async () => {
     if (isQuitting) return
     ollamaPostWakeScheduler?.scheduleAfterWake()
   }
+  const shouldDeferOllamaRestart = (): boolean =>
+    isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||
+    (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused())
+  const ollamaBackgroundRecovery = createOllamaBackgroundRecovery({
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
+    isStarting: () =>
+      managedOllamaManager.isServeStarting() ||
+      (windowsOllamaSetupCoordinator?.isSetupInFlight() ?? ollamaRecoveryPromise !== null),
+    captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
+    isEpochCurrent: isOllamaLifecycleEpochCurrent,
+    shouldDefer: () => isQuitting || ollamaModelLoadLatched || shouldDeferOllamaRestart(),
+    start: () => startOllama({ force: true })
+  })
+  managedOllamaManager.on('unexpected-exit', () => ollamaBackgroundRecovery.scheduleAfterExit())
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
     ...(process.platform === 'win32'
@@ -2290,7 +2316,14 @@ app.whenReady().then(async () => {
     managedOllamaManager,
     ollamaProvider,
     () => ({ ...ollamaSetupState }),
-    ensureOllamaRunning,
+    (options) => {
+      // First-run setup keeps retrying freely; a server that was ready shares the restart budget.
+      if (options?.force && !options.userInitiated && ollamaHasBeenReady) {
+        ollamaBackgroundRecovery.requestFromPoll()
+      } else {
+        ensureOllamaRunning(options)
+      }
+    },
     !windowsOllamaSetupCoordinator,
     (meetingId) => {
       clearDiskFullHold(meetingId)
@@ -2299,9 +2332,7 @@ app.whenReady().then(async () => {
       markReprocessNotificationPending(meetingId)
     },
     recordingService.getRecordingsBaseDir(),
-    () =>
-      isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||
-      (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused())
+    shouldDeferOllamaRestart
   )
   let preparedMeetingLanguage = 'en'
   // A failed preparation must read as an error, not as "checking", so the

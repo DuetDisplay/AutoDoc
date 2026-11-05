@@ -298,6 +298,7 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
 // runner costs one model reload (~5-10s) and restores full speed, which pays for
 // itself within the next chunk once decode has degraded.
 export const EARLY_EXIT_AFTER_READY_MS = 60_000
+const EXIT_REPORT_WAIT_MS = 1_500
 
 // A freshly started Ollama 0.30 serve prints "Listening on" and then spends
 // ~10 s (longer on slow GPUs or right after wake) discovering GPUs. /api/tags
@@ -370,6 +371,7 @@ export class OllamaManager extends EventEmitter {
   private recoveryPromise: Promise<void> | null = null
   private resolvedModelsDir: { originalDir: string; promise: Promise<string> } | null = null
   private modelLoadFailureCount = 0
+  private reportedQuietExit = false
   private startEpoch = 0
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
@@ -588,7 +590,12 @@ export class OllamaManager extends EventEmitter {
       this.assertStartEpoch(epoch)
       if (started) return
     }
-    if (this.acceleratorDecision?.accelerator === 'vulkan') {
+    // An already-dead serve may have been killed from outside, which says nothing about the GPU.
+    if (
+      this.acceleratorDecision?.accelerator === 'vulkan' &&
+      this.process &&
+      this.isCurrentLiveChild(this.process)
+    ) {
       this.latchCpuAccelerator('vulkan runner died; latched CPU for process lifetime')
     }
 
@@ -1590,40 +1597,61 @@ export class OllamaManager extends EventEmitter {
           msSinceReady,
           ...(modelLoadFailed ? { modelLoadFailure: true } : {})
         }
-        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
         // Group exits by code in one Sentry issue, apart from ffmpeg and model-extract failures.
         const exitFingerprint = [
           'ollama-server-exited',
           code !== null ? String(code) : `signal-${signal}`
         ]
-        if (intentionalKillReason != null) {
-          // The app killed this serve itself (Windows taskkill always exits with code 1), so it
-          // is not a crash and must not reach the AUTODOC-8 failure stream.
-          logAutodocEvent({
-            area: 'ollama',
-            message: 'ollama server process stopped by app',
-            context: { ...exitContext, reason: intentionalKillReason }
-          })
-        } else if (code !== null && code !== 0) {
-          logAutodocFailure({
-            area: 'ollama',
-            message: 'ollama server process exited',
-            error: new Error(`Ollama exited with code ${code}`),
-            context: {
-              ...exitContext,
-              stderrTail: sanitizedStderrTail || null
-            },
-            fingerprint: exitFingerprint
-          })
-        } else {
-          logAutodocEvent({
-            area: 'ollama',
-            message: 'ollama server process exited',
-            level: 'warn',
-            context: exitContext
-          })
+        const isUnexpectedExit =
+          wasReadyProc && intentionalKillReason == null && !this.stopped && !modelLoadFailed
+        const reportExit = (): void => {
+          if (reportTimer === null) return
+          clearTimeout(reportTimer)
+          reportTimer = null
+          if (intentionalKillReason != null) {
+            // The app killed this serve itself (Windows taskkill always exits with code 1), so it
+            // is not a crash and must not reach the AUTODOC-8 failure stream.
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama server process stopped by app',
+              context: { ...exitContext, reason: intentionalKillReason }
+            })
+          } else if (
+            (code !== null && code !== 0) ||
+            (isUnexpectedExit && !this.reportedQuietExit)
+          ) {
+            if (code === null || code === 0) this.reportedQuietExit = true
+            logAutodocFailure({
+              area: 'ollama',
+              message: 'ollama server process exited',
+              error: new Error(
+                code !== null ? `Ollama exited with code ${code}` : `Ollama exited on ${signal}`
+              ),
+              context: {
+                ...exitContext,
+                stderrTail: sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim() || null
+              },
+              fingerprint: exitFingerprint
+            })
+          } else {
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama server process exited',
+              level: 'warn',
+              context: exitContext
+            })
+          }
         }
+        // The final stderr lines can arrive after 'exit'. A surviving runner can hold the stream
+        // open, so 'close' may never come; recovery below does not wait for this report.
+        let reportTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+          reportExit,
+          EXIT_REPORT_WAIT_MS
+        )
+        reportTimer.unref?.()
+        proc.once('close', reportExit)
+        if (isUnexpectedExit) this.emit('unexpected-exit')
         if (!settled) {
           finish(() => {
             const message = `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
