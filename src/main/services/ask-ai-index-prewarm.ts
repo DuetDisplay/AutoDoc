@@ -1,7 +1,7 @@
 import type { AskAiIndexStatus } from '../../shared/ask-ai-index-status'
 import { logAutodocEvent } from './autodoc-log'
 
-export const useAskAiIndexPrewarm = (): boolean => process.env.AUTODOC_ASK_AI_INDEX_PREWARM === '1'
+export const useAskAiIndexPrewarm = (): boolean => process.env.AUTODOC_ASK_AI_INDEX_PREWARM !== '0'
 
 /** A single foreground-sized batch is too small to warrant a preparation notice. */
 const NOTICE_PASSAGES = 16

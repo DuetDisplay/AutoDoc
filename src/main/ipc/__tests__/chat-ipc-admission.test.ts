@@ -7,7 +7,10 @@ import { ipcMain } from 'electron'
 import { ChatRecordingIndex } from '../../services/chat-retrieval'
 import { registerChatIpc } from '../chat-ipc'
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.stubEnv('AUTODOC_ASK_AI_INDEX_PREWARM', '0')
+})
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllEnvs()

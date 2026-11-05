@@ -28,6 +28,7 @@ async function warmup(
   hardware.qualifies = qualifies
   const { registerChatIpc } = await import('../chat-ipc')
   vi.clearAllMocks()
+  vi.stubEnv('AUTODOC_ASK_AI_INDEX_PREWARM', '0')
   vi.stubEnv('AUTODOC_ASK_AI_APPEND_FOLLOWUPS', append)
   vi.stubEnv('AUTODOC_ASK_AI_APPEND_NUM_CTX', context)
   const requests: any[] = []

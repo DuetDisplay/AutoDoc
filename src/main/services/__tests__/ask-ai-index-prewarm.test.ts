@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { AskAiIndexPrewarm } from '../ask-ai-index-prewarm'
+import { AskAiIndexPrewarm, useAskAiIndexPrewarm } from '../ask-ai-index-prewarm'
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllEnvs()
+})
 
 it('bounds a stalled inspection to two seconds and cancels the request wait promptly', async () => {
   vi.useFakeTimers()
@@ -258,4 +261,13 @@ it('keeps definitive embedding unavailability hidden while notes block backgroun
   } finally {
     scheduler.stop()
   }
+})
+
+it('prewarms by default on every platform and only an explicit 0 turns it off', () => {
+  vi.stubEnv('AUTODOC_ASK_AI_INDEX_PREWARM', undefined)
+  expect(useAskAiIndexPrewarm()).toBe(true)
+  vi.stubEnv('AUTODOC_ASK_AI_INDEX_PREWARM', '1')
+  expect(useAskAiIndexPrewarm()).toBe(true)
+  vi.stubEnv('AUTODOC_ASK_AI_INDEX_PREWARM', '0')
+  expect(useAskAiIndexPrewarm()).toBe(false)
 })

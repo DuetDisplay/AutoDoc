@@ -58,6 +58,7 @@ const disposers: Array<() => void> = []
 const directories: string[] = []
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubEnv('AUTODOC_ASK_AI_INDEX_PREWARM', '0')
   vi.stubEnv('AUTODOC_ASK_AI_CONVERSATION', '1')
   vi.stubEnv('AUTODOC_ASK_AI_WRITER_MODEL', undefined)
 })
