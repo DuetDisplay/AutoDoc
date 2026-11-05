@@ -14,7 +14,9 @@ const state = vi.hoisted(() => ({
   retrieve: vi.fn(),
   admissions: [] as boolean[],
   inspection: vi.fn(),
-  readiness: vi.fn()
+  readiness: vi.fn(),
+  provider: null as null | { isAvailable(): Promise<boolean> },
+  onReady: null as null | (() => void)
 }))
 vi.mock('electron', () => ({
   app: { getPath: () => '/unused/unit-profile' },
@@ -57,6 +59,9 @@ vi.mock('../../services/ask-ai-index-prewarm', async (original) => ({
 }))
 vi.mock('../../services/ask-ai-passages', () => ({
   AskAiPassages: class {
+    constructor(provider: NonNullable<typeof state.provider>) {
+      state.provider = provider
+    }
     prepare = state.prepare
     retrieveConversation = state.retrieve
     inspect() {
@@ -119,7 +124,10 @@ function register() {
       getAskAiModel: () => 'unit-model',
       getBaseUrl: () => 'http://localhost:11434',
       waitUntilReady: state.readiness,
-      isServerRunning: async () => true
+      isServerRunning: async () => true,
+      on: (_event, listener) => {
+        state.onReady = listener
+      }
     },
     { getModel: () => 'decoy' } as never,
     {
@@ -309,4 +317,16 @@ it('warms once after a later incremental index while Ask AI remains open', async
   state.options!.onIdle()
   state.options!.onIdle()
   await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+})
+
+it('rechecks embedding availability once the Ollama server becomes ready', async () => {
+  const tags = new Response(JSON.stringify({ models: [{ name: DEFAULT_OLLAMA_EMBEDDING_MODEL }] }))
+  vi.mocked(fetch).mockReset()
+  vi.mocked(fetch).mockRejectedValueOnce(new Error('connection refused')).mockResolvedValue(tags)
+  expect(await state.provider!.isAvailable()).toBe(false)
+  expect(await state.provider!.isAvailable()).toBe(false)
+  expect(fetch).toHaveBeenCalledTimes(1)
+  state.onReady!()
+  expect(await state.provider!.isAvailable()).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(2)
 })

@@ -181,6 +181,7 @@ interface OllamaRuntime {
   isServerRunning(): Promise<boolean>
   getBaseUrl(): string
   getAskAiModel(): string
+  on?(event: 'server-ready', listener: () => void): unknown
 }
 
 interface ChatStreamPayload {
@@ -255,6 +256,8 @@ export function registerChatIpc(
   })
   const passageCachePath = join(app.getPath('userData'), 'cache', 'ask-ai-passages.enc')
   const passageEmbeddingProvider = new OllamaEmbeddingProvider(ollamaManager.getBaseUrl())
+  // A cached 'unreachable' from before startup must not outlive the outage.
+  ollamaManager.on?.('server-ready', () => passageEmbeddingProvider.invalidateAvailability())
   const passageIndex = useAskAiPassages()
     ? new AskAiPassages(passageEmbeddingProvider, passageCachePath)
     : null

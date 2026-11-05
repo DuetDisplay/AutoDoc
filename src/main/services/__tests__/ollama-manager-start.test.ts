@@ -491,6 +491,30 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 
+  it('emits server-ready before start() resolves', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-server-ready-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      mockServeOrTaskkill(spawnMock, () => serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      const order: string[] = []
+      manager.on('server-ready', () => order.push('event'))
+
+      vi.useFakeTimers()
+      const started = manager.start().then(() => order.push('resolved'))
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      expect(order).toEqual(['event', 'resolved'])
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('fingerprints an Ollama exit before ready so it does not group with ffmpeg failures', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-exit-fingerprint-'))
     try {
