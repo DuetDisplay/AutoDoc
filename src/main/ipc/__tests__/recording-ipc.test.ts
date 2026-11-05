@@ -489,50 +489,54 @@ describe('recording IPC source handling', () => {
     }
   })
 
-  it('releases the stop handoff once after enqueue, including an enqueue failure', async () => {
-    for (const fail of [false, true]) {
-      const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-handoff-ipc-'))
-      const meetingId = 'synthetic-handoff'
-      await fsp.mkdir(path.join(base, meetingId))
-      const order: string[] = []
-      const release = vi.fn(() => {
-        order.push('release')
-      })
-      const enqueue = vi.fn(() => {
-        order.push('enqueue')
-        if (fail) throw Error('Synthetic enqueue failure')
-      })
-      const recording = {
-        completeProcessingHandoff: release,
-        stopRecording: vi.fn(() => ({
-          meetingId,
-          startedAt: Date.now() - 10000,
-          sourceId: null,
-          sourceName: 'Synthetic',
-          meetingIntent: 'general'
-        })),
-        getState: () => ({ isRecording: false }),
-        getRecordingsBaseDir: () => base
-      }
-      try {
-        const ipc = registerRecordingIpc(
-          recording as any,
-          { enqueue } as any,
-          { ensureFfmpeg: async () => {}, getFfmpegPath: () => '/mock/ffmpeg' } as any,
-          { isConnected: () => false } as any
-        )
-        ipc.stopActiveRecording()
-        expect(recording.stopRecording).toHaveBeenCalledWith(true)
-        expect(release).not.toHaveBeenCalled()
-        await vi.waitFor(() => expect(release).toHaveBeenCalled())
-        await vi.waitFor(() => expect(ipc.hasPostProcessingWork()).toBe(false))
-        expect(release).toHaveBeenCalledTimes(1)
-        expect(order).toEqual(['enqueue', 'release'])
-      } finally {
-        await fsp.rm(base, { recursive: true, force: true })
+  // Windows waits for recording:finalize-stop instead, and has its own suite below.
+  it.skipIf(process.platform === 'win32')(
+    'releases the stop handoff once after enqueue, including an enqueue failure',
+    async () => {
+      for (const fail of [false, true]) {
+        const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-handoff-ipc-'))
+        const meetingId = 'synthetic-handoff'
+        await fsp.mkdir(path.join(base, meetingId))
+        const order: string[] = []
+        const release = vi.fn(() => {
+          order.push('release')
+        })
+        const enqueue = vi.fn(() => {
+          order.push('enqueue')
+          if (fail) throw Error('Synthetic enqueue failure')
+        })
+        const recording = {
+          completeProcessingHandoff: release,
+          stopRecording: vi.fn(() => ({
+            meetingId,
+            startedAt: Date.now() - 10000,
+            sourceId: null,
+            sourceName: 'Synthetic',
+            meetingIntent: 'general'
+          })),
+          getState: () => ({ isRecording: false }),
+          getRecordingsBaseDir: () => base
+        }
+        try {
+          const ipc = registerRecordingIpc(
+            recording as any,
+            { enqueue } as any,
+            { ensureFfmpeg: async () => {}, getFfmpegPath: () => '/mock/ffmpeg' } as any,
+            { isConnected: () => false } as any
+          )
+          ipc.stopActiveRecording()
+          expect(recording.stopRecording).toHaveBeenCalledWith(true)
+          expect(release).not.toHaveBeenCalled()
+          await vi.waitFor(() => expect(release).toHaveBeenCalled())
+          await vi.waitFor(() => expect(ipc.hasPostProcessingWork()).toBe(false))
+          expect(release).toHaveBeenCalledTimes(1)
+          expect(order).toEqual(['enqueue', 'release'])
+        } finally {
+          await fsp.rm(base, { recursive: true, force: true })
+        }
       }
     }
-  })
+  )
 
   it('does not rename existing source-titled recordings from newly linked calendar matches', async () => {
     const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
