@@ -1,3 +1,5 @@
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AskAiPassages } from '../ask-ai-passages'
 import { reserveAskAiTopMatch, useAskAiTopMatch } from '../ask-ai-top-match'
@@ -122,7 +124,10 @@ function fixture() {
       )
     )
   }
-  return { meetings, index: new AskAiPassages(provider, '/unused') }
+  return {
+    meetings,
+    index: new AskAiPassages(provider, join(tmpdir(), 'autodoc-top-match-test', 'passages.enc'))
+  }
 }
 it('wires reservation after normal selection without changing confidence, primary IDs or flag-off result bytes', async () => {
   const { meetings, index } = fixture()
