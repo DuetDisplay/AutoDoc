@@ -198,6 +198,7 @@ export function AskAI(): ReactElement {
       const activeRequestId = activeRequestIdRef.current
       if (activeRequestId) {
         void window.electronAPI.invoke('chat:cancel', activeRequestId)
+        trackEvent('chat_response_failed', { failure_code: 'left_page' })
       }
       activeStreamCleanupRef.current?.()
       clearRequestTimeouts()
@@ -413,6 +414,7 @@ export function AskAI(): ReactElement {
     const assistantMessageId = activeAssistantMessageIdRef.current
     if (!requestId) return
     void window.electronAPI.invoke('chat:cancel', requestId)
+    trackEvent('chat_response_failed', { failure_code: 'stopped' })
     if (assistantMessageId) {
       setMessageStatus(assistantMessageId, 'canceled')
     }
@@ -468,6 +470,7 @@ export function AskAI(): ReactElement {
     const activeRequestId = activeRequestIdRef.current
     if (activeRequestId) {
       void window.electronAPI.invoke('chat:cancel', activeRequestId)
+      trackEvent('chat_response_failed', { failure_code: 'new_chat' })
     }
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null

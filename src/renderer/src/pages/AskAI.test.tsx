@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AskAI } from './AskAI'
 import { installMockElectronApi, resetRendererStores } from '../test/fixtures'
 import { useChatStore } from '../stores/chat'
+import { trackEvent } from '../services/analytics'
+
+vi.mock('../services/analytics', async (original) => ({
+  ...(await original<typeof import('../services/analytics')>()),
+  trackEvent: vi.fn()
+}))
 
 describe('AskAI', () => {
   beforeEach(() => {
@@ -852,4 +858,79 @@ it('keeps saved source chips when the library count cannot be read', async () =>
   await waitFor(() => expect(api.invoke).toHaveBeenCalledWith('chat:inventory-count'))
   expect(document.querySelectorAll('[data-ask-ai-source]')).toHaveLength(1)
   expect(document.querySelector('[data-ask-ai-coverage]')).toBeNull()
+})
+
+describe('Ask AI unanswered request analytics', () => {
+  beforeEach(() => {
+    resetRendererStores()
+    vi.mocked(trackEvent).mockClear()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: vi.fn()
+    })
+  })
+
+  const failures = (): unknown[][] =>
+    vi.mocked(trackEvent).mock.calls.filter(([name]) => name === 'chat_response_failed')
+
+  async function startRequest(): Promise<{
+    api: ReturnType<typeof installMockElectronApi>
+    unmount: () => void
+    requestId: () => string
+  }> {
+    let requestId = ''
+    const api = installMockElectronApi({ 'ollama:check-status': true, 'chat:new': undefined })
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      return new Promise(() => {})
+    })
+    const { unmount } = render(<AskAI />)
+    await userEvent.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByRole('button', { name: /stop generating/i })
+    return { api, unmount, requestId: () => requestId }
+  }
+
+  it('records stopped, new_chat and left_page once each while a request is active', async () => {
+    const stop = await startRequest()
+    await userEvent.click(screen.getByRole('button', { name: /stop generating/i }))
+    expect(failures()).toEqual([['chat_response_failed', { failure_code: 'stopped' }]])
+    stop.unmount()
+    expect(failures()).toHaveLength(1)
+
+    vi.mocked(trackEvent).mockClear()
+    const next = await startRequest()
+    await userEvent.click(screen.getByRole('button', { name: /new chat/i }))
+    expect(failures()).toEqual([['chat_response_failed', { failure_code: 'new_chat' }]])
+    next.unmount()
+    expect(failures()).toHaveLength(1)
+
+    vi.mocked(trackEvent).mockClear()
+    const leave = await startRequest()
+    leave.unmount()
+    expect(failures()).toEqual([['chat_response_failed', { failure_code: 'left_page' }]])
+  })
+
+  it('records nothing when no request is active', async () => {
+    installMockElectronApi({ 'ollama:check-status': true, 'chat:new': undefined })
+    const { unmount } = render(<AskAI />)
+    await userEvent.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'draft'
+    )
+    await userEvent.click(screen.getByRole('button', { name: /new chat/i }))
+    unmount()
+    expect(failures()).toEqual([])
+  })
+
+  it('records nothing when unmounting after a completed response', async () => {
+    const { api, unmount, requestId } = await startRequest()
+    act(() => api.emit('chat:done', { requestId: requestId(), content: 'Done' }))
+    await screen.findByText('Done')
+    unmount()
+    expect(failures()).toEqual([])
+  })
 })
