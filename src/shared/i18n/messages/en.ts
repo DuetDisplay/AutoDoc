@@ -156,12 +156,16 @@ export const en = {
   'askAi.indexingPreparingAnnouncement': 'Preparing your meetings for Ask AI.',
   'askAi.indexingPausedAnnouncement':
     'Preparing your meetings for Ask AI is paused while a meeting is recording or notes are being made.',
-  'askAi.indexingStarting':
-    'Preparing your meetings for Ask AI. You can ask now, but answers might miss some details until this finishes.',
-  'askAi.indexingProgress':
-    'Preparing your meetings for Ask AI ({percent}%). You can ask now, but answers might miss some details until this finishes.',
-  'askAi.indexingPaused':
-    'Preparing your meetings for Ask AI is paused at {percent}% while a meeting is recording or notes are being made. It will continue automatically afterwards. Until then, answers might miss some details.',
+  'askAi.beta': 'Beta',
+  'askAi.indexingTitle': 'Preparing your meetings',
+  'askAi.indexingHelp': 'You can ask now, but answers might miss some details until this finishes.',
+  'askAi.indexingPausedTitle': 'Preparation paused',
+  'askAi.indexingPausedHelp':
+    'This continues after the recording or notes finish. Until then, answers might miss some details.',
+  'askAi.indexingPercent': '{percent}%',
+  'askAi.betaNoticeTitle': 'Ask AI is in beta',
+  'askAi.betaNoticeBody':
+    'It answers from your meetings, right on this device. Answers can miss details or get things wrong, so check the sources for anything important.',
   'askAi.countAll': 'all saved recordings',
   'askAi.countAttached': 'attached saved recordings',
   'askAi.countNoFilters': 'no filters',

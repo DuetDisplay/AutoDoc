@@ -17,12 +17,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Die Vorbereitung für „KI fragen“ pausiert, während eine Besprechung aufgenommen wird oder Notizen erstellt werden.',
 
-    'askAi.indexingStarting':
-      'Ihre Besprechungen werden für „KI fragen“ vorbereitet. Sie können jetzt fragen, aber bis zum Abschluss können Antworten Details auslassen.',
-    'askAi.indexingProgress':
-      'Ihre Besprechungen werden für „KI fragen“ vorbereitet ({percent} %). Sie können jetzt fragen, aber bis zum Abschluss können Antworten Details auslassen.',
-    'askAi.indexingPaused':
-      'Die Vorbereitung für „KI fragen“ pausiert bei {percent} %, während eine Besprechung aufgenommen wird oder Notizen erstellt werden. Danach geht es automatisch weiter. Bis dahin können Antworten Details auslassen.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Ihre Besprechungen werden vorbereitet',
+    'askAi.indexingHelp':
+      'Sie können jetzt fragen, aber bis zum Abschluss können Antworten Details auslassen.',
+    'askAi.indexingPausedTitle': 'Vorbereitung pausiert',
+    'askAi.indexingPausedHelp':
+      'Sie wird fortgesetzt, sobald die Aufnahme oder die Notizen fertig sind. Bis dahin können Antworten Details auslassen.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': '„KI fragen“ ist in der Beta',
+    'askAi.betaNoticeBody':
+      'Die Antworten stammen aus Ihren Besprechungen und werden direkt auf diesem Gerät erstellt. Antworten können Details auslassen oder falsch sein. Prüfen Sie bei wichtigen Dingen die Quellen.',
 
     'askAi.scope': 'Besprechungsauswahl',
     'askAi.onlyMeeting': 'Nur diese Besprechung: {title}',
@@ -56,12 +61,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       '会議の録音中またはノートの作成中のため、AIに質問するための準備を一時停止しています。',
 
-    'askAi.indexingStarting':
-      'AIに質問できるよう会議を準備しています。今すぐ質問できますが、完了までは回答に一部の詳細が含まれない場合があります。',
-    'askAi.indexingProgress':
-      'AIに質問できるよう会議を準備しています（{percent}%）。今すぐ質問できますが、完了までは回答に一部の詳細が含まれない場合があります。',
-    'askAi.indexingPaused':
-      '会議の録音中またはノートの作成中のため、AIに質問するための準備を{percent}%で一時停止しています。その後、自動的に再開します。それまでは回答に一部の詳細が含まれない場合があります。',
+    'askAi.beta': 'ベータ',
+    'askAi.indexingTitle': '会議を準備しています',
+    'askAi.indexingHelp':
+      '今すぐ質問できますが、準備が完了するまでは回答に一部の詳細が含まれない場合があります。',
+    'askAi.indexingPausedTitle': '準備を一時停止中',
+    'askAi.indexingPausedHelp':
+      '録音またはノートの作成が終わると再開します。それまでは回答に一部の詳細が含まれない場合があります。',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': '「AIに質問」はベータ版です',
+    'askAi.betaNoticeBody':
+      'このデバイス上で、会議の内容をもとに回答します。回答には詳細の抜けや誤りが含まれることがあるため、重要な内容は出典を確認してください。',
 
     'askAi.scope': '対象の会議',
     'askAi.onlyMeeting': 'この会議のみ：{title}',
@@ -94,12 +104,15 @@ export const askAiOverlays: Record<
     'askAi.indexingPreparingAnnouncement': '正在为“询问 AI”准备您的会议。',
     'askAi.indexingPausedAnnouncement': '会议录制或笔记生成期间，“询问 AI”的准备工作暂停。',
 
-    'askAi.indexingStarting':
-      '正在为“询问 AI”准备您的会议。您现在就可以提问，但完成前回答可能遗漏一些细节。',
-    'askAi.indexingProgress':
-      '正在为“询问 AI”准备您的会议（{percent}%）。您现在就可以提问，但完成前回答可能遗漏一些细节。',
-    'askAi.indexingPaused':
-      '会议录制或笔记生成期间，“询问 AI”的准备工作暂停在{percent}%。之后会自动继续。在此之前，回答可能遗漏一些细节。',
+    'askAi.beta': '测试版',
+    'askAi.indexingTitle': '正在准备您的会议',
+    'askAi.indexingHelp': '您现在就可以提问，但在准备完成前，回答可能遗漏一些细节。',
+    'askAi.indexingPausedTitle': '准备已暂停',
+    'askAi.indexingPausedHelp': '录制或笔记生成结束后会继续。在此之前，回答可能遗漏一些细节。',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': '“询问 AI”处于测试阶段',
+    'askAi.betaNoticeBody':
+      '它直接在此设备上根据您的会议内容回答。回答可能遗漏细节或出现错误，重要内容请核对来源。',
 
     'askAi.scope': '会议范围',
     'askAi.onlyMeeting': '仅此会议：{title}',
@@ -131,12 +144,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       '회의를 녹음하거나 노트를 작성하는 동안 AI에게 묻기 준비가 일시 중지되었습니다.',
 
-    'askAi.indexingStarting':
-      'AI에게 묻기를 위해 회의를 준비하고 있습니다. 지금 질문할 수 있지만 완료될 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.',
-    'askAi.indexingProgress':
-      'AI에게 묻기를 위해 회의를 준비하고 있습니다({percent}%). 지금 질문할 수 있지만 완료될 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.',
-    'askAi.indexingPaused':
-      '회의를 녹음하거나 노트를 작성하는 동안 AI에게 묻기 준비가 {percent}%에서 일시 중지되었습니다. 이후 자동으로 계속됩니다. 그때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.',
+    'askAi.beta': '베타',
+    'askAi.indexingTitle': '회의를 준비하는 중',
+    'askAi.indexingHelp':
+      '지금 질문할 수 있지만, 준비가 끝날 때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.',
+    'askAi.indexingPausedTitle': '준비 일시 중지됨',
+    'askAi.indexingPausedHelp':
+      '녹음이나 노트 작성이 끝나면 이어서 진행됩니다. 그때까지 답변에서 일부 세부 내용이 빠질 수 있습니다.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'AI에게 묻기는 베타 버전입니다',
+    'askAi.betaNoticeBody':
+      '이 기기에서 회의 내용을 바탕으로 답변합니다. 답변에서 세부 내용이 빠지거나 틀릴 수 있으니, 중요한 내용은 출처를 확인하세요.',
 
     'askAi.scope': '회의 범위',
     'askAi.onlyMeeting': '이 회의만: {title}',
@@ -171,12 +189,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'La préparation pour Demander à l’IA est en pause pendant l’enregistrement d’une réunion ou la création des notes.',
 
-    'askAi.indexingStarting':
-      'Préparation de vos réunions pour Demander à l’IA. Vous pouvez poser des questions, mais les réponses risquent de manquer de détails avant la fin.',
-    'askAi.indexingProgress':
-      'Préparation de vos réunions pour Demander à l’IA ({percent} %). Vous pouvez poser des questions, mais les réponses risquent de manquer de détails avant la fin.',
-    'askAi.indexingPaused':
-      'La préparation pour Demander à l’IA est en pause à {percent} % pendant l’enregistrement d’une réunion ou la création des notes. Elle reprendra automatiquement ensuite. D’ici là, des détails peuvent manquer dans les réponses.',
+    'askAi.beta': 'Bêta',
+    'askAi.indexingTitle': 'Préparation de vos réunions',
+    'askAi.indexingHelp':
+      'Vous pouvez déjà poser des questions, mais les réponses risquent de manquer de détails tant que ce n’est pas terminé.',
+    'askAi.indexingPausedTitle': 'Préparation en pause',
+    'askAi.indexingPausedHelp':
+      'Elle reprendra à la fin de l’enregistrement ou des notes. D’ici là, les réponses risquent de manquer de détails.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Demander à l’IA est en bêta',
+    'askAi.betaNoticeBody':
+      'Elle répond à partir de vos réunions, directement sur cet appareil. Les réponses peuvent manquer de détails ou comporter des erreurs : vérifiez les sources pour tout ce qui est important.',
 
     'askAi.scope': 'Périmètre de réunion',
     'askAi.onlyMeeting': 'Cette réunion uniquement : {title}',
@@ -211,12 +234,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'La preparación para Preguntar a la IA está pausada mientras se graba una reunión o se crean las notas.',
 
-    'askAi.indexingStarting':
-      'Preparando tus reuniones para Preguntar a la IA. Ya puedes preguntar, pero las respuestas pueden omitir detalles hasta que termine.',
-    'askAi.indexingProgress':
-      'Preparando tus reuniones para Preguntar a la IA ({percent}%). Ya puedes preguntar, pero las respuestas pueden omitir detalles hasta que termine.',
-    'askAi.indexingPaused':
-      'La preparación para Preguntar a la IA está pausada al {percent}% mientras se graba una reunión o se crean las notas. Continuará automáticamente después. Hasta entonces, las respuestas pueden omitir detalles.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Preparando tus reuniones',
+    'askAi.indexingHelp':
+      'Ya puedes preguntar, pero las respuestas pueden omitir algunos detalles hasta que termine.',
+    'askAi.indexingPausedTitle': 'Preparación en pausa',
+    'askAi.indexingPausedHelp':
+      'Continuará cuando terminen la grabación o las notas. Hasta entonces, las respuestas pueden omitir algunos detalles.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Preguntar a la IA está en beta',
+    'askAi.betaNoticeBody':
+      'Responde a partir de tus reuniones, directamente en este dispositivo. Las respuestas pueden omitir detalles o contener errores, así que revisa las fuentes en lo importante.',
 
     'askAi.scope': 'Ámbito de reunión',
     'askAi.onlyMeeting': 'Solo esta reunión: {title}',
@@ -251,12 +279,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'La preparazione per Chiedi all’IA è in pausa mentre si registra una riunione o si preparano le note.',
 
-    'askAi.indexingStarting':
-      'Preparazione delle riunioni per Chiedi all’IA. Puoi già fare domande, ma le risposte potrebbero omettere dettagli fino al termine.',
-    'askAi.indexingProgress':
-      'Preparazione delle riunioni per Chiedi all’IA ({percent}%). Puoi già fare domande, ma le risposte potrebbero omettere dettagli fino al termine.',
-    'askAi.indexingPaused':
-      'La preparazione per Chiedi all’IA è in pausa al {percent}% mentre si registra una riunione o si preparano le note. Riprenderà automaticamente dopo. Fino ad allora, le risposte potrebbero omettere dettagli.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Preparazione delle riunioni',
+    'askAi.indexingHelp':
+      'Puoi già fare domande, ma le risposte potrebbero omettere dettagli fino al termine.',
+    'askAi.indexingPausedTitle': 'Preparazione in pausa',
+    'askAi.indexingPausedHelp':
+      'Riprenderà al termine della registrazione o delle note. Fino ad allora, le risposte potrebbero omettere dettagli.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Chiedi all’IA è in versione beta',
+    'askAi.betaNoticeBody':
+      'Risponde in base alle tue riunioni, direttamente su questo dispositivo. Le risposte possono omettere dettagli o contenere errori, quindi controlla le fonti per ciò che è importante.',
 
     'askAi.scope': 'Ambito della riunione',
     'askAi.onlyMeeting': 'Solo questa riunione: {title}',
@@ -291,12 +324,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'A preparação para Perguntar à IA está em pausa enquanto uma reunião é gravada ou as notas são criadas.',
 
-    'askAi.indexingStarting':
-      'A preparar as suas reuniões para Perguntar à IA. Já pode perguntar, mas as respostas podem omitir detalhes até à conclusão.',
-    'askAi.indexingProgress':
-      'A preparar as suas reuniões para Perguntar à IA ({percent}%). Já pode perguntar, mas as respostas podem omitir detalhes até à conclusão.',
-    'askAi.indexingPaused':
-      'A preparação para Perguntar à IA está em pausa nos {percent}% enquanto uma reunião é gravada ou as notas são criadas. Continuará automaticamente depois. Até lá, as respostas podem omitir detalhes.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'A preparar as suas reuniões',
+    'askAi.indexingHelp':
+      'Já pode perguntar, mas as respostas podem omitir detalhes até à conclusão.',
+    'askAi.indexingPausedTitle': 'Preparação em pausa',
+    'askAi.indexingPausedHelp':
+      'Continuará quando a gravação ou as notas terminarem. Até lá, as respostas podem omitir detalhes.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Perguntar à IA está em beta',
+    'askAi.betaNoticeBody':
+      'Responde com base nas suas reuniões, diretamente neste dispositivo. As respostas podem omitir detalhes ou conter erros, por isso confirme as fontes no que for importante.',
 
     'askAi.scope': 'Âmbito da reunião',
     'askAi.onlyMeeting': 'Apenas esta reunião: {title}',
@@ -331,12 +369,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Подготовка для «Спросить ИИ» приостановлена, пока записывается встреча или создаются заметки.',
 
-    'askAi.indexingStarting':
-      'Подготовка встреч для функции «Спросить ИИ». Уже можно задавать вопросы, но до завершения в ответах могут отсутствовать детали.',
-    'askAi.indexingProgress':
-      'Подготовка встреч для функции «Спросить ИИ» ({percent} %). Уже можно задавать вопросы, но до завершения в ответах могут отсутствовать детали.',
-    'askAi.indexingPaused':
-      'Подготовка для «Спросить ИИ» приостановлена на {percent} %, пока записывается встреча или создаются заметки. Затем она продолжится автоматически. До этого в ответах могут отсутствовать детали.',
+    'askAi.beta': 'Бета',
+    'askAi.indexingTitle': 'Подготовка ваших встреч',
+    'askAi.indexingHelp':
+      'Уже можно задавать вопросы, но до завершения в ответах могут отсутствовать детали.',
+    'askAi.indexingPausedTitle': 'Подготовка приостановлена',
+    'askAi.indexingPausedHelp':
+      'Она продолжится после завершения записи или создания заметок. До этого в ответах могут отсутствовать детали.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': '«Спросить ИИ» в бета-версии',
+    'askAi.betaNoticeBody':
+      'Ответы строятся на основе ваших встреч прямо на этом устройстве. В ответах могут отсутствовать детали или встречаться ошибки, поэтому важное проверяйте по источникам.',
 
     'askAi.scope': 'Область поиска по встречам',
     'askAi.onlyMeeting': 'Только эта встреча: {title}',
@@ -371,12 +414,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Підготовку для «Запитати ШІ» призупинено, поки записується зустріч або створюються нотатки.',
 
-    'askAi.indexingStarting':
-      'Підготовка зустрічей для функції «Запитати ШІ». Уже можна ставити запитання, але до завершення у відповідях можуть бути відсутні деталі.',
-    'askAi.indexingProgress':
-      'Підготовка зустрічей для функції «Запитати ШІ» ({percent} %). Уже можна ставити запитання, але до завершення у відповідях можуть бути відсутні деталі.',
-    'askAi.indexingPaused':
-      'Підготовку для «Запитати ШІ» призупинено на {percent} %, поки записується зустріч або створюються нотатки. Потім вона продовжиться автоматично. Доти у відповідях можуть бути відсутні деталі.',
+    'askAi.beta': 'Бета',
+    'askAi.indexingTitle': 'Підготовка ваших зустрічей',
+    'askAi.indexingHelp':
+      'Уже можна ставити запитання, але до завершення у відповідях можуть бути відсутні деталі.',
+    'askAi.indexingPausedTitle': 'Підготовку призупинено',
+    'askAi.indexingPausedHelp':
+      'Вона продовжиться після завершення запису або створення нотаток. До того у відповідях можуть бути відсутні деталі.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': '«Запитати ШІ» у бета-версії',
+    'askAi.betaNoticeBody':
+      'Відповіді ґрунтуються на ваших зустрічах і створюються просто на цьому пристрої. У відповідях можуть бути відсутні деталі або помилки, тому важливе перевіряйте за джерелами.',
 
     'askAi.scope': 'Область пошуку зустрічей',
     'askAi.onlyMeeting': 'Лише ця зустріч: {title}',
@@ -411,12 +459,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Подготовката за „Попитай ИИ“ е спряна, докато се записва среща или се създават бележки.',
 
-    'askAi.indexingStarting':
-      'Подготовка на срещите ви за „Попитай ИИ“. Можете да питате сега, но до завършването в отговорите може да липсват подробности.',
-    'askAi.indexingProgress':
-      'Подготовка на срещите ви за „Попитай ИИ“ ({percent} %). Можете да питате сега, но до завършването в отговорите може да липсват подробности.',
-    'askAi.indexingPaused':
-      'Подготовката за „Попитай ИИ“ е спряна на {percent} %, докато се записва среща или се създават бележки. След това ще продължи автоматично. Дотогава в отговорите може да липсват подробности.',
+    'askAi.beta': 'Бета',
+    'askAi.indexingTitle': 'Подготовка на срещите ви',
+    'askAi.indexingHelp':
+      'Можете да питате сега, но до завършването в отговорите може да липсват подробности.',
+    'askAi.indexingPausedTitle': 'Подготовката е спряна',
+    'askAi.indexingPausedHelp':
+      'Ще продължи, когато записът или бележките приключат. Дотогава в отговорите може да липсват подробности.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': '„Попитай ИИ“ е в бета версия',
+    'askAi.betaNoticeBody':
+      'Отговаря въз основа на вашите срещи, директно на това устройство. В отговорите може да липсват подробности или да има грешки, затова проверявайте източниците за важните неща.',
 
     'askAi.scope': 'Обхват на срещата',
     'askAi.onlyMeeting': 'Само тази среща: {title}',
@@ -451,12 +504,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Priprema za Pitaj AI pauzirana je dok se snima sastanak ili izrađuju bilješke.',
 
-    'askAi.indexingStarting':
-      'Priprema sastanaka za Pitaj AI. Već možete pitati, ali do završetka u odgovorima mogu nedostajati pojedinosti.',
-    'askAi.indexingProgress':
-      'Priprema sastanaka za Pitaj AI ({percent} %). Već možete pitati, ali do završetka u odgovorima mogu nedostajati pojedinosti.',
-    'askAi.indexingPaused':
-      'Priprema za Pitaj AI pauzirana je na {percent} % dok se snima sastanak ili izrađuju bilješke. Nakon toga nastavlja se automatski. Dotad u odgovorima mogu nedostajati pojedinosti.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Priprema vaših sastanaka',
+    'askAi.indexingHelp':
+      'Već možete pitati, ali do završetka u odgovorima mogu nedostajati pojedinosti.',
+    'askAi.indexingPausedTitle': 'Priprema je pauzirana',
+    'askAi.indexingPausedHelp':
+      'Nastavit će se nakon završetka snimanja ili bilješki. Dotad u odgovorima mogu nedostajati pojedinosti.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Pitaj AI je u beta verziji',
+    'askAi.betaNoticeBody':
+      'Odgovara na temelju vaših sastanaka, izravno na ovom uređaju. U odgovorima mogu nedostajati pojedinosti ili se mogu pojaviti pogreške, pa važne stvari provjerite u izvorima.',
 
     'askAi.scope': 'Opseg sastanka',
     'askAi.onlyMeeting': 'Samo ovaj sastanak: {title}',
@@ -491,12 +549,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Příprava pro Zeptat se AI je pozastavena, zatímco se nahrává schůzka nebo vytvářejí poznámky.',
 
-    'askAi.indexingStarting':
-      'Příprava vašich schůzek pro Zeptat se AI. Ptát se můžete už teď, ale do dokončení mohou v odpovědích chybět podrobnosti.',
-    'askAi.indexingProgress':
-      'Příprava vašich schůzek pro Zeptat se AI ({percent} %). Ptát se můžete už teď, ale do dokončení mohou v odpovědích chybět podrobnosti.',
-    'askAi.indexingPaused':
-      'Příprava pro Zeptat se AI je pozastavena na {percent} %, zatímco se nahrává schůzka nebo vytvářejí poznámky. Poté bude automaticky pokračovat. Do té doby mohou v odpovědích chybět podrobnosti.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Příprava vašich schůzek',
+    'askAi.indexingHelp':
+      'Ptát se můžete už teď, ale do dokončení mohou v odpovědích chybět podrobnosti.',
+    'askAi.indexingPausedTitle': 'Příprava je pozastavena',
+    'askAi.indexingPausedHelp':
+      'Bude pokračovat po dokončení nahrávání nebo poznámek. Do té doby mohou v odpovědích chybět podrobnosti.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Zeptat se AI je v beta verzi',
+    'askAi.betaNoticeBody':
+      'Odpovídá na základě vašich schůzek, přímo v tomto zařízení. V odpovědích mohou chybět podrobnosti nebo se mohou objevit chyby, takže důležité věci ověřte ve zdrojích.',
 
     'askAi.scope': 'Rozsah schůzky',
     'askAi.onlyMeeting': 'Pouze tato schůzka: {title}',
@@ -530,12 +593,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Klargøring til Spørg AI er sat på pause, mens et møde optages, eller noter bliver lavet.',
 
-    'askAi.indexingStarting':
-      'Dine møder gøres klar til Spørg AI. Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt.',
-    'askAi.indexingProgress':
-      'Dine møder gøres klar til Spørg AI ({percent} %). Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt.',
-    'askAi.indexingPaused':
-      'Klargøring til Spørg AI er sat på pause ved {percent} %, mens et møde optages, eller noter bliver lavet. Den fortsætter automatisk bagefter. Indtil da kan svarene mangle detaljer.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Dine møder gøres klar',
+    'askAi.indexingHelp':
+      'Du kan spørge nu, men svarene kan mangle detaljer, indtil det er færdigt.',
+    'askAi.indexingPausedTitle': 'Klargøringen er sat på pause',
+    'askAi.indexingPausedHelp':
+      'Den fortsætter, når optagelsen eller noterne er færdige. Indtil da kan svarene mangle detaljer.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Spørg AI er i beta',
+    'askAi.betaNoticeBody':
+      'Svarene bygger på dine møder og laves direkte på denne enhed. Svarene kan mangle detaljer eller indeholde fejl, så tjek kilderne, når noget er vigtigt.',
 
     'askAi.scope': 'Mødeafgrænsning',
     'askAi.onlyMeeting': 'Kun dette møde: {title}',
@@ -569,12 +637,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'De voorbereiding voor Vraag AI is gepauzeerd terwijl een vergadering wordt opgenomen of notities worden gemaakt.',
 
-    'askAi.indexingStarting':
-      'Je vergaderingen worden voorbereid voor Vraag AI. Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen.',
-    'askAi.indexingProgress':
-      'Je vergaderingen worden voorbereid voor Vraag AI ({percent}%). Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen.',
-    'askAi.indexingPaused':
-      'De voorbereiding voor Vraag AI is gepauzeerd op {percent}% terwijl een vergadering wordt opgenomen of notities worden gemaakt. Daarna gaat dit automatisch verder. Tot die tijd kunnen antwoorden details missen.',
+    'askAi.beta': 'Bèta',
+    'askAi.indexingTitle': 'Je vergaderingen worden voorbereid',
+    'askAi.indexingHelp':
+      'Je kunt al vragen stellen, maar tot dit klaar is kunnen antwoorden details missen.',
+    'askAi.indexingPausedTitle': 'Voorbereiding gepauzeerd',
+    'askAi.indexingPausedHelp':
+      'Dit gaat verder zodra de opname of de notities klaar zijn. Tot die tijd kunnen antwoorden details missen.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Vraag AI is in bèta',
+    'askAi.betaNoticeBody':
+      'Antwoorden komen uit je vergaderingen, rechtstreeks op dit apparaat. Antwoorden kunnen details missen of fouten bevatten, controleer de bronnen bij belangrijke zaken.',
 
     'askAi.scope': 'Vergaderbereik',
     'askAi.onlyMeeting': 'Alleen deze vergadering: {title}',
@@ -609,12 +682,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Koosolekute ettevalmistus tehisarult küsimiseks on peatatud, kuni koosolekut salvestatakse või märkmeid koostatakse.',
 
-    'askAi.indexingStarting':
-      'Koosolekuid valmistatakse ette tehisarult küsimiseks. Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.',
-    'askAi.indexingProgress':
-      'Koosolekuid valmistatakse ette tehisarult küsimiseks ({percent} %). Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.',
-    'askAi.indexingPaused':
-      'Koosolekute ettevalmistus tehisarult küsimiseks on peatatud {percent} % juures, kuni koosolekut salvestatakse või märkmeid koostatakse. Seejärel jätkub see automaatselt. Seni võib vastustest üksikasju puududa.',
+    'askAi.beta': 'Beeta',
+    'askAi.indexingTitle': 'Koosolekuid valmistatakse ette',
+    'askAi.indexingHelp':
+      'Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.',
+    'askAi.indexingPausedTitle': 'Ettevalmistus on peatatud',
+    'askAi.indexingPausedHelp':
+      'See jätkub, kui salvestus või märkmed on valmis. Seni võib vastustest üksikasju puududa.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Küsi AI-lt on beetaversioonis',
+    'askAi.betaNoticeBody':
+      'Vastused põhinevad sinu koosolekutel ja tekivad otse selles seadmes. Vastustest võib üksikasju puududa või neis võib olla vigu, seega kontrolli olulise puhul allikaid.',
 
     'askAi.scope': 'Koosoleku ulatus',
     'askAi.onlyMeeting': 'Ainult see koosolek: {title}',
@@ -649,12 +727,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Kokousten valmistelu tekoälyltä kysymistä varten on tauolla, kun kokousta tallennetaan tai muistiinpanoja luodaan.',
 
-    'askAi.indexingStarting':
-      'Kokouksiasi valmistellaan tekoälyltä kysymistä varten. Voit jo kysyä, mutta vastauksista voi puuttua tietoja, kunnes valmistelu päättyy.',
-    'askAi.indexingProgress':
-      'Kokouksiasi valmistellaan tekoälyltä kysymistä varten ({percent} %). Voit jo kysyä, mutta vastauksista voi puuttua tietoja, kunnes valmistelu päättyy.',
-    'askAi.indexingPaused':
-      'Kokousten valmistelu tekoälyltä kysymistä varten on tauolla kohdassa {percent} %, kun kokousta tallennetaan tai muistiinpanoja luodaan. Se jatkuu sitten automaattisesti. Siihen asti vastauksista voi puuttua tietoja.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Kokouksiasi valmistellaan',
+    'askAi.indexingHelp':
+      'Voit jo kysyä, mutta vastauksista voi puuttua tietoja, kunnes valmistelu päättyy.',
+    'askAi.indexingPausedTitle': 'Valmistelu on tauolla',
+    'askAi.indexingPausedHelp':
+      'Se jatkuu, kun tallennus tai muistiinpanot ovat valmiit. Siihen asti vastauksista voi puuttua tietoja.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Kysy tekoälyltä on beta-vaiheessa',
+    'askAi.betaNoticeBody':
+      'Vastaukset perustuvat kokouksiisi ja syntyvät suoraan tällä laitteella. Vastauksista voi puuttua tietoja tai niissä voi olla virheitä, joten tarkista lähteet tärkeiden asioiden kohdalla.',
 
     'askAi.scope': 'Kokouksen rajaus',
     'askAi.onlyMeeting': 'Vain tämä kokous: {title}',
@@ -689,12 +772,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Η προετοιμασία για το Ρωτήστε το AI έχει παύσει όσο γίνεται εγγραφή σύσκεψης ή δημιουργούνται σημειώσεις.',
 
-    'askAi.indexingStarting':
-      'Προετοιμασία των συσκέψεών σας για το Ρωτήστε το AI. Μπορείτε να ρωτήσετε τώρα, αλλά ως την ολοκλήρωση ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
-    'askAi.indexingProgress':
-      'Προετοιμασία των συσκέψεών σας για το Ρωτήστε το AI ({percent}%). Μπορείτε να ρωτήσετε τώρα, αλλά ως την ολοκλήρωση ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
-    'askAi.indexingPaused':
-      'Η προετοιμασία για το Ρωτήστε το AI έχει παύσει στο {percent}% όσο γίνεται εγγραφή σύσκεψης ή δημιουργούνται σημειώσεις. Θα συνεχιστεί αυτόματα μετά. Ως τότε ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Προετοιμασία των συσκέψεών σας',
+    'askAi.indexingHelp':
+      'Μπορείτε να ρωτήσετε τώρα, αλλά ως την ολοκλήρωση ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
+    'askAi.indexingPausedTitle': 'Η προετοιμασία είναι σε παύση',
+    'askAi.indexingPausedHelp':
+      'Θα συνεχιστεί μόλις ολοκληρωθεί η εγγραφή ή οι σημειώσεις. Μέχρι τότε, ίσως λείπουν λεπτομέρειες από τις απαντήσεις.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Το Ρωτήστε το AI είναι σε beta',
+    'askAi.betaNoticeBody':
+      'Απαντά με βάση τις συσκέψεις σας, απευθείας σε αυτή τη συσκευή. Οι απαντήσεις μπορεί να παραλείπουν λεπτομέρειες ή να περιέχουν λάθη, γι’ αυτό ελέγχετε τις πηγές για ό,τι είναι σημαντικό.',
 
     'askAi.scope': 'Πεδίο σύσκεψης',
     'askAi.onlyMeeting': 'Μόνο αυτή η σύσκεψη: {title}',
@@ -730,12 +818,16 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'A Kérdezd az AI-t előkészítése szünetel, amíg értekezletet rögzít vagy jegyzetek készülnek.',
 
-    'askAi.indexingStarting':
-      'Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz. Már kérdezhet, de a befejezésig a válaszokból részletek hiányozhatnak.',
-    'askAi.indexingProgress':
-      'Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz ({percent}%). Már kérdezhet, de a befejezésig a válaszokból részletek hiányozhatnak.',
-    'askAi.indexingPaused':
-      'A Kérdezd az AI-t előkészítése {percent}%-nál szünetel, amíg értekezletet rögzít vagy jegyzetek készülnek. Utána automatikusan folytatódik. Addig a válaszokból részletek hiányozhatnak.',
+    'askAi.beta': 'Béta',
+    'askAi.indexingTitle': 'Az értekezletek előkészítése',
+    'askAi.indexingHelp': 'Már kérdezhet, de a befejezésig a válaszokból részletek hiányozhatnak.',
+    'askAi.indexingPausedTitle': 'Az előkészítés szünetel',
+    'askAi.indexingPausedHelp':
+      'A felvétel vagy a jegyzetek elkészülte után folytatódik. Addig a válaszokból részletek hiányozhatnak.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'A Kérdezd az AI-t béta változatban van',
+    'askAi.betaNoticeBody':
+      'Az értekezletei alapján válaszol, közvetlenül ezen az eszközön. A válaszokból részletek hiányozhatnak, vagy hibák lehetnek bennük, ezért a fontos dolgokat ellenőrizze a forrásokban.',
 
     'askAi.scope': 'Értekezlet hatóköre',
     'askAi.onlyMeeting': 'Csak ez az értekezlet: {title}',
@@ -770,12 +862,16 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Sagatavošana funkcijai Jautāt AI ir apturēta, kamēr tiek ierakstīta sanāksme vai veidotas piezīmes.',
 
-    'askAi.indexingStarting':
-      'Sanāksmju sagatavošana funkcijai Jautāt AI. Varat jautāt jau tagad, bet līdz beigām atbildēs var trūkt detaļu.',
-    'askAi.indexingProgress':
-      'Sanāksmju sagatavošana funkcijai Jautāt AI ({percent} %). Varat jautāt jau tagad, bet līdz beigām atbildēs var trūkt detaļu.',
-    'askAi.indexingPaused':
-      'Sagatavošana funkcijai Jautāt AI ir apturēta pie {percent} %, kamēr tiek ierakstīta sanāksme vai veidotas piezīmes. Pēc tam tā turpināsies automātiski. Līdz tam atbildēs var trūkt detaļu.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Sanāksmju sagatavošana',
+    'askAi.indexingHelp': 'Varat jautāt jau tagad, bet līdz beigām atbildēs var trūkt detaļu.',
+    'askAi.indexingPausedTitle': 'Sagatavošana ir apturēta',
+    'askAi.indexingPausedHelp':
+      'Tā turpināsies, kad ieraksts vai piezīmes būs pabeigtas. Līdz tam atbildēs var trūkt detaļu.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Jautāt AI ir beta versijā',
+    'askAi.betaNoticeBody':
+      'Atbildes balstās uz jūsu sanāksmēm un tiek veidotas tieši šajā ierīcē. Atbildēs var trūkt detaļu vai būt kļūdas, tāpēc svarīgo pārbaudiet avotos.',
 
     'askAi.scope': 'Sanāksmes tvērums',
     'askAi.onlyMeeting': 'Tikai šī sanāksme: {title}',
@@ -810,12 +906,16 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Paruošimas funkcijai Klausti DI sustabdytas, kol įrašomas susitikimas arba rengiamos pastabos.',
 
-    'askAi.indexingStarting':
-      'Susitikimų paruošimas funkcijai Klausti DI. Jau galite klausti, bet iki pabaigos atsakymuose gali trūkti detalių.',
-    'askAi.indexingProgress':
-      'Susitikimų paruošimas funkcijai Klausti DI ({percent} %). Jau galite klausti, bet iki pabaigos atsakymuose gali trūkti detalių.',
-    'askAi.indexingPaused':
-      'Paruošimas funkcijai Klausti DI sustabdytas ties {percent} %, kol įrašomas susitikimas arba rengiamos pastabos. Vėliau jis tęsis automatiškai. Iki tol atsakymuose gali trūkti detalių.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Susitikimų paruošimas',
+    'askAi.indexingHelp': 'Jau galite klausti, bet iki pabaigos atsakymuose gali trūkti detalių.',
+    'askAi.indexingPausedTitle': 'Paruošimas sustabdytas',
+    'askAi.indexingPausedHelp':
+      'Jis tęsis, kai įrašas ar pastabos bus baigti. Iki tol atsakymuose gali trūkti detalių.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Klausti DI yra beta versijoje',
+    'askAi.betaNoticeBody':
+      'Atsakymai remiasi jūsų susitikimais ir kuriami tiesiogiai šiame įrenginyje. Atsakymuose gali trūkti detalių arba būti klaidų, todėl svarbius dalykus tikrinkite šaltiniuose.',
 
     'askAi.scope': 'Susitikimo aprėptis',
     'askAi.onlyMeeting': 'Tik šis susitikimas: {title}',
@@ -850,12 +950,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Przygotowywanie do Zapytaj AI wstrzymano, gdy trwa nagrywanie spotkania lub tworzenie notatek.',
 
-    'askAi.indexingStarting':
-      'Przygotowywanie spotkań do funkcji Zapytaj AI. Możesz już pytać, ale do zakończenia w odpowiedziach może brakować szczegółów.',
-    'askAi.indexingProgress':
-      'Przygotowywanie spotkań do funkcji Zapytaj AI ({percent}%). Możesz już pytać, ale do zakończenia w odpowiedziach może brakować szczegółów.',
-    'askAi.indexingPaused':
-      'Przygotowywanie do Zapytaj AI wstrzymano przy {percent}%, gdy trwa nagrywanie spotkania lub tworzenie notatek. Później zostanie wznowione automatycznie. Do tego czasu w odpowiedziach może brakować szczegółów.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Przygotowywanie spotkań',
+    'askAi.indexingHelp':
+      'Możesz już pytać, ale do zakończenia w odpowiedziach może brakować szczegółów.',
+    'askAi.indexingPausedTitle': 'Przygotowywanie wstrzymane',
+    'askAi.indexingPausedHelp':
+      'Zostanie wznowione po zakończeniu nagrywania lub tworzenia notatek. Do tego czasu w odpowiedziach może brakować szczegółów.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Zapytaj AI jest w wersji beta',
+    'askAi.betaNoticeBody':
+      'Odpowiada na podstawie Twoich spotkań, bezpośrednio na tym urządzeniu. W odpowiedziach może brakować szczegółów lub mogą zdarzać się błędy, dlatego ważne informacje sprawdzaj w źródłach.',
 
     'askAi.scope': 'Zakres spotkania',
     'askAi.onlyMeeting': 'Tylko to spotkanie: {title}',
@@ -890,12 +995,16 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Pregătirea pentru Întreabă AI este în pauză cât timp se înregistrează o întâlnire sau se creează notițe.',
 
-    'askAi.indexingStarting':
-      'Pregătirea întâlnirilor pentru Întreabă AI. Puteți întreba acum, dar până la final răspunsurile pot omite detalii.',
-    'askAi.indexingProgress':
-      'Pregătirea întâlnirilor pentru Întreabă AI ({percent}%). Puteți întreba acum, dar până la final răspunsurile pot omite detalii.',
-    'askAi.indexingPaused':
-      'Pregătirea pentru Întreabă AI este în pauză la {percent}% cât timp se înregistrează o întâlnire sau se creează notițe. Va continua automat după aceea. Până atunci, răspunsurile pot omite detalii.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Pregătirea întâlnirilor dvs.',
+    'askAi.indexingHelp': 'Puteți întreba acum, dar până la final răspunsurile pot omite detalii.',
+    'askAi.indexingPausedTitle': 'Pregătire în pauză',
+    'askAi.indexingPausedHelp':
+      'Va continua după ce se termină înregistrarea sau notițele. Până atunci, răspunsurile pot omite detalii.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Întreabă AI este în versiune beta',
+    'askAi.betaNoticeBody':
+      'Răspunde pe baza întâlnirilor dvs., direct pe acest dispozitiv. Răspunsurile pot omite detalii sau pot conține erori, așa că verificați sursele pentru lucrurile importante.',
 
     'askAi.scope': 'Domeniul întâlnirii',
     'askAi.onlyMeeting': 'Doar această întâlnire: {title}',
@@ -930,12 +1039,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Príprava pre Opýtať sa AI je pozastavená, kým sa nahráva schôdza alebo vytvárajú poznámky.',
 
-    'askAi.indexingStarting':
-      'Príprava vašich schôdzí pre Opýtať sa AI. Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti.',
-    'askAi.indexingProgress':
-      'Príprava vašich schôdzí pre Opýtať sa AI ({percent} %). Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti.',
-    'askAi.indexingPaused':
-      'Príprava pre Opýtať sa AI je pozastavená na {percent} %, kým sa nahráva schôdza alebo vytvárajú poznámky. Potom bude automaticky pokračovať. Dovtedy môžu v odpovediach chýbať podrobnosti.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Príprava vašich schôdzí',
+    'askAi.indexingHelp':
+      'Pýtať sa môžete už teraz, ale do dokončenia môžu v odpovediach chýbať podrobnosti.',
+    'askAi.indexingPausedTitle': 'Príprava je pozastavená',
+    'askAi.indexingPausedHelp':
+      'Bude pokračovať po dokončení nahrávania alebo poznámok. Dovtedy môžu v odpovediach chýbať podrobnosti.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Opýtať sa AI je v beta verzii',
+    'askAi.betaNoticeBody':
+      'Odpovedá na základe vašich schôdzí, priamo v tomto zariadení. V odpovediach môžu chýbať podrobnosti alebo sa môžu objaviť chyby, preto dôležité veci overte v zdrojoch.',
 
     'askAi.scope': 'Rozsah schôdze',
     'askAi.onlyMeeting': 'Iba táto schôdza: {title}',
@@ -970,12 +1084,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Priprava za Vprašaj AI je ustavljena, medtem ko se snema sestanek ali ustvarjajo zapiski.',
 
-    'askAi.indexingStarting':
-      'Priprava sestankov za Vprašaj AI. Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.',
-    'askAi.indexingProgress':
-      'Priprava sestankov za Vprašaj AI ({percent} %). Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.',
-    'askAi.indexingPaused':
-      'Priprava za Vprašaj AI je ustavljena pri {percent} %, medtem ko se snema sestanek ali ustvarjajo zapiski. Nato se bo samodejno nadaljevala. Do takrat lahko v odgovorih manjkajo podrobnosti.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Priprava vaših sestankov',
+    'askAi.indexingHelp':
+      'Vprašate lahko že zdaj, vendar lahko do zaključka v odgovorih manjkajo podrobnosti.',
+    'askAi.indexingPausedTitle': 'Priprava je ustavljena',
+    'askAi.indexingPausedHelp':
+      'Nadaljevala se bo, ko se snemanje ali zapiski končajo. Do takrat lahko v odgovorih manjkajo podrobnosti.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Vprašaj AI je v različici beta',
+    'askAi.betaNoticeBody':
+      'Odgovarja na podlagi vaših sestankov, neposredno v tej napravi. V odgovorih lahko manjkajo podrobnosti ali se pojavijo napake, zato pomembne stvari preverite v virih.',
 
     'askAi.scope': 'Obseg sestanka',
     'askAi.onlyMeeting': 'Samo ta sestanek: {title}',
@@ -1009,12 +1128,17 @@ export const askAiOverlays: Record<
     'askAi.indexingPausedAnnouncement':
       'Förberedelsen för Fråga AI är pausad medan ett möte spelas in eller anteckningar skapas.',
 
-    'askAi.indexingStarting':
-      'Dina möten förbereds för Fråga AI. Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar.',
-    'askAi.indexingProgress':
-      'Dina möten förbereds för Fråga AI ({percent} %). Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar.',
-    'askAi.indexingPaused':
-      'Förberedelsen för Fråga AI är pausad vid {percent} % medan ett möte spelas in eller anteckningar skapas. Den fortsätter automatiskt efteråt. Tills dess kan svaren sakna detaljer.',
+    'askAi.beta': 'Beta',
+    'askAi.indexingTitle': 'Dina möten förbereds',
+    'askAi.indexingHelp':
+      'Du kan fråga nu, men svaren kan sakna detaljer tills förberedelsen är klar.',
+    'askAi.indexingPausedTitle': 'Förberedelsen är pausad',
+    'askAi.indexingPausedHelp':
+      'Den fortsätter när inspelningen eller anteckningarna är klara. Tills dess kan svaren sakna detaljer.',
+    'askAi.indexingPercent': '{percent}%',
+    'askAi.betaNoticeTitle': 'Fråga AI är i beta',
+    'askAi.betaNoticeBody':
+      'Svaren bygger på dina möten och skapas direkt på den här enheten. Svaren kan sakna detaljer eller innehålla fel, så kontrollera källorna för det som är viktigt.',
 
     'askAi.scope': 'Mötesavgränsning',
     'askAi.onlyMeeting': 'Endast detta möte: {title}',

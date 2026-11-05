@@ -468,9 +468,6 @@
   "announcement.done": "Atlikta",
   "announcement.meetingLanguageBody": "Transkripcijos ir užrašai dabar palaiko {count} kalbas!",
   "announcement.meetingLanguageDescription": "Pasirinkite kalbą, kuria kalbama susitikimuose. Naujos transkripcijos ir užrašai bus kuriami šia kalba.",
-  "askAi.indexingProgress": "Susitikimų paruošimas funkcijai Klausti DI ({percent} %). Jau galite klausti, bet iki pabaigos atsakymuose gali trūkti detalių.",
-  "askAi.indexingPaused": "Paruošimas funkcijai Klausti DI sustabdytas ties {percent} %, kol įrašomas susitikimas arba rengiamos pastabos. Vėliau jis tęsis automatiškai. Iki tol atsakymuose gali trūkti detalių.",
-  "askAi.indexingStarting": "Susitikimų paruošimas funkcijai Klausti DI. Jau galite klausti, bet iki pabaigos atsakymuose gali trūkti detalių.",
   "askAi.indexingPreparingAnnouncement": "Susitikimų paruošimas funkcijai Klausti DI.",
   "askAi.indexingPausedAnnouncement": "Paruošimas funkcijai Klausti DI sustabdytas, kol įrašomas susitikimas arba rengiamos pastabos."
 }

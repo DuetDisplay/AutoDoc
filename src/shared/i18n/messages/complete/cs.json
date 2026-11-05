@@ -468,9 +468,6 @@
   "announcement.done": "Hotovo",
   "announcement.meetingLanguageBody": "Přepisy a poznámky nyní podporují {count} jazyků!",
   "announcement.meetingLanguageDescription": "Vyberte jazyk, kterým se na schůzkách mluví. Nové přepisy a poznámky budou v tomto jazyce.",
-  "askAi.indexingProgress": "Příprava vašich schůzek pro Zeptat se AI ({percent} %). Ptát se můžete už teď, ale do dokončení mohou v odpovědích chybět podrobnosti.",
-  "askAi.indexingPaused": "Příprava pro Zeptat se AI je pozastavena na {percent} %, zatímco se nahrává schůzka nebo vytvářejí poznámky. Poté bude automaticky pokračovat. Do té doby mohou v odpovědích chybět podrobnosti.",
-  "askAi.indexingStarting": "Příprava vašich schůzek pro Zeptat se AI. Ptát se můžete už teď, ale do dokončení mohou v odpovědích chybět podrobnosti.",
   "askAi.indexingPreparingAnnouncement": "Příprava vašich schůzek pro Zeptat se AI.",
   "askAi.indexingPausedAnnouncement": "Příprava pro Zeptat se AI je pozastavena, zatímco se nahrává schůzka nebo vytvářejí poznámky."
 }

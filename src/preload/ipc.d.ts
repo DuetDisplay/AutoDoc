@@ -135,6 +135,8 @@ export interface IpcInvokeEvents {
   'app:get-locale': []
   'prefs:get-ui-appearance-announcement-pending': []
   'prefs:dismiss-ui-appearance-announcement': []
+  'prefs:get-ask-ai-beta-notice-pending': []
+  'prefs:dismiss-ask-ai-beta-notice': []
   'prefs:get-meeting-language-announcement-pending': []
   'prefs:dismiss-meeting-language-announcement': []
   'prefs:get-onboarding-language-confirmed': []
@@ -344,6 +346,8 @@ export interface IpcInvokeReturns {
   'app:get-locale': string
   'prefs:get-ui-appearance-announcement-pending': boolean
   'prefs:dismiss-ui-appearance-announcement': void
+  'prefs:get-ask-ai-beta-notice-pending': boolean
+  'prefs:dismiss-ask-ai-beta-notice': void
   'prefs:get-meeting-language-announcement-pending': boolean
   'prefs:dismiss-meeting-language-announcement': void
   'prefs:get-onboarding-language-confirmed': boolean

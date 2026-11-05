@@ -11,6 +11,7 @@ import { trackEvent } from '../services/analytics'
 import { useAskAiAvailable } from '../stores/ask-ai-availability'
 import { useT } from '../services/i18n'
 import { AppearanceSwitch } from './AppearanceSwitch'
+import { BetaBadge } from './BetaBadge'
 import { getOllamaSetupLabel, getWhisperSetupLabel } from '../services/setup-status-labels'
 
 const SUPPORT_SURFACE = 'sidebar' as const
@@ -239,6 +240,7 @@ export function Sidebar() {
               }
             >
               {label}
+              {to === ROUTES.askAi && <BetaBadge className="ml-1.5" />}
             </NavLink>
           ))}
         </nav>

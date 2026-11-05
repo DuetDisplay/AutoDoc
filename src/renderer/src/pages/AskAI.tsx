@@ -11,6 +11,8 @@ import {
 import { renderNoteMarkup } from '../components/NoteMarkup'
 import { AskAiIndexNotice } from '../components/AskAiIndexNotice'
 import { PageHeader } from '../components/PageHeader'
+import { BetaBadge } from '../components/BetaBadge'
+import { AskAiBetaNotice } from '../components/AskAiBetaNotice'
 import { useChatStore, type MeetingChatScope, type Message } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
@@ -489,6 +491,7 @@ export function AskAI(): ReactElement {
     <div className="flex flex-col h-full">
       <PageHeader
         title={t('askAi.title')}
+        titleAccessory={<BetaBadge />}
         action={
           <button
             type="button"
@@ -501,6 +504,7 @@ export function AskAI(): ReactElement {
         }
       />
 
+      <AskAiBetaNotice onClosed={() => inputRef.current?.focus()} />
       <AskAiIndexNotice />
       {notesWork.length > 0 && (
         <div className="px-6 pt-3" role="status" data-ask-ai-notes-banner>

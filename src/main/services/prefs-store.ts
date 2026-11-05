@@ -22,6 +22,7 @@ const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 interface PrefsSchema {
   uiAppearanceAnnouncementInitialized?: boolean
   uiAppearanceAnnouncementPending?: boolean
+  askAiBetaNoticeDismissed?: boolean
   onboardingComplete: boolean
   onboardingLanguageConfirmed: boolean
   meetingLanguageAnnouncementDismissed: boolean
@@ -152,6 +153,16 @@ export class PrefsStore {
 
   dismissUiAppearanceAnnouncement(): void {
     this.store.set('uiAppearanceAnnouncementPending', false)
+  }
+
+  // Shown on the first open of Ask AI, new installs included. Test runs skip it like the others.
+  isAskAiBetaNoticePending(): boolean {
+    if (isE2E || isRealSetupTest) return false
+    return this.store.get('askAiBetaNoticeDismissed') !== true
+  }
+
+  dismissAskAiBetaNotice(): void {
+    this.store.set('askAiBetaNoticeDismissed', true)
   }
 
   getOnboardingStep(): number {

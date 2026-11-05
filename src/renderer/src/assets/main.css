@@ -42,6 +42,10 @@
   --color-status-connected: #4a6b4e;
   --color-status-recording: #8b5e48;
   --color-status-processing: #8b7eaa;
+  --color-beta-blue: #2f7bf6;
+  --color-beta-violet: #8a5cf0;
+  --color-beta-pink: #e2549c;
+  --color-beta-orange: #f08a24;
 
   --speaker-0-border: #5b8c6a;
   --speaker-0-bg: #f6faf7;
@@ -303,6 +307,10 @@ html[data-theme='dark'] {
   --color-status-connected: #8fb392;
   --color-status-recording: #d4a08a;
   --color-status-processing: #a89bc4;
+  --color-beta-blue: #6ea4ff;
+  --color-beta-violet: #a98bff;
+  --color-beta-pink: #ff7ab8;
+  --color-beta-orange: #ffa655;
   --speaker-0-border: #8fb392;
   --speaker-0-bg: #243028;
   --speaker-1-border: #d4a08a;
@@ -431,4 +439,58 @@ html[data-theme='dark'] {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* Beta pill: a 1px blended gradient ring over a transparent interior. The ring is masked out of a
+   pseudo-element so the pill sits cleanly on any background, including the active sage item. */
+@property --beta-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.beta-badge {
+  position: relative;
+  --beta-angle: 0deg;
+  transition: --beta-angle 2.4s ease-in-out;
+}
+.beta-badge::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--beta-angle),
+    var(--color-beta-blue),
+    var(--color-beta-violet),
+    var(--color-beta-pink),
+    var(--color-beta-orange),
+    var(--color-beta-blue)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+/* The active item is pale sage in dark mode, where the dark theme's pastel ring would vanish. */
+html[data-theme='dark'] a[aria-current='page'] > .beta-badge {
+  --color-beta-blue: #1f5fd6;
+  --color-beta-violet: #6d3fd8;
+  --color-beta-pink: #c9327f;
+  --color-beta-orange: #cf6a0c;
+}
+/* Hovering the badge or its nav item gives a single slow turn; nothing moves while idle. */
+a:hover > .beta-badge,
+.beta-badge:hover {
+  --beta-angle: 360deg;
+}
+@media (prefers-reduced-motion: reduce) {
+  .beta-badge {
+    transition: none;
+  }
 }

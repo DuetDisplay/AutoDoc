@@ -41,7 +41,9 @@ it('delays preparing, shows paused, keeps progress silent and hides immediately 
   act(() =>
     api.emit('chat:index-status-changed', { state: 'paused', percent: 45, significant: true })
   )
-  expect(container.querySelector('[data-index-state="paused"]')).toHaveTextContent('paused')
+  expect(container.querySelector('[data-index-state="paused"]')).toHaveTextContent(
+    'Preparation paused'
+  )
   expect(live.textContent).not.toBe(initialAnnouncement)
   const pausedAnnouncement = live.textContent
   act(() =>
@@ -66,6 +68,9 @@ it('uses starting copy at zero and exposes current progress outside the live ann
   const banner = container.querySelector('[data-ask-ai-index-banner]')!
   expect(banner).toHaveTextContent('Preparing your meetings')
   expect(banner).not.toHaveTextContent('0%')
+  const startingBar = screen.getByRole('progressbar', { name: 'Preparing your meetings' })
+  expect(startingBar).toHaveAttribute('aria-valuenow', '0')
+  expect(startingBar.firstElementChild).toHaveStyle({ width: '4%' })
   expect(container.querySelector('[data-ask-ai-index-announcement]')).toHaveTextContent('paused')
   expect(banner.querySelector('[aria-hidden="true"]')).toBeNull()
   expect(banner.closest('[aria-live]')).toBeNull()
@@ -80,4 +85,29 @@ it('uses starting copy at zero and exposes current progress outside the live ann
   )
   expect(banner).toHaveTextContent('63%')
   expect(live.textContent).toBe(prior)
+})
+
+it('shows a labelled progress bar with the percent, and a grey static bar when paused', async () => {
+  vi.useFakeTimers()
+  const api = installMockElectronApi({
+    'chat:index-status': { state: 'preparing', percent: 45, significant: true }
+  })
+  render(<AskAiIndexNotice />)
+  await act(async () => {})
+  act(() => vi.advanceTimersByTime(2000))
+  const bar = screen.getByRole('progressbar', { name: 'Preparing your meetings' })
+  expect(bar).toHaveAttribute('aria-valuenow', '45')
+  expect(bar.firstElementChild).toHaveStyle({ width: '45%' })
+  expect(bar.firstElementChild).toHaveClass('bg-sage', 'transition-[width]')
+  expect(screen.getByText('45%')).toHaveClass('tabular-nums')
+  expect(screen.getByText(/You can ask now/)).toBeInTheDocument()
+  act(() =>
+    api.emit('chat:index-status-changed', { state: 'paused', percent: 45, significant: true })
+  )
+  const paused = screen.getByRole('progressbar', { name: 'Preparation paused' })
+  expect(paused).toHaveAttribute('aria-valuenow', '45')
+  expect(paused.firstElementChild).toHaveClass('bg-control-track-off')
+  expect(paused.firstElementChild).not.toHaveClass('transition-[width]')
+  expect(screen.getByText('45%')).toBeInTheDocument()
+  expect(screen.getByText(/continues after the recording or notes finish/)).toBeInTheDocument()
 })

@@ -54,6 +54,12 @@ describe('Sidebar', () => {
     expect(screen.getByText('Ask AI')).toBeInTheDocument()
   })
 
+  it('marks only the Ask AI item with the Beta badge', async () => {
+    await renderSidebar()
+    expect(screen.getByText('Ask AI').closest('a')).toHaveTextContent('Beta')
+    expect(document.querySelectorAll('[data-beta-badge]')).toHaveLength(1)
+  })
+
   it('hides Ask AI where it is unavailable', async () => {
     resetAskAiAvailabilityForTests(false)
     await renderSidebar()

@@ -41,14 +41,11 @@ export function AskAiIndexNotice(): ReactElement {
     return () => window.clearTimeout(timer)
   }, [candidate])
 
-  const copyState = status.percent === 0 ? 'starting' : status.state
-  const copyKey =
-    copyState === 'starting'
-      ? 'askAi.indexingStarting'
-      : copyState === 'paused'
-        ? 'askAi.indexingPaused'
-        : 'askAi.indexingProgress'
-  // Only state changes update the live region. The visible paragraph separately
+  // At zero there is nothing to report yet: starting copy, the bar at its minimum, no number.
+  const showPercent = status.percent > 0
+  const paused = status.state === 'paused' && showPercent
+  const title = t(paused ? 'askAi.indexingPausedTitle' : 'askAi.indexingTitle')
+  // Only state changes update the live region. The visible progress bar separately
   // exposes the current percentage to assistive technology.
   useEffect(() => {
     setAnnouncement(
@@ -75,11 +72,34 @@ export function AskAiIndexNotice(): ReactElement {
       </span>
       {shown && (
         <div className="px-6 pt-3 pb-3" data-ask-ai-index-banner data-index-state={status.state}>
-          <p className="rounded-xl border border-border bg-bg-accent px-3 py-2 text-[12px] leading-relaxed text-ink-muted [overflow-wrap:anywhere]">
-            {t(copyKey, {
-              percent: status.percent
-            })}
-          </p>
+          <div className="rounded-xl border border-border bg-bg-accent px-3 py-2.5 text-ink-muted">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="min-w-0 text-[12.5px] font-semibold text-ink [overflow-wrap:anywhere]">
+                {title}
+              </p>
+              {showPercent && (
+                <span className="shrink-0 text-[12px] tabular-nums">
+                  {t('askAi.indexingPercent', { percent: status.percent })}
+                </span>
+              )}
+            </div>
+            <div
+              className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-border"
+              role="progressbar"
+              aria-label={title}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={status.percent}
+            >
+              <div
+                className={`h-full rounded-full ${paused ? 'bg-control-track-off' : 'bg-sage transition-[width] duration-300'}`}
+                style={{ width: `${Math.max(4, Math.min(100, status.percent))}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-[12px] leading-relaxed [overflow-wrap:anywhere]">
+              {t(paused ? 'askAi.indexingPausedHelp' : 'askAi.indexingHelp')}
+            </p>
+          </div>
         </div>
       )}
     </div>

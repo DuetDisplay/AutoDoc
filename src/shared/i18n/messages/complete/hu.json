@@ -468,9 +468,6 @@
   "announcement.done": "Kész",
   "announcement.meetingLanguageBody": "Az átiratok és a jegyzetek mostantól {count} nyelvet támogatnak!",
   "announcement.meetingLanguageDescription": "Válassza ki a megbeszéléseken használt nyelvet. Az új átiratok és jegyzetek ezen a nyelven készülnek.",
-  "askAi.indexingProgress": "Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz ({percent}%). Már kérdezhet, de a befejezésig a válaszokból részletek hiányozhatnak.",
-  "askAi.indexingPaused": "A Kérdezd az AI-t előkészítése {percent}%-nál szünetel, amíg értekezletet rögzít vagy jegyzetek készülnek. Utána automatikusan folytatódik. Addig a válaszokból részletek hiányozhatnak.",
-  "askAi.indexingStarting": "Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz. Már kérdezhet, de a befejezésig a válaszokból részletek hiányozhatnak.",
   "askAi.indexingPreparingAnnouncement": "Az értekezletek előkészítése a Kérdezd az AI-t funkcióhoz.",
   "askAi.indexingPausedAnnouncement": "A Kérdezd az AI-t előkészítése szünetel, amíg értekezletet rögzít vagy jegyzetek készülnek."
 }

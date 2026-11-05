@@ -36,6 +36,13 @@ describe('AskAI', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows the Beta badge beside the page title without renaming the heading', async () => {
+    installMockElectronApi({ 'ollama:check-status': true })
+    render(<AskAI />)
+    expect(screen.getByRole('heading', { name: 'Ask AI' })).toBeInTheDocument()
+    expect(document.querySelector('[data-beta-badge]')).toHaveTextContent('Beta')
+  })
+
   it('clears a stale reconnecting hint when the actual health check recovers', async () => {
     let connected = false
     const api = installMockElectronApi({ 'ollama:check-status': false })

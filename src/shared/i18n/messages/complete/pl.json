@@ -468,9 +468,6 @@
   "announcement.done": "Gotowe",
   "announcement.meetingLanguageBody": "Transkrypcje i notatki są teraz dostępne w {count} językach!",
   "announcement.meetingLanguageDescription": "Wybierz język używany podczas spotkań. Nowe transkrypcje i notatki będą tworzone w tym języku.",
-  "askAi.indexingProgress": "Przygotowywanie spotkań do funkcji Zapytaj AI ({percent}%). Możesz już pytać, ale do zakończenia w odpowiedziach może brakować szczegółów.",
-  "askAi.indexingPaused": "Przygotowywanie do Zapytaj AI wstrzymano przy {percent}%, gdy trwa nagrywanie spotkania lub tworzenie notatek. Później zostanie wznowione automatycznie. Do tego czasu w odpowiedziach może brakować szczegółów.",
-  "askAi.indexingStarting": "Przygotowywanie spotkań do funkcji Zapytaj AI. Możesz już pytać, ale do zakończenia w odpowiedziach może brakować szczegółów.",
   "askAi.indexingPreparingAnnouncement": "Przygotowywanie spotkań do funkcji Zapytaj AI.",
   "askAi.indexingPausedAnnouncement": "Przygotowywanie do Zapytaj AI wstrzymano, gdy trwa nagrywanie spotkania lub tworzenie notatek."
 }

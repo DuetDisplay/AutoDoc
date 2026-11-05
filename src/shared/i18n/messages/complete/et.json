@@ -468,9 +468,6 @@
   "announcement.done": "Valmis",
   "announcement.meetingLanguageBody": "Transkriptsioonid ja märkmed toetavad nüüd {count} keelt!",
   "announcement.meetingLanguageDescription": "Valige koosolekutel räägitav keel. Uued transkriptsioonid ja märkmed koostatakse selles keeles.",
-  "askAi.indexingProgress": "Koosolekuid valmistatakse ette tehisarult küsimiseks ({percent} %). Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.",
-  "askAi.indexingPaused": "Koosolekute ettevalmistus tehisarult küsimiseks on peatatud {percent} % juures, kuni koosolekut salvestatakse või märkmeid koostatakse. Seejärel jätkub see automaatselt. Seni võib vastustest üksikasju puududa.",
-  "askAi.indexingStarting": "Koosolekuid valmistatakse ette tehisarult küsimiseks. Võid juba küsida, kuid kuni valmimiseni võib vastustest üksikasju puududa.",
   "askAi.indexingPreparingAnnouncement": "Koosolekuid valmistatakse ette tehisarult küsimiseks.",
   "askAi.indexingPausedAnnouncement": "Koosolekute ettevalmistus tehisarult küsimiseks on peatatud, kuni koosolekut salvestatakse või märkmeid koostatakse."
 }

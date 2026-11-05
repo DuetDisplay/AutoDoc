@@ -468,9 +468,6 @@
   "announcement.done": "完了",
   "announcement.meetingLanguageBody": "文字起こしとノートが{count}言語に対応しました！",
   "announcement.meetingLanguageDescription": "会議で話す言語を選択してください。新しい文字起こしとノートは、この言語で作成されます。",
-  "askAi.indexingProgress": "AIに質問できるよう会議を準備しています（{percent}%）。今すぐ質問できますが、完了までは回答に一部の詳細が含まれない場合があります。",
-  "askAi.indexingPaused": "会議の録音中またはノートの作成中のため、AIに質問するための準備を{percent}%で一時停止しています。その後、自動的に再開します。それまでは回答に一部の詳細が含まれない場合があります。",
-  "askAi.indexingStarting": "AIに質問できるよう会議を準備しています。今すぐ質問できますが、完了までは回答に一部の詳細が含まれない場合があります。",
   "askAi.indexingPreparingAnnouncement": "AIに質問できるよう会議を準備しています。",
   "askAi.indexingPausedAnnouncement": "会議の録音中またはノートの作成中のため、AIに質問するための準備を一時停止しています。"
 }

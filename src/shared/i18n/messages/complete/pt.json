@@ -468,9 +468,6 @@
   "announcement.done": "Concluído",
   "announcement.meetingLanguageBody": "As transcrições e as notas estão agora disponíveis em {count} idiomas!",
   "announcement.meetingLanguageDescription": "Escolha o idioma falado nas suas reuniões. As novas transcrições e notas vão usar este idioma.",
-  "askAi.indexingProgress": "A preparar as suas reuniões para Perguntar à IA ({percent}%). Já pode perguntar, mas as respostas podem omitir detalhes até à conclusão.",
-  "askAi.indexingPaused": "A preparação para Perguntar à IA está em pausa nos {percent}% enquanto uma reunião é gravada ou as notas são criadas. Continuará automaticamente depois. Até lá, as respostas podem omitir detalhes.",
-  "askAi.indexingStarting": "A preparar as suas reuniões para Perguntar à IA. Já pode perguntar, mas as respostas podem omitir detalhes até à conclusão.",
   "askAi.indexingPreparingAnnouncement": "A preparar as suas reuniões para Perguntar à IA.",
   "askAi.indexingPausedAnnouncement": "A preparação para Perguntar à IA está em pausa enquanto uma reunião é gravada ou as notas são criadas."
 }
