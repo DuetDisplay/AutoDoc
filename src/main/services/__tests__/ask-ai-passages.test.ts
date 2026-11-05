@@ -249,6 +249,31 @@ describe('passage evidence coverage and busy admission', () => {
       directEvidenceAnswer('What precautionary agricultural savings ceiling was proposed?', result!)
     ).toBeNull()
   })
+  it('labels owners and deadlines so they read differently from other dates', async () => {
+    const provider = { model: 'test', isAvailable: vi.fn(async () => false), embed: vi.fn() }
+    const index = new AskAiPassages(provider, '/unused/cache')
+    const meeting = fixture()
+    meeting.noteEntries = [
+      {
+        ...meeting.noteEntries[0],
+        title: 'Seating diagram',
+        topic: null,
+        content: 'Send the seating diagram.',
+        owner: 'Leah Voss',
+        deadline: '2025-04-16'
+      }
+    ]
+    const result = await index.retrieve(
+      'Who sends the seating diagram?',
+      [meeting],
+      undefined,
+      undefined,
+      () => false
+    )
+    expect(
+      result?.excerpts?.some((e) => e.text.includes('Owner: Leah Voss · Due: 2025-04-16'))
+    ).toBe(true)
+  })
   it('preserves fractional amounts and abbreviated dates in cited evidence', async () => {
     const provider = { model: 'test', isAvailable: vi.fn(async () => false), embed: vi.fn() }
     const index = new AskAiPassages(provider, '/unused/cache')

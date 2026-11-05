@@ -171,7 +171,13 @@ export class AskAiPassages {
       }
       for (const entry of meeting.noteEntries)
         add(
-          [entry.title, entry.topic, entry.content, entry.owner, entry.deadline]
+          [
+            entry.title,
+            entry.topic,
+            entry.content,
+            entry.owner && `Owner: ${entry.owner}`,
+            entry.deadline && `Due: ${entry.deadline}`
+          ]
             .filter(Boolean)
             .join(' · '),
           'note',
