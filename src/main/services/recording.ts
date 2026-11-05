@@ -7,13 +7,6 @@ import { RECORDING_SUBDIR } from '../../shared/constants'
 import { normalizeMeetingLanguage, type MeetingLanguageCode } from '../../shared/meeting-language'
 
 export class RecordingService {
-  private captureStartListeners = new Set<() => void>()
-  onCaptureStart(listener: () => void): () => void {
-    this.captureStartListeners.add(listener)
-    return () => {
-      this.captureStartListeners.delete(listener)
-    }
-  }
   private shutdownPending = false
   private starting = false
   private processingHandoffs = new Set<string>()
@@ -60,7 +53,6 @@ export class RecordingService {
     const dir = this.getMeetingDir(meetingId)
     this.starting = true
     try {
-      for (const listener of this.captureStartListeners) listener()
       await mkdir(dir, { recursive: true })
       if (this.shutdownPending) throw new Error('AutoDoc is quitting.')
     } finally {

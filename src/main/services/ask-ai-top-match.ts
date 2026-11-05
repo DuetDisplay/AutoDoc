@@ -1,10 +1,6 @@
-/** Internal opt-in retrieval experiments; neither changes the writer prompt. */
+/** Ask AI retrieval: reserve the top semantic match; set AUTODOC_ASK_AI_TOP_MATCH=0 to disable. */
 export function useAskAiTopMatch(): boolean {
-  return process.env.AUTODOC_ASK_AI_TOP_MATCH === '1'
-}
-
-export function useAskAiQueryTranslation(): boolean {
-  return useAskAiTopMatch() && process.env.AUTODOC_ASK_AI_QUERY_TRANSLATION === '1'
+  return process.env.AUTODOC_ASK_AI_TOP_MATCH !== '0'
 }
 
 export function normalizeDuplicateEvidence(text: string): string {
@@ -28,29 +24,24 @@ export function reserveAskAiTopMatch<T extends MatchPassage>(
     eligible: ReadonlySet<string>
     carried: ReadonlySet<string>
     counts: Map<string, number>
-    reserved: Set<string>
   }
 ): void {
-  const { named, eligible, carried, counts, reserved } = options
-  if (named || !candidate || !eligible.has(candidate.meetingId) || reserved.size >= 2) return
-  const represented = picked.find(
+  const { named, eligible, carried, counts } = options
+  if (named || !candidate || !eligible.has(candidate.meetingId)) return
+  const represented = picked.some(
     (p) =>
       p.key === candidate.key ||
       normalizeDuplicateEvidence(p.text) === normalizeDuplicateEvidence(candidate.text)
   )
-  if (represented) {
-    reserved.add(represented.key)
-    return
-  }
+  if (represented) return
   const atCap = (counts.get(candidate.meetingId) ?? 0) >= (carried.has(candidate.meetingId) ? 2 : 3)
   for (let i = picked.length - 1; i >= 0; i--) {
     const old = picked[i]
-    if (carried.has(old.meetingId) || reserved.has(old.key)) continue
+    if (carried.has(old.meetingId)) continue
     if (atCap && old.meetingId !== candidate.meetingId) continue
     picked[i] = candidate
     counts.set(old.meetingId, (counts.get(old.meetingId) ?? 0) - 1)
     counts.set(candidate.meetingId, (counts.get(candidate.meetingId) ?? 0) + 1)
-    reserved.add(candidate.key)
     return
   }
 }

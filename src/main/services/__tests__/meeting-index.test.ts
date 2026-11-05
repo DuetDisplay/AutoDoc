@@ -167,32 +167,3 @@ describe('MeetingIndexService', () => {
     expect(hits[0]?.matches.some((match) => match.text.includes('CSV importer'))).toBe(true)
   })
 })
-
-it('carries metadata language and detects missing language without defaulting unknown text to English', async () => {
-  const base = await mkdtemp(join(tmpdir(), 'autodoc-index-language-metadata-'))
-  tempDirs.push(base)
-  for (const [id, language, text] of [
-    ['metadata', 'ja', 'This English synthetic transcript must not override explicit metadata.'],
-    [
-      'detected',
-      undefined,
-      'Nous avons approuvé le nouveau budget pour le projet. La réunion concerne les décisions importantes et les responsabilités de notre équipe.'
-    ],
-    ['unknown', undefined, '12345']
-  ] as const) {
-    const dir = join(base, id)
-    await mkdir(dir)
-    await writeFile(
-      join(dir, 'metadata.json'),
-      JSON.stringify({ startedAt: 0, meetingLanguage: language })
-    )
-    await writeFile(
-      join(dir, 'transcript.json'),
-      JSON.stringify([{ text, startMs: 0, endMs: 1000 }])
-    )
-  }
-  const index = new MeetingIndexService(base)
-  expect((await index.getMeeting('metadata'))?.meetingLanguage).toBe('ja')
-  expect((await index.getMeeting('detected'))?.meetingLanguage).toBe('fr')
-  expect((await index.getMeeting('unknown'))?.meetingLanguage).toBeUndefined()
-})

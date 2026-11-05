@@ -1,10 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { AskAiPassages } from '../ask-ai-passages'
-import {
-  reserveAskAiTopMatch,
-  useAskAiQueryTranslation,
-  useAskAiTopMatch
-} from '../ask-ai-top-match'
+import { reserveAskAiTopMatch, useAskAiTopMatch } from '../ask-ai-top-match'
 import type { IndexedMeeting } from '../meeting-index'
 
 vi.mock('../crypto', () => ({
@@ -26,7 +22,6 @@ function swap(
     named?: boolean
     eligible?: Set<string>
     carried?: Set<string>
-    reserved?: Set<string>
   } = {}
 ) {
   const counts = new Map<string, number>()
@@ -35,33 +30,20 @@ function swap(
     named: false,
     eligible: new Set(candidate ? [candidate.meetingId] : []),
     carried: new Set(),
-    reserved: new Set(),
     counts,
     ...extra
   })
   return counts
 }
-it('keeps both experiments off unless explicitly enabled, and requires top match for translation', () => {
-  expect(useAskAiTopMatch()).toBe(false)
-  vi.stubEnv('AUTODOC_ASK_AI_TOP_MATCH', '1')
+it('is on unless AUTODOC_ASK_AI_TOP_MATCH is 0', () => {
   expect(useAskAiTopMatch()).toBe(true)
-  expect(useAskAiQueryTranslation()).toBe(false)
-  vi.stubEnv('AUTODOC_ASK_AI_QUERY_TRANSLATION', '1')
-  expect(useAskAiQueryTranslation()).toBe(true)
   vi.stubEnv('AUTODOC_ASK_AI_TOP_MATCH', '0')
-  expect(useAskAiQueryTranslation()).toBe(false)
+  expect(useAskAiTopMatch()).toBe(false)
 })
-it('replaces the last-added row and keeps no more than two reserved matches', () => {
+it('replaces the last-added row', () => {
   const picked = Array.from({ length: 8 }, (_, i) => row(String(i)))
-  const reserved = new Set<string>()
-  swap(picked, row('best'), { reserved })
-  expect(picked.at(-1)?.key).toBe('best')
-  swap(picked, row('translated'), { reserved })
-  expect(picked.slice(-2).map((p) => p.key)).toEqual(['translated', 'best'])
-  const before = JSON.stringify(picked)
-  swap(picked, row('third'), { reserved })
-  expect(JSON.stringify(picked)).toBe(before)
-  expect(picked).toHaveLength(8)
+  swap(picked, row('best'))
+  expect(picked.map((p) => p.key)).toEqual(['0', '1', '2', '3', '4', '5', '6', 'best'])
 })
 it.each(['already picked', 'same normalized text'])(
   'preserves card bytes when the best match is %s',
@@ -145,16 +127,16 @@ function fixture() {
 it('wires reservation after normal selection without changing confidence, primary IDs or flag-off result bytes', async () => {
   const { meetings, index } = fixture()
   const question = 'Which owner reviewed budget deadline staffing risk?'
+  vi.stubEnv('AUTODOC_ASK_AI_TOP_MATCH', '0')
   const baseline = await index.retrieveConversation(question, meetings, [])
   expect(baseline?.selectedMeetingIds).not.toContain('9')
-  vi.stubEnv('AUTODOC_ASK_AI_TOP_MATCH', '1')
+  vi.unstubAllEnvs()
   const on = await index.retrieveConversation(question, meetings, [])
   expect(on?.selectedMeetingIds).toContain('9')
   expect(on?.primaryMeetingIds).toEqual(baseline?.primaryMeetingIds)
   expect(on?.retrievalConfidence).toEqual(baseline?.retrievalConfidence)
   expect(on?.sources).toHaveLength(8)
   vi.stubEnv('AUTODOC_ASK_AI_TOP_MATCH', '0')
-  vi.stubEnv('AUTODOC_ASK_AI_QUERY_TRANSLATION', '1')
   expect(JSON.stringify(await index.retrieveConversation(question, meetings, []))).toBe(
     JSON.stringify(baseline)
   )

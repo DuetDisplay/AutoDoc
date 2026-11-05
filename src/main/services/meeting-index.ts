@@ -1,5 +1,3 @@
-import { isMeetingLanguageCode, type MeetingLanguageCode } from '../../shared/meeting-language'
-import { detectChatQuestionLanguage } from './chat-reply-language'
 import { watch, type FSWatcher } from 'fs'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
@@ -29,7 +27,6 @@ export interface IndexedMeeting {
   date: number
   dir: string
   sourceName: string | null
-  meetingLanguage?: MeetingLanguageCode
   noteEntries: NotesV2SearchEntry[]
   transcriptChunks: IndexedTranscriptChunk[]
   signature: string
@@ -291,14 +288,6 @@ export class MeetingIndexService {
         : await readTranscriptChunks(transcriptPath).catch(() => [])
 
     if (noteEntries.length === 0 && transcriptChunks.length === 0) return null
-    const text = noteEntries.length
-      ? noteEntries
-          .map((entry) => [entry.title, entry.topic, entry.content].filter(Boolean).join(' '))
-          .join(' ')
-      : transcriptChunks.map((chunk) => chunk.text).join(' ')
-    const language = isMeetingLanguageCode(metadata?.meetingLanguage)
-      ? metadata.meetingLanguage
-      : detectChatQuestionLanguage(text.slice(0, 2000))
 
     return {
       meetingId,
@@ -306,7 +295,6 @@ export class MeetingIndexService {
       date: createdAt.getTime(),
       dir: meetingDir,
       sourceName,
-      ...(isMeetingLanguageCode(language) ? { meetingLanguage: language } : {}),
       noteEntries,
       transcriptChunks,
       signature
