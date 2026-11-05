@@ -183,6 +183,8 @@ describe('SegmentationService', () => {
     const judge = () => vi.fn(async () => JSON.stringify({ verdict: 'supported' }))
 
     it('shares the selected writer context with smaller notes helpers without raising its ceiling', async () => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
       const complete = judge()
       provider.completePrompt = complete
       provider.getGenerationContextTokens = () => 8192
@@ -193,14 +195,18 @@ describe('SegmentationService', () => {
         seed: 42,
         format: { type: 'object' }
       }
-      await (service as any).claimVerificationComplete()('Check a claim', options)
-      expect(complete).toHaveBeenCalledWith('Check a claim', { ...options, num_ctx: 8192 })
-      expect(options.num_ctx).toBe(4096)
-      provider.getGenerationContextTokens = () => 4096
-      expect((service as any).notesCompletionOptions({ num_ctx: 2048 }).num_ctx).toBe(4096)
-      expect((service as any).notesCompletionOptions({ num_ctx: 8192 }).num_ctx).toBe(8192)
-      provider.getGenerationContextTokens = () => NaN
-      expect((service as any).notesCompletionOptions(options)).toBe(options)
+      try {
+        await (service as any).claimVerificationComplete()('Check a claim', options)
+        expect(complete).toHaveBeenCalledWith('Check a claim', { ...options, num_ctx: 8192 })
+        expect(options.num_ctx).toBe(4096)
+        provider.getGenerationContextTokens = () => 4096
+        expect((service as any).notesCompletionOptions({ num_ctx: 2048 }).num_ctx).toBe(4096)
+        expect((service as any).notesCompletionOptions({ num_ctx: 8192 }).num_ctx).toBe(8192)
+        provider.getGenerationContextTokens = () => NaN
+        expect((service as any).notesCompletionOptions(options)).toBe(options)
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
     })
 
     it.each([
