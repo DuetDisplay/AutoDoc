@@ -38,6 +38,7 @@ import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { SafeQuitCoordinator } from './services/safe-quit'
+import { createSentryEventCap } from './services/sentry-event-cap'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
@@ -354,6 +355,7 @@ const safeQuit = new SafeQuitCoordinator({
   }
 })
 let mainSentry: MainSentryRuntimeModule | null = null
+const sentryEventCap = createSentryEventCap()
 let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
@@ -461,7 +463,7 @@ function initializeMainSentry(): void {
       integrations,
       beforeBreadcrumb: normalizeSentryBreadcrumb,
       beforeSend(event) {
-        if (!analyticsConsentEnabled) {
+        if (!analyticsConsentEnabled || !sentryEventCap.allow(event)) {
           return null
         }
         delete event.server_name
