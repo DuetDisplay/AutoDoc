@@ -485,6 +485,9 @@ describe('recording IPC source handling', () => {
           level: 'warning'
         })
       )
+      const reported = vi.mocked(captureMessage).mock.calls.at(-1)?.[1].extra
+      expect(reported).toEqual(expect.objectContaining({ hasSourceName: true }))
+      expect(JSON.stringify(reported)).not.toContain('Entire screen')
     } finally {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }

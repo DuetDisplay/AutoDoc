@@ -62,6 +62,7 @@ export function MeetingDetectedBanner() {
             {t('common.dismiss')}
           </button>
           <button
+            data-sentry-label="Record detected meeting"
             onClick={handleRecord}
             className="i18n-btn px-3 py-1.5 text-[11px] font-semibold bg-sage text-on-brand rounded-lg hover:opacity-90 transition-opacity"
           >

@@ -2072,6 +2072,7 @@ export function MeetingDetail() {
                       {t('common.cancel')}
                     </button>
                     <button
+                      data-sentry-label="Confirm delete recording"
                       onClick={handleDelete}
                       className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-on-brand hover:bg-clay/90 transition-colors"
                     >

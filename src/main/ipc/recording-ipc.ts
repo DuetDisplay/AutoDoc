@@ -992,7 +992,8 @@ async function maybeReportRapidAbortWithoutMedia(params: {
   const context = {
     durationSeconds: params.durationSeconds,
     sourceId: params.sourceId,
-    sourceName: params.sourceName,
+    // Window titles stay out of the log and Sentry.
+    hasSourceName: Boolean(params.sourceName),
     sourceType,
     recordingIntent: params.recordingIntent ?? null,
     meetingDir: params.meetingDir,

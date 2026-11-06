@@ -231,6 +231,7 @@ export function Sidebar() {
             <NavLink
               key={to}
               to={to}
+              data-sentry-label={`Navigate to ${to}`}
               className={({ isActive }) =>
                 `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${
                   isActive
@@ -308,6 +309,7 @@ export function Sidebar() {
 
           <NavLink
             to={ROUTES.settings}
+            data-sentry-label={`Navigate to ${ROUTES.settings}`}
             onClick={() => trackEvent('navigation_clicked', { page: 'settings' })}
             className={({ isActive }) =>
               `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${
