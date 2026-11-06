@@ -4,7 +4,7 @@ import type { Dirent } from 'fs'
 import { appendFile, readFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { spawn } from 'child_process'
-import { RecordingService } from '../services/recording'
+import { RecordingService, RecordingShutdownError } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
@@ -2192,6 +2192,14 @@ export function registerRecordingIpc(
         })()
         return paths
       } catch (err) {
+        if (err instanceof RecordingShutdownError) {
+          logAutodocEvent({
+            area: 'recording',
+            level: 'warn',
+            message: 'Refused to start a recording while AutoDoc is quitting'
+          })
+          throw err
+        }
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to start recording',

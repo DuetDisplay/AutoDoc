@@ -152,6 +152,7 @@ export function useRecording() {
         source_selection_mode: getSourceSelectionMode(selectionContext)
       })
       const startPromise = (async () => {
+        let mainStarted = false
         try {
           const paths = await window.electronAPI.invoke(
             'recording:start',
@@ -159,6 +160,7 @@ export function useRecording() {
             sourceNameParam,
             trackingContext ?? null
           )
+          mainStarted = true
           await startCapture(sourceId, paths.meetingId, sourceNameParam)
           recordDiagnosticAction({
             category: 'recording',
@@ -186,10 +188,13 @@ export function useRecording() {
             sourceType: getRecordingSourceType(sourceId),
             sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
           })
-          // Rollback main process state if capture fails (e.g. permission denied)
-          await stopCapture()
-          await window.electronAPI.invoke('recording:stop').catch(() => {})
-          reset()
+          // Rollback main process state if capture fails (e.g. permission denied). A refused start
+          // left nothing to undo, and may have been refused because another recording is running.
+          if (mainStarted) {
+            await stopCapture()
+            await window.electronAPI.invoke('recording:stop').catch(() => {})
+            reset()
+          }
           trackEvent('recording_start_failed', {
             failure_code: 'capture_start_failed',
             source_type: getRecordingSourceType(sourceId)
@@ -314,6 +319,7 @@ export function useRecordingActions() {
       }
 
       const startPromise = (async () => {
+        let mainStarted = false
         try {
           trackEvent('recording_start_requested', {
             trigger: trackingContext ? 'auto_record' : 'manual',
@@ -326,6 +332,7 @@ export function useRecordingActions() {
             sourceNameParam,
             trackingContext ?? null
           )
+          mainStarted = true
           await startCapture(sourceId, paths.meetingId, sourceNameParam)
           if (selectionContext && startOptions?.rememberSource) {
             saveSourcePreference(selectionContext, {
@@ -349,9 +356,11 @@ export function useRecordingActions() {
             failure_code: 'capture_start_failed',
             source_type: getRecordingSourceType(sourceId)
           })
-          await stopCapture()
-          await window.electronAPI.invoke('recording:stop')
-          reset()
+          if (mainStarted) {
+            await stopCapture()
+            await window.electronAPI.invoke('recording:stop')
+            reset()
+          }
           throw err
         } finally {
           startPromiseRef.current = null

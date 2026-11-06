@@ -52,7 +52,12 @@ function setPlatform(value: NodeJS.Platform): void {
 
 async function setup(
   platform: NodeJS.Platform,
-  options: { isRecording?: boolean; postProcessingHangs?: boolean; transcribing?: string } = {}
+  options: {
+    isRecording?: boolean
+    postProcessingHangs?: boolean
+    transcribing?: string
+    startRecording?: () => Promise<unknown>
+  } = {}
 ) {
   setPlatform(platform)
   vi.resetModules()
@@ -78,7 +83,7 @@ async function setup(
       }),
       getState: vi.fn(() => state),
       getRecordingsBaseDir: vi.fn(() => baseDir),
-      startRecording: vi.fn()
+      startRecording: vi.fn(options.startRecording)
     } as never,
     {
       getStatus: vi.fn(),
@@ -307,5 +312,34 @@ describe('isMeetingDirMissing', () => {
     } finally {
       vi.doUnmock('fs/promises')
     }
+  })
+})
+
+describe('starting a recording', () => {
+  it('does not report a start refused because AutoDoc is quitting', async () => {
+    const { invoke } = await setup('darwin', {
+      startRecording: async () => {
+        const { RecordingShutdownError } = await import('../../services/recording')
+        throw new RecordingShutdownError()
+      }
+    })
+
+    await expect(invoke('recording:start', 'window:1', 'Zoom', null)).rejects.toThrow(
+      'finishing your recording'
+    )
+
+    expect(logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('still reports any other failed start', async () => {
+    const { invoke } = await setup('darwin', {
+      startRecording: () => Promise.reject(new Error('disk failed'))
+    })
+
+    await expect(invoke('recording:start', 'window:1', 'Zoom', null)).rejects.toThrow('disk failed')
+
+    expect(logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Failed to start recording' })
+    )
   })
 })

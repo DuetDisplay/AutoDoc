@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { RecordingService } from '../recording'
+import { RecordingService, RecordingShutdownError } from '../recording'
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -105,5 +105,16 @@ describe('RecordingService', () => {
 
   it('throws if stopping when not recording', () => {
     expect(() => service.stopRecording()).toThrow('Not recording')
+  })
+})
+
+describe('RecordingService during shutdown', () => {
+  it('refuses a new recording with an identifiable error', async () => {
+    const service = new RecordingService()
+    service.setShutdownPending(true)
+
+    await expect(service.startRecording('window:1', 'Zoom')).rejects.toBeInstanceOf(
+      RecordingShutdownError
+    )
   })
 })

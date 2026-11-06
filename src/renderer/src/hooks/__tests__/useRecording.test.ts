@@ -4,7 +4,7 @@ import { useRecording, useRecordingActions } from '../useRecording'
 import { getSavedSourcePreference } from '../../services/recording-source-preferences'
 import { installMockElectronApi, resetRendererStores } from '../../test/fixtures'
 import { trackEvent, trackFirstEventOnce } from '../../services/analytics'
-import { takeChunkSaveFailure } from '../../services/recording-capture'
+import { startCapture, stopCapture, takeChunkSaveFailure } from '../../services/recording-capture'
 
 vi.mock('../../services/recording-capture', () => ({
   startCapture: vi.fn(async () => {}),
@@ -129,5 +129,54 @@ describe.each([
       sourceId: 'window:huddle',
       sourceName: 'Huddle - Slack'
     })
+  })
+})
+
+describe.each([
+  ['useRecording', () => useRecording()],
+  ['useRecordingActions', () => useRecordingActions()]
+])('%s handleStart rollback', (_name, useHook) => {
+  const stopInvokes = () =>
+    vi
+      .mocked(window.electronAPI.invoke)
+      .mock.calls.filter(([channel]) => channel === 'recording:stop')
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetRendererStores()
+    installMockElectronApi({
+      'recording:get-state': { isRecording: false },
+      'recording:start': { meetingId: 'meeting-1' },
+      'recording:stop': undefined
+    })
+  })
+
+  it('leaves everything alone when the main process refused to start', async () => {
+    const invoke = vi.mocked(window.electronAPI.invoke)
+    const mocked = invoke.getMockImplementation()!
+    invoke.mockImplementation(((channel: string, ...args: unknown[]) =>
+      channel === 'recording:start'
+        ? Promise.reject(new Error('refused'))
+        : (mocked as (...callArgs: unknown[]) => unknown)(channel, ...args)) as never)
+    const { result } = renderHook(useHook)
+
+    await act(async () => {
+      await expect(result.current.handleStart('window:1', 'Zoom')).rejects.toThrow('refused')
+    })
+
+    expect(stopCapture).not.toHaveBeenCalled()
+    expect(stopInvokes()).toHaveLength(0)
+  })
+
+  it('stops the main process when capture fails after it started', async () => {
+    vi.mocked(startCapture).mockRejectedValueOnce(new Error('no capture'))
+    const { result } = renderHook(useHook)
+
+    await act(async () => {
+      await expect(result.current.handleStart('window:1', 'Zoom')).rejects.toThrow('no capture')
+    })
+
+    expect(stopCapture).toHaveBeenCalledOnce()
+    expect(stopInvokes()).toHaveLength(1)
   })
 })

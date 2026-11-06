@@ -59,6 +59,8 @@ function isExpectedRecordingStartFailure(error: unknown): boolean {
     name === 'NotAllowedError' ||
     name === 'PermissionDeniedError' ||
     name === 'SecurityError' ||
+    // The main process already reported its own start failures.
+    message.includes("remote method 'recording:start'") ||
     message.includes('already recording') ||
     message.includes('capture already active') ||
     message.includes('screen capture stream is not live') ||

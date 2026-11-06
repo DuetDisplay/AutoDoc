@@ -37,6 +37,17 @@ describe('captureRecordingStartFailure', () => {
     updateRendererSentryConsent(false)
   })
 
+  it('leaves failures from the main process to the main process report', () => {
+    updateRendererSentryConsent(true)
+
+    captureRecordingStartFailure(
+      new Error("Error invoking remote method 'recording:start': Error: disk failed"),
+      { sourceType: 'window', sourceSelectionMode: 'manual' }
+    )
+
+    expect(sentryModule.captureException).not.toHaveBeenCalled()
+  })
+
   it('reports unexpected recording start failures when consent is enabled', () => {
     updateRendererSentryConsent(true)
 

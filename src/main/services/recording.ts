@@ -6,6 +6,13 @@ import type { RecordingState, RecordingPaths, RecordingTrackingContext } from '.
 import { RECORDING_SUBDIR } from '../../shared/constants'
 import { normalizeMeetingLanguage, type MeetingLanguageCode } from '../../shared/meeting-language'
 
+/** A start refused because AutoDoc is shutting down. Expected, so it isn't reported. */
+export class RecordingShutdownError extends Error {
+  constructor() {
+    super('AutoDoc is finishing your recording before quitting.')
+  }
+}
+
 export class RecordingService {
   private shutdownPending = false
   private starting = false
@@ -43,8 +50,7 @@ export class RecordingService {
     trackingContext: RecordingTrackingContext | null = null,
     meetingLanguage: MeetingLanguageCode = 'en'
   ): Promise<RecordingPaths> {
-    if (this.shutdownPending)
-      throw new Error('AutoDoc is finishing your recording before quitting.')
+    if (this.shutdownPending) throw new RecordingShutdownError()
     if (this.starting || this.state.isRecording) {
       throw new Error('Already recording')
     }
@@ -54,7 +60,7 @@ export class RecordingService {
     this.starting = true
     try {
       await mkdir(dir, { recursive: true })
-      if (this.shutdownPending) throw new Error('AutoDoc is quitting.')
+      if (this.shutdownPending) throw new RecordingShutdownError()
     } finally {
       this.starting = false
     }
