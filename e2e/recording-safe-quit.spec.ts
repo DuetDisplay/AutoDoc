@@ -41,8 +41,8 @@ test('quitting before the first capture chunk saves audio and survives relaunch'
         async () => (await window.electronAPI.invoke('recording:get-state')).isRecording
       )
     ).toBe(true)
-    // Override to find how long a recording must run before Windows retains audio.
-    await page.waitForTimeout(Number(process.env.AUTODOC_E2E_EARLY_QUIT_WAIT_MS ?? 600))
+    // Inside the first 5s chunk, but past the first second, when Windows recorders have no output yet.
+    await page.waitForTimeout(3_000)
     const appProcess = first.electronApp.process()
     await first.electronApp.evaluate(({ app }) => {
       app.quit()
