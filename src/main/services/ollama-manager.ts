@@ -389,6 +389,8 @@ export class OllamaManager extends EventEmitter {
   private resolvedModelsDir: { originalDir: string; promise: Promise<string> } | null = null
   private modelLoadFailureCount = 0
   private reportedQuietExit = false
+  /** Start retries exit the same way each time, so each kind of exit is reported once. */
+  private readonly reportedStartExits = new Set<string>()
   private startEpoch = 0
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
@@ -1475,10 +1477,11 @@ export class OllamaManager extends EventEmitter {
         if (settled) return
         settled = true
         clearInterval(pollInterval)
-        logAutodocFailure({
+        // The rejection below reaches the one report for this failed setup.
+        logAutodocEvent({
           area: 'ollama',
+          level: 'warn',
           message: 'ollama server failed to start within timeout',
-          error: new Error('Ollama server failed to start within 30 seconds'),
           context: { timeoutMs: 30_000, binaryPath: binary, pid: proc.pid ?? null }
         })
         void this.killProcessAndWait(proc, 'start-timeout').then((killed) => {
@@ -1506,6 +1509,7 @@ export class OllamaManager extends EventEmitter {
       const markReady = (): void => {
         if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
         finish(() => {
+          this.reportedStartExits.clear()
           this.readyServeProcess = proc
           this.readyAtMs = Date.now()
           this.scheduleServeStableCheck(proc)
@@ -1618,6 +1622,8 @@ export class OllamaManager extends EventEmitter {
         ]
         const isUnexpectedExit =
           wasReadyProc && intentionalKillReason == null && !this.stopped && !modelLoadFailed
+        const exitedDuringStart = !settled
+        const startExitKey = exitFingerprint.join(':')
         const reportExit = (): void => {
           if (reportTimer === null) return
           clearTimeout(reportTimer)
@@ -1631,10 +1637,11 @@ export class OllamaManager extends EventEmitter {
               context: { ...exitContext, reason: intentionalKillReason }
             })
           } else if (
-            (code !== null && code !== 0) ||
-            (isUnexpectedExit && !this.reportedQuietExit)
+            !(exitedDuringStart && this.reportedStartExits.has(startExitKey)) &&
+            ((code !== null && code !== 0) || (isUnexpectedExit && !this.reportedQuietExit))
           ) {
             if (code === null || code === 0) this.reportedQuietExit = true
+            if (exitedDuringStart) this.reportedStartExits.add(startExitKey)
             logAutodocFailure({
               area: 'ollama',
               message: 'ollama server process exited',

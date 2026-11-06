@@ -2353,6 +2353,73 @@ it('on macOS kills only the port listener, never this app as an Ollama client', 
   expect(kill.mock.calls).toEqual([[4242, 'SIGKILL']])
 })
 
+describe('reporting a server that fails to start', () => {
+  async function startFailing(rootDir: string, exits: number) {
+    const loaded = await loadOllamaManager(rootDir)
+    const manager = new loaded.OllamaManager()
+    manager.latchCpuAccelerator('test')
+    stubStartLifecycle(manager)
+    vi.useFakeTimers()
+    for (let attempt = 0; attempt < exits; attempt++) {
+      const serveProc = createFakeProcess(4242 + attempt)
+      loaded.spawnMock.mockReturnValue(serveProc)
+      const rejected = expect(manager.start({ forceRespawn: true })).rejects.toThrow(/code 1/)
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+      await rejected
+      await vi.advanceTimersByTimeAsync(2000)
+    }
+    return loaded
+  }
+
+  afterEach(() => vi.useRealTimers())
+
+  it('reports repeated exits with the same code once', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-exits-'))
+    try {
+      const { logAutodocFailure, logAutodocEvent } = await startFailing(rootDir, 3)
+
+      expect(logAutodocFailure).toHaveBeenCalledTimes(1)
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ollama server process exited', level: 'warn' })
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a start timeout for the final setup report', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-timeout-'))
+    try {
+      const loaded = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      mockServeOrTaskkill(loaded.spawnMock, () => serveProc)
+      const manager = new loaded.OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      vi.useFakeTimers()
+
+      const rejected = expect(manager.start({ forceRespawn: true })).rejects.toThrow(
+        'failed to start within 30 seconds'
+      )
+      await vi.advanceTimersByTimeAsync(31_000)
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+      await rejected
+
+      expect(loaded.logAutodocFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ollama server failed to start within timeout' })
+      )
+      expect(loaded.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ollama server failed to start within timeout' })
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('background notes model download failures', () => {
   async function pullFails(error: Error): Promise<LoadedOllamaManager> {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-pull-'))

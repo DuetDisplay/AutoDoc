@@ -39,6 +39,7 @@ import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { SafeQuitCoordinator } from './services/safe-quit'
 import { createSentryEventCap } from './services/sentry-event-cap'
+import { reportOllamaSetupFailure } from './services/ollama-setup-report'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
@@ -1197,11 +1198,7 @@ app.whenReady().then(async () => {
     ollamaSetupState.failedStep =
       failedStep ?? (lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase)
     broadcastOllamaStatus()
-    logAutodocFailure({
-      area: 'ollama',
-      message: 'Failed to start managed Ollama server',
-      error: err
-    })
+    reportOllamaSetupFailure(err, ollamaSetupState.failedStep)
     console.error('Failed to start Ollama:', err)
   }
 
