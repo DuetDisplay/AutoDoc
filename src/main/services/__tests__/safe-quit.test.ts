@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SafeQuitCoordinator } from '../safe-quit'
 import { AskAiConversationHolds } from '../ask-ai-conversation-hold'
 
@@ -83,4 +83,81 @@ it('keeps Ask AI holds usable after failed update preflight and shuts them down 
   again()
   expect(resume).not.toHaveBeenCalled()
   await expect(holds.begin(2, async () => resume)).rejects.toMatchObject({ name: 'AbortError' })
+})
+
+describe('quits that never finish', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('gives up on a hung prepare so quitting can be retried', async () => {
+    const onError = vi.fn()
+    const quit = vi.fn()
+    const prepare = vi.fn(() => new Promise<void>(() => {}))
+    const coordinator = new SafeQuitCoordinator({ prepare, quit, onError })
+    const event = { preventDefault: vi.fn() }
+
+    coordinator.beforeQuit(event)
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(onError).toHaveBeenCalledOnce()
+    expect(quit).not.toHaveBeenCalled()
+    coordinator.beforeQuit(event)
+    expect(prepare).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not quit when prepare finishes after it timed out', async () => {
+    let finish!: () => void
+    const quit = vi.fn()
+    const coordinator = new SafeQuitCoordinator({
+      prepare: () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        }),
+      quit,
+      onError: vi.fn()
+    })
+
+    coordinator.beforeQuit({ preventDefault: vi.fn() })
+    await vi.advanceTimersByTimeAsync(120_000)
+    finish()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(quit).not.toHaveBeenCalled()
+  })
+
+  it('reports once when the process is still alive after an allowed quit', async () => {
+    const onQuitStalled = vi.fn()
+    const coordinator = new SafeQuitCoordinator({
+      prepare: vi.fn(),
+      quit: vi.fn(),
+      onError: vi.fn(),
+      onQuitStalled
+    })
+    coordinator.allowQuit()
+
+    coordinator.beforeQuit({ preventDefault: vi.fn() })
+    coordinator.beforeQuit({ preventDefault: vi.fn() })
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(onQuitStalled).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(onQuitStalled).toHaveBeenCalledOnce()
+  })
+
+  it('does not force an exit after the quit was cancelled', async () => {
+    const onQuitStalled = vi.fn()
+    const coordinator = new SafeQuitCoordinator({
+      prepare: vi.fn(),
+      quit: vi.fn(),
+      onError: vi.fn(),
+      onQuitStalled
+    })
+    coordinator.allowQuit()
+    coordinator.beforeQuit({ preventDefault: vi.fn() })
+
+    coordinator.cancelPreparedQuit()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(onQuitStalled).not.toHaveBeenCalled()
+  })
 })

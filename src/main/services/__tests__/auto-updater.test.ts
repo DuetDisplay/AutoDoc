@@ -413,4 +413,37 @@ describe('Auto-updater validity characterization', () => {
       expect.objectContaining({ state: 'error' })
     )
   })
+
+  it('releases the recording shutdown lock if installing returns without quitting', () => {
+    const onInstallFailed = vi.fn()
+    initAutoUpdater({ onInstallFailed })
+
+    installUpdate()
+    vi.advanceTimersByTime(59_999)
+    expect(onInstallFailed).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+
+    expect(onInstallFailed).toHaveBeenCalledOnce()
+    expect(logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Auto-updater install did not quit the app' })
+    )
+    expect(send).toHaveBeenLastCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'error' })
+    )
+  })
+
+  it('does not report a stalled install after the install already failed', () => {
+    const onInstallFailed = vi.fn()
+    initAutoUpdater({ onInstallFailed })
+    installUpdate()
+    const errorHandler = on.mock.calls.findLast(([eventName]) => eventName === 'error')?.[1] as (
+      error: Error
+    ) => void
+
+    errorHandler(new Error('native install failed'))
+    vi.advanceTimersByTime(60_000)
+
+    expect(onInstallFailed).toHaveBeenCalledOnce()
+  })
 })

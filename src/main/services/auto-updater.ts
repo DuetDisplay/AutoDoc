@@ -15,12 +15,14 @@ export interface UpdateStatus {
   installBlockedReason?: string
 }
 
+const INSTALL_STALL_TIMEOUT_MS = 60_000
 let currentStatus: UpdateStatus = { state: 'idle' }
 let errorResetToken = 0
 let prepareForInstall: (() => void) | undefined
 let onUpdateDownloaded: ((status: UpdateStatus) => void) | undefined
 let getInstallBlockReason: (() => string | undefined) | undefined
 let onInstallFailed: (() => void) | undefined
+let installStallTimer: ReturnType<typeof setTimeout> | undefined
 
 interface AutoUpdaterOptions {
   recordUpdateDownload?: (version: string) => void
@@ -81,6 +83,7 @@ function broadcast(status: UpdateStatus): void {
 }
 
 function reportUpdaterError(message: string, err: unknown): void {
+  clearTimeout(installStallTimer)
   if (currentStatus.state === 'installing') onInstallFailed?.()
   const error = normalizeUpdaterError(err)
   console.error(`${message}:`, err)
@@ -248,6 +251,16 @@ export function installUpdate(): void {
     broadcast({ state: 'installing', version: currentStatus.version })
     prepareForInstall?.()
     autoUpdater.quitAndInstall()
+    // quitAndInstall can return without quitting or emitting an error, which would otherwise leave
+    // the app refusing new recordings until it is force quit.
+    clearTimeout(installStallTimer)
+    installStallTimer = setTimeout(() => {
+      if (currentStatus.state !== 'installing') onInstallFailed?.()
+      reportUpdaterError(
+        'Auto-updater install did not quit the app',
+        new Error('quitAndInstall returned without quitting')
+      )
+    }, INSTALL_STALL_TIMEOUT_MS)
   } catch (err) {
     reportUpdaterError('Auto-updater failed to install update', err)
   }

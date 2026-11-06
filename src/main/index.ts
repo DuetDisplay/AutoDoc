@@ -126,6 +126,7 @@ import {
   installUpdate
 } from './services/auto-updater'
 import {
+  closeSentry,
   initSentryReporter,
   resetSentryScopes,
   setGlobalContext,
@@ -336,12 +337,20 @@ const safeQuit = new SafeQuitCoordinator({
   quit: () => app.quit(),
   onError: (error) => {
     isQuitting = false
+    cancelIdleUpdateInstall()
     logAutodocFailure({
       area: 'recording',
       message: 'Could not finish recording before quit',
       error
     })
     dialog.showErrorBox(tMain('quit.savingTitle'), tMain('quit.savingBody'))
+  },
+  onQuitStalled: () => {
+    logAutodocFailure({ area: 'app', message: 'AutoDoc did not exit after quitting; forcing exit' })
+    void flushAutodocLogWrites()
+      .then(() => closeSentry(2_000))
+      .catch(() => {})
+      .finally(() => app.exit(0))
   }
 })
 let mainSentry: MainSentryRuntimeModule | null = null

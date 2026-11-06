@@ -118,6 +118,11 @@ export function captureMessage(message: string, context: MessageContext): void {
   })
 }
 
+/** Sends queued events before an exit that would otherwise drop them. */
+export async function closeSentry(timeoutMs: number): Promise<void> {
+  await Sentry?.close(timeoutMs)
+}
+
 export function setGlobalContext(key: string, data: Record<string, unknown>): void {
   Sentry?.setContext(key, data)
 }
