@@ -408,6 +408,24 @@ describe('TranscriptionService', () => {
     expect(autodocLogMock.logAutodocFailure).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    'The speech model is missing or incomplete. Select the meeting language in Settings to download it.',
+    'parakeet worker failed: Transcription worker client disposed'
+  ])('only logs the expected failure "%s"', async (message) => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockResolvedValue(undefined)
+    fsMock.stat.mockResolvedValue({} as any)
+    autodocLogMock.logAutodocFailure.mockClear()
+    autodocLogMock.logAutodocEvent.mockClear()
+
+    await (service as any).markFailed('meeting-123', message)
+
+    expect(autodocLogMock.logAutodocFailure).not.toHaveBeenCalled()
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Transcription failed', meetingId: 'meeting-123' })
+    )
+  })
+
   it('is idempotent - enqueuing same meetingId twice does not duplicate', () => {
     vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
 
@@ -1851,7 +1869,10 @@ describe('TranscriptionService', () => {
 
     await expect(
       (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    ).rejects.toThrow(/faster-whisper worker failed/)
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('faster-whisper worker failed'),
+      sentryFingerprint: ['transcription-worker-failed', 'faster-whisper']
+    })
   })
 
   it.each(['887A0005', '887A0006'] as const)(

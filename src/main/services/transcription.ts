@@ -21,6 +21,7 @@ import {
   encryptFileInPlace
 } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { withSentryFingerprint } from './sentry-fingerprint'
 import { isMeetingDirMissing } from './meeting-dir'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
@@ -2775,7 +2776,10 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`${ready.workerEngine} worker failed: ${message.slice(-500)}`)
+      throw withSentryFingerprint(
+        new Error(`${ready.workerEngine} worker failed: ${message.slice(-500)}`),
+        ['transcription-worker-failed', ready.workerEngine]
+      )
     } finally {
       if (progressTimer) clearInterval(progressTimer)
     }
@@ -2978,7 +2982,10 @@ export class TranscriptionService {
         }
       }
       const engine = this.whisperManager.getWorkerEngine()
-      throw new Error(`${engine} worker failed: ${message.slice(-500)}`)
+      throw withSentryFingerprint(new Error(`${engine} worker failed: ${message.slice(-500)}`), [
+        'transcription-worker-failed',
+        engine
+      ])
     } finally {
       if (progressTimer) clearInterval(progressTimer)
     }
@@ -3411,7 +3418,20 @@ export class TranscriptionService {
       if (code !== 'ENOENT') throw err
     }
     // Deleting a recording mid-job fails the job's final write. That is not a transcription failure.
-    if (!(await isMeetingDirMissing(join(this.recordingsBaseDir, meetingId))))
+    const meetingDeleted = await isMeetingDirMissing(join(this.recordingsBaseDir, meetingId))
+    // The app already asks the user to download the model, and a disposed worker means shutdown.
+    const isExpectedFailure =
+      errorCode === 'speech-model-missing' || errorMsg.includes('worker client disposed')
+    if (!meetingDeleted && isExpectedFailure) {
+      logAutodocEvent({
+        area: 'transcription',
+        level: 'warn',
+        message: 'Transcription failed',
+        meetingId,
+        context: { errorCode, retries }
+      })
+    }
+    if (!meetingDeleted && !isExpectedFailure)
       logAutodocFailure({
         area: 'transcription',
         message: 'Transcription failed',

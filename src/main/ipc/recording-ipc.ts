@@ -40,6 +40,8 @@ const CALENDAR_MATCH_LOOKBACK_DAYS = 30
 const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
 const RECORDING_DEBUG_PREFIX = '[recording-debug]'
 const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
+// Recorders have no output for about the first second, so a shorter recording is expected to be empty.
+const RAPID_ABORT_WITHOUT_MEDIA_MIN_REPORT_SECONDS = 3
 // If the renderer never sends recording:finalize-stop after a stop (crash, early
 // bail on a zero-length recording, IPC failure), run post-processing anyway so
 // the meeting cannot wedge in the "wrapping up" state until the next app launch.
@@ -1008,6 +1010,8 @@ async function maybeReportRapidAbortWithoutMedia(params: {
     context
   })
 
+  if (params.durationSeconds < RAPID_ABORT_WITHOUT_MEDIA_MIN_REPORT_SECONDS) return
+
   captureMessage('Recording stopped shortly after start with no captured media', {
     area: 'recording',
     meetingId: params.meetingId,
@@ -1105,6 +1109,8 @@ export function registerRecordingIpc(
   } | null = null
   let recentEventsPromise: Promise<CalendarEvent[]> | null = null
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
+  // The renderer saves its last chunks after a Windows stop, so this waits for finalize-stop.
+  const windowsRapidAbortChecks = new Map<string, () => void>()
   const windowsCalendarRefreshInFlight = new Set<string>()
   const windowsPostProcessingInFlight = new Set<string>()
   const macPostProcessingInFlight = new Set<string>()
@@ -2085,6 +2091,16 @@ export function registerRecordingIpc(
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
       windowsPendingFinalization.set(result.meetingId, metadata)
+      windowsRapidAbortChecks.set(result.meetingId, () => {
+        void maybeReportRapidAbortWithoutMedia({
+          meetingDir,
+          meetingId: result.meetingId,
+          durationSeconds: metadata.durationSeconds,
+          sourceId: result.sourceId,
+          sourceName: result.sourceName,
+          recordingIntent: result.recordingIntent
+        })
+      })
       logRecordingDebug('windows finalizing entry created', result.meetingId, {
         pendingFinalizationCount: windowsPendingFinalization.size
       })
@@ -2107,14 +2123,6 @@ export function registerRecordingIpc(
         .then(() => {
           logRecordingDebug('windows finalizing metadata persisted', result.meetingId, {
             elapsedMs: Date.now() - stopRequestedAt
-          })
-          void maybeReportRapidAbortWithoutMedia({
-            meetingDir,
-            meetingId: result.meetingId,
-            durationSeconds: metadata.durationSeconds,
-            sourceId: result.sourceId,
-            sourceName: result.sourceName,
-            recordingIntent: result.recordingIntent
           })
           scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)
           broadcastEntryUpdated(result.meetingId)
@@ -2243,6 +2251,8 @@ export function registerRecordingIpc(
       releaseMissingWindowsMeeting(meetingId)
       return
     }
+    windowsRapidAbortChecks.get(meetingId)?.()
+    windowsRapidAbortChecks.delete(meetingId)
     const pendingMetadataFromMap = windowsPendingFinalization.get(meetingId) ?? null
     const metadata = (await readMetadata(meetingDir)) ?? pendingMetadataFromMap
     if (!metadata) {

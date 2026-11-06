@@ -57,6 +57,7 @@ async function setup(
     postProcessingHangs?: boolean
     transcribing?: string
     startRecording?: () => Promise<unknown>
+    ranForMs?: number
   } = {}
 ) {
   setPlatform(platform)
@@ -75,7 +76,7 @@ async function setup(
         state.isRecording = false
         return {
           meetingId: MEETING,
-          startedAt: Date.now() - 2_000,
+          startedAt: Date.now() - (options.ranForMs ?? 2_000),
           sourceId: 'screen:0:0',
           sourceName: 'Screen',
           recordingIntent: 'general'
@@ -341,5 +342,34 @@ describe('starting a recording', () => {
     expect(logAutodocFailure).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Failed to start recording' })
     )
+  })
+})
+
+describe('a short Windows recording', () => {
+  const NO_MEDIA = 'Recording stopped shortly after start with no captured media'
+
+  it('is not called empty before the renderer has saved its last chunks', async () => {
+    const { stopActiveRecording, invoke } = await setup('win32', { ranForMs: 4_000 })
+    await fsp.rm(path.join(meetingDir, 'mic-0000.webm'))
+
+    stopActiveRecording()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(captureMessage).not.toHaveBeenCalled()
+
+    await fsp.writeFile(path.join(meetingDir, 'mic-0000.webm'), 'audio')
+    await invoke('recording:finalize-stop', MEETING)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(captureMessage).not.toHaveBeenCalledWith(NO_MEDIA, expect.anything())
+  })
+
+  it('is reported when nothing was saved by the time it finished stopping', async () => {
+    const { stopActiveRecording, invoke } = await setup('win32', { ranForMs: 4_000 })
+    await fsp.rm(path.join(meetingDir, 'mic-0000.webm'))
+
+    stopActiveRecording()
+    await invoke('recording:finalize-stop', MEETING)
+
+    await vi.waitFor(() => expect(captureMessage).toHaveBeenCalledWith(NO_MEDIA, expect.anything()))
   })
 })

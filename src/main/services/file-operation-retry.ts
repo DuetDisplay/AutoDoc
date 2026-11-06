@@ -1,4 +1,5 @@
 import { rename, unlink } from 'fs/promises'
+import { withSentryFingerprint } from './sentry-fingerprint'
 
 const WINDOWS_RETRYABLE_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'])
 const WINDOWS_RETRY_DELAYS_MS = [80, 160, 320, 640]
@@ -43,7 +44,9 @@ export async function renameWithRetry(
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  const error = lastError instanceof Error ? lastError : new Error(String(lastError))
+  const code = (error as NodeJS.ErrnoException).code ?? 'unknown'
+  throw withSentryFingerprint(error, ['file-rename-failed', code])
 }
 
 export async function replaceFileWithRetry(from: string, to: string): Promise<void> {

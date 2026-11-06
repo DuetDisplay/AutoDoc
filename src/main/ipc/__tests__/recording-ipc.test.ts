@@ -423,75 +423,85 @@ describe('recording IPC source handling', () => {
     }
   })
 
-  it('reports rapid recording aborts that produce no media files', async () => {
-    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
-    const recordingsDir = path.join(userDataDir, 'recordings')
-    const meetingDir = path.join(recordingsDir, 'meeting-rapid-abort')
+  it.each([
+    ['reports', 4_000, true],
+    ['only logs', 1_000, false]
+  ])(
+    '%s a recording stopped after %i ms with no media files',
+    async (_label, ranForMs, reports) => {
+      const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+      const recordingsDir = path.join(userDataDir, 'recordings')
+      const meetingDir = path.join(recordingsDir, 'meeting-rapid-abort')
 
-    try {
-      appGetPath.mockImplementation((name: string) => {
-        if (name === 'userData') return userDataDir
-        throw new Error(`unexpected app.getPath(${name})`)
-      })
-      await fsp.mkdir(meetingDir, { recursive: true })
+      try {
+        appGetPath.mockImplementation((name: string) => {
+          if (name === 'userData') return userDataDir
+          throw new Error(`unexpected app.getPath(${name})`)
+        })
+        await fsp.mkdir(meetingDir, { recursive: true })
 
-      const { stopActiveRecording } = registerRecordingIpc(
-        {
-          completeProcessingHandoff: vi.fn(),
-          stopRecording: vi.fn(() => ({
-            meetingId: 'meeting-rapid-abort',
-            startedAt: Date.now() - 2_000,
-            sourceId: 'screen:0:0',
-            sourceName: 'Entire screen',
-            recordingIntent: 'general'
-          })),
-          getState: vi.fn(() => ({ isRecording: true })),
-          getRecordingsBaseDir: vi.fn(() => recordingsDir),
-          startRecording: vi.fn()
-        } as any,
-        {
-          getStatus: vi.fn(),
-          enqueue: vi.fn()
-        } as any,
-        {
-          ensureReady: vi.fn(),
-          getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
-          getWhisperPath: vi.fn(() => '/mock/whisper'),
-          getModelPath: vi.fn(() => '/mock/model')
-        } as any,
-        {
-          isConnected: vi.fn(() => false),
-          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
-        } as any
-      )
+        const { stopActiveRecording } = registerRecordingIpc(
+          {
+            completeProcessingHandoff: vi.fn(),
+            stopRecording: vi.fn(() => ({
+              meetingId: 'meeting-rapid-abort',
+              startedAt: Date.now() - ranForMs,
+              sourceId: 'screen:0:0',
+              sourceName: 'Entire screen',
+              recordingIntent: 'general'
+            })),
+            getState: vi.fn(() => ({ isRecording: true })),
+            getRecordingsBaseDir: vi.fn(() => recordingsDir),
+            startRecording: vi.fn()
+          } as any,
+          {
+            getStatus: vi.fn(),
+            enqueue: vi.fn()
+          } as any,
+          {
+            ensureReady: vi.fn(),
+            getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
+            getWhisperPath: vi.fn(() => '/mock/whisper'),
+            getModelPath: vi.fn(() => '/mock/model')
+          } as any,
+          {
+            isConnected: vi.fn(() => false),
+            fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+          } as any
+        )
 
-      stopActiveRecording()
+        stopActiveRecording()
 
-      await vi.waitFor(() => {
-        expect(logAutodocEvent).toHaveBeenCalledWith(
+        await vi.waitFor(() => {
+          expect(logAutodocEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              area: 'recording',
+              level: 'warn',
+              message: 'Recording stopped shortly after start with no captured media',
+              meetingId: 'meeting-rapid-abort'
+            })
+          )
+        })
+        if (!reports) {
+          expect(captureMessage).not.toHaveBeenCalled()
+          return
+        }
+        expect(captureMessage).toHaveBeenCalledWith(
+          'Recording stopped shortly after start with no captured media',
           expect.objectContaining({
             area: 'recording',
-            level: 'warn',
-            message: 'Recording stopped shortly after start with no captured media',
-            meetingId: 'meeting-rapid-abort'
+            meetingId: 'meeting-rapid-abort',
+            level: 'warning'
           })
         )
-      })
-      expect(captureMessage).toHaveBeenCalledWith(
-        'Recording stopped shortly after start with no captured media',
-        expect.objectContaining({
-          area: 'recording',
-          meetingId: 'meeting-rapid-abort',
-          level: 'warning'
-        })
-      )
-      const reported = vi.mocked(captureMessage).mock.calls.at(-1)?.[1].extra
-      expect(reported).toEqual(expect.objectContaining({ hasSourceName: true }))
-      expect(JSON.stringify(reported)).not.toContain('Entire screen')
-    } finally {
-      await fsp.rm(userDataDir, { recursive: true, force: true })
+        const reported = vi.mocked(captureMessage).mock.calls.at(-1)?.[1].extra
+        expect(reported).toEqual(expect.objectContaining({ hasSourceName: true }))
+        expect(JSON.stringify(reported)).not.toContain('Entire screen')
+      } finally {
+        await fsp.rm(userDataDir, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   // Windows waits for recording:finalize-stop instead, and has its own suite below.
   it.skipIf(process.platform === 'win32')(

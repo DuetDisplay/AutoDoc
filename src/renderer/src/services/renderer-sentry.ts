@@ -151,6 +151,12 @@ export function captureRecordingRecoveryFailure(
     scope.setTag('recording_phase', 'recovery')
     scope.setTag('source_type', context.sourceType)
     scope.setTag('recovery_failure_kind', context.failureKind)
+    // Each build's bundle would otherwise split this into its own issue.
+    scope.setFingerprint([
+      'recording-recovery',
+      context.failureKind,
+      context.degradationPath ?? 'none'
+    ])
     scope.setExtras({
       meetingId: context.meetingId,
       recordingSourceType: context.sourceType,
