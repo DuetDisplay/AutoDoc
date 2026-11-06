@@ -50,7 +50,7 @@ describe.each([
 ])('%s stop analytics', (_name, useHook) => {
   beforeEach(() => {
     resetRendererStores()
-    installMockElectronApi({})
+    installMockElectronApi({ 'recording:get-state': { isRecording: false } })
     vi.mocked(trackEvent).mockClear()
     vi.mocked(trackFirstEventOnce).mockClear()
     vi.mocked(takeChunkSaveFailure).mockReturnValue(false)
