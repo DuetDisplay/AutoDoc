@@ -20,6 +20,7 @@ import {
 } from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { isMeetingDirMissing } from './meeting-dir'
 import { readMetadata } from './calendar-matcher'
 import {
   activeMeetingLanguage,
@@ -1490,18 +1491,20 @@ export class SegmentationService {
           : null
       if (code !== 'ENOENT') throw err
     }
-    logAutodocFailure({
-      area: 'segmentation',
-      message: 'Meeting notes generation failed',
-      error,
-      meetingId,
-      context: {
-        ...context,
-        errorCode,
-        retries,
-        processingProfile: this.getProcessingProfileLogContext()
-      }
-    })
+    // Deleting a recording mid-job fails the job's final write. That is not a notes failure.
+    if (!(await isMeetingDirMissing(join(this.recordingsBaseDir, meetingId))))
+      logAutodocFailure({
+        area: 'segmentation',
+        message: 'Meeting notes generation failed',
+        error,
+        meetingId,
+        context: {
+          ...context,
+          errorCode,
+          retries,
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
     this.broadcastStatus(meetingId, 'failed', undefined, errorCode, {
       memoryFailure: memoryFailureFromError(errorMsg)
     })

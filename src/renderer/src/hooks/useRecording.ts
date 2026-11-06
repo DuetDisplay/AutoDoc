@@ -5,6 +5,7 @@ import {
   startCapture,
   stopCapture,
   setUnrecoverableCaptureHandler,
+  takeChunkSaveFailure,
   setVideoDisabledHandler
 } from '../services/recording-capture'
 import { detectMeetingWindow } from '../services/window-detection'
@@ -46,6 +47,28 @@ function getSourceSelectionMode(
  * Full recording hook — sets up IPC listener, timer, and actions.
  * Mount this ONCE at the App level to avoid duplicate timers.
  */
+async function trackRecordingFinished(durationSeconds: number): Promise<void> {
+  const durationBucket = toDurationBucket(durationSeconds)
+  trackEvent('recording_stopped', {
+    duration_bucket: durationBucket
+  })
+  if (takeChunkSaveFailure()) {
+    trackEvent('recording_stop_failed', { failure_code: 'chunk_save_failed' })
+    return
+  }
+  trackEvent('recording_completed', {
+    duration_bucket: durationBucket
+  })
+  const daysSinceFirstLaunch = await getDaysSinceFirstLaunch()
+  await trackFirstEventOnce('recording_completed', 'first_recording_completed', {
+    days_since_first_launch: daysSinceFirstLaunch
+  })
+  await trackFirstEventOnce('user_activated', 'user_activated', {
+    activation_reason: 'first_recording_completed',
+    days_since_first_launch: daysSinceFirstLaunch
+  })
+}
+
 export function useRecording() {
   const {
     isRecording,
@@ -194,21 +217,7 @@ export function useRecording() {
     try {
       await finishRecording()
       const durationSeconds = useRecordingStore.getState().elapsedSeconds
-      const durationBucket = toDurationBucket(durationSeconds)
-      trackEvent('recording_stopped', {
-        duration_bucket: durationBucket
-      })
-      trackEvent('recording_completed', {
-        duration_bucket: durationBucket
-      })
-      const daysSinceFirstLaunch = await getDaysSinceFirstLaunch()
-      await trackFirstEventOnce('recording_completed', 'first_recording_completed', {
-        days_since_first_launch: daysSinceFirstLaunch
-      })
-      await trackFirstEventOnce('user_activated', 'user_activated', {
-        activation_reason: 'first_recording_completed',
-        days_since_first_launch: daysSinceFirstLaunch
-      })
+      await trackRecordingFinished(durationSeconds)
       reset()
     } catch (err) {
       trackEvent('recording_stop_failed', { failure_code: 'capture_stop_failed' })
@@ -359,21 +368,7 @@ export function useRecordingActions() {
     try {
       const durationSeconds = useRecordingStore.getState().elapsedSeconds
       await finishRecording()
-      const durationBucket = toDurationBucket(durationSeconds)
-      trackEvent('recording_stopped', {
-        duration_bucket: durationBucket
-      })
-      trackEvent('recording_completed', {
-        duration_bucket: durationBucket
-      })
-      const daysSinceFirstLaunch = await getDaysSinceFirstLaunch()
-      await trackFirstEventOnce('recording_completed', 'first_recording_completed', {
-        days_since_first_launch: daysSinceFirstLaunch
-      })
-      await trackFirstEventOnce('user_activated', 'user_activated', {
-        activation_reason: 'first_recording_completed',
-        days_since_first_launch: daysSinceFirstLaunch
-      })
+      await trackRecordingFinished(durationSeconds)
       reset()
     } catch (err) {
       trackEvent('recording_stop_failed', { failure_code: 'capture_stop_failed' })

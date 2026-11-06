@@ -267,12 +267,25 @@ describe.each(['darwin', 'win32'] as const)('recording file safety on %s', (plat
 })
 
 describe('isMeetingDirMissing', () => {
-  it('treats only a confirmed ENOENT as missing', async () => {
-    const { isMeetingDirMissing } = await import('../recording-ipc')
-    const notADirectory = path.join(meetingDir, 'mic-0000.webm', 'child')
+  it('treats ENOENT as missing and an existing folder as present', async () => {
+    const { isMeetingDirMissing } = await import('../../services/meeting-dir')
 
     await expect(isMeetingDirMissing(path.join(baseDir, 'gone'))).resolves.toBe(true)
     await expect(isMeetingDirMissing(meetingDir)).resolves.toBe(false)
-    await expect(isMeetingDirMissing(notADirectory)).resolves.toBe(false)
+  })
+
+  it('does not read any other error as a deleted recording', async () => {
+    vi.resetModules()
+    vi.doMock('fs/promises', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('fs/promises')>()),
+      stat: vi.fn().mockRejectedValue(Object.assign(new Error('denied'), { code: 'EACCES' }))
+    }))
+    try {
+      const { isMeetingDirMissing } = await import('../../services/meeting-dir')
+
+      await expect(isMeetingDirMissing(meetingDir)).resolves.toBe(false)
+    } finally {
+      vi.doUnmock('fs/promises')
+    }
   })
 })

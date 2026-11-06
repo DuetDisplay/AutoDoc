@@ -21,6 +21,7 @@ import {
   encryptFileInPlace
 } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { isMeetingDirMissing } from './meeting-dir'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
 import { memoryFailureFromError, type MemoryFailure } from '../../shared/memory-failure'
@@ -3404,23 +3405,25 @@ export class TranscriptionService {
           : null
       if (code !== 'ENOENT') throw err
     }
-    logAutodocFailure({
-      area: 'transcription',
-      message: 'Transcription failed',
-      error,
-      meetingId,
-      context: {
-        ...context,
-        retries,
-        errorCode,
-        filesCapturedAt: 'job-start',
-        backend: this.windowsAttempt?.backend ?? this.jobTranscriptionEngine().backend,
-        modelName: this.windowsAttempt?.modelName ?? this.jobTranscriptionEngine().modelName,
-        ...this.jobIdentity.get(meetingId),
-        processingProfile:
-          this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
-      }
-    })
+    // Deleting a recording mid-job fails the job's final write. That is not a transcription failure.
+    if (!(await isMeetingDirMissing(join(this.recordingsBaseDir, meetingId))))
+      logAutodocFailure({
+        area: 'transcription',
+        message: 'Transcription failed',
+        error,
+        meetingId,
+        context: {
+          ...context,
+          retries,
+          errorCode,
+          filesCapturedAt: 'job-start',
+          backend: this.windowsAttempt?.backend ?? this.jobTranscriptionEngine().backend,
+          modelName: this.windowsAttempt?.modelName ?? this.jobTranscriptionEngine().modelName,
+          ...this.jobIdentity.get(meetingId),
+          processingProfile:
+            this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
+        }
+      })
     if (process.platform === 'win32' && (await this.hasUsableTranscript(meetingId))) {
       this.broadcastStatus(meetingId, 'complete', undefined, errorCode, { reprocessFailed: true })
       return

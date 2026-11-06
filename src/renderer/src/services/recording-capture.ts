@@ -83,6 +83,7 @@ interface CaptureHandles {
 let activeCapture: CaptureHandles | null = null
 let unrecoverableCaptureHandler: (() => Promise<void>) | null = null
 let lastChunkSaveFailureMeetingId: string | null = null
+let chunkSaveFailed = false
 let videoDisabledHandler: ((meetingId: string) => Promise<void> | void) | null = null
 const RECORDER_STOP_TIMEOUT_MS = 5_000
 const RECOVERY_DEBOUNCE_MS = 750
@@ -605,10 +606,18 @@ function getPendingRecoveryValidationSources(
   return pendingSources
 }
 
+/** True once after a recording lost chunks, so a stop is not counted as a completed recording. */
+export function takeChunkSaveFailure(): boolean {
+  const failed = chunkSaveFailed
+  chunkSaveFailed = false
+  return failed
+}
+
 /** Stops the recording once, however many tracks and chunks fail after the first. */
 function handleChunkSaveFailure(meetingId: string): void {
   if (lastChunkSaveFailureMeetingId === meetingId) return
   lastChunkSaveFailureMeetingId = meetingId
+  chunkSaveFailed = true
   useToastStore.getState().showToast({
     type: 'warning',
     messageKey: 'recording.saveFailedStopped',
@@ -2171,6 +2180,7 @@ export async function startCapture(
   meetingId: string,
   sourceName: string | null = null
 ): Promise<void> {
+  chunkSaveFailed = false
   if (activeCapture) {
     throw new Error('Capture already active')
   }

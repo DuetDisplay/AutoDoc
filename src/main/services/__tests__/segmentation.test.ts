@@ -1040,6 +1040,28 @@ describe('SegmentationService', () => {
     expect(fsMock.unlink).not.toHaveBeenCalled()
   })
 
+  it('does not report a failure for a meeting the user deleted mid-job', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' })
+    fsMock.stat.mockRejectedValue({ code: 'ENOENT' })
+    mocks.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('deleted-meeting', 'ENOENT: no such file or directory')
+
+    expect(mocks.logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('still reports a failure when the meeting folder exists', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockResolvedValue(undefined)
+    fsMock.stat.mockResolvedValue({} as any)
+    mocks.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('meeting-123', 'notes failed')
+
+    expect(mocks.logAutodocFailure).toHaveBeenCalledTimes(1)
+  })
+
   it('does not throw when marking a deleted meeting as failed', async () => {
     fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
     fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' } as any)

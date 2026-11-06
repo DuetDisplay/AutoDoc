@@ -1585,6 +1585,32 @@ describe('recording-capture', () => {
       expect(onUnrecoverable).toHaveBeenCalledTimes(1)
     })
 
+    it('remembers a failed save once, for the code that records the outcome', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOENT' }))
+      const { takeChunkSaveFailure } = await startWithStopHandler()
+      expect(takeChunkSaveFailure()).toBe(false)
+
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(takeChunkSaveFailure()).toBe(true)
+      expect(takeChunkSaveFailure()).toBe(false)
+    })
+
+    it('does not carry a failed save into the next recording', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOENT' }))
+      const { startCapture, stopCapture, takeChunkSaveFailure } =
+        await startWithStopHandler('meeting-first')
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      answerChunksWith(() => Promise.resolve({ status: 'written' }))
+      await startCapture('window:1', 'meeting-second', 'Zoom Meeting')
+
+      expect(takeChunkSaveFailure()).toBe(false)
+      await stopCapture()
+    })
+
     it('keeps recording when chunks are written or ignored', async () => {
       const answers = [{ status: 'written' }, { status: 'ignored' }]
       answerChunksWith(() => Promise.resolve(answers.shift() ?? { status: 'written' }))

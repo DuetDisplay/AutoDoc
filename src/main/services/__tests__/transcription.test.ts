@@ -373,6 +373,28 @@ describe('TranscriptionService', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('does not report a failure for a meeting the user deleted mid-job', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' } as any)
+    fsMock.stat.mockRejectedValue({ code: 'ENOENT' } as any)
+    autodocLogMock.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('deleted-meeting', 'ENOENT: no such file or directory')
+
+    expect(autodocLogMock.logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('still reports a failure when the meeting folder exists', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockResolvedValue(undefined)
+    fsMock.stat.mockResolvedValue({} as any)
+    autodocLogMock.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('meeting-123', 'whisper.cpp timed out')
+
+    expect(autodocLogMock.logAutodocFailure).toHaveBeenCalledTimes(1)
+  })
+
   it('is idempotent - enqueuing same meetingId twice does not duplicate', () => {
     vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
 

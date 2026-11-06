@@ -20,6 +20,7 @@ import { getE2ECalendarEvents, getE2ERecordingSources } from '../services/e2e-fi
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
 import { isDiskFullError } from '../services/disk-full'
+import { isMeetingDirMissing } from '../services/meeting-dir'
 import { createFfmpegExitError, withSentryFingerprint } from '../services/sentry-fingerprint'
 import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
 import type {
@@ -967,16 +968,6 @@ async function decryptAudioForMux(filePath: string, tempFiles: string[]): Promis
     return temp
   }
   return filePath
-}
-
-/** Only a confirmed ENOENT counts: other I/O errors must not read as a deleted recording. */
-export async function isMeetingDirMissing(meetingDir: string): Promise<boolean> {
-  try {
-    await stat(meetingDir)
-    return false
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ENOENT'
-  }
 }
 
 async function maybeReportRapidAbortWithoutMedia(params: {

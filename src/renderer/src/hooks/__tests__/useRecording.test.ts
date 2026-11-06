@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useRecording, useRecordingActions } from '../useRecording'
 import { getSavedSourcePreference } from '../../services/recording-source-preferences'
 import { installMockElectronApi, resetRendererStores } from '../../test/fixtures'
+import { trackEvent, trackFirstEventOnce } from '../../services/analytics'
+import { takeChunkSaveFailure } from '../../services/recording-capture'
 
 vi.mock('../../services/recording-capture', () => ({
   startCapture: vi.fn(async () => {}),
   stopCapture: vi.fn(async () => {}),
   setUnrecoverableCaptureHandler: vi.fn(),
-  setVideoDisabledHandler: vi.fn()
+  setVideoDisabledHandler: vi.fn(),
+  takeChunkSaveFailure: vi.fn(() => false)
 }))
 
 vi.mock('../../services/finish-recording', () => ({
@@ -40,6 +43,46 @@ const trackingContext = {
   recordingIntent: 'meeting' as const,
   selectionEventId: 'timed'
 }
+
+describe.each([
+  ['useRecording', () => useRecording()],
+  ['useRecordingActions', () => useRecordingActions()]
+])('%s stop analytics', (_name, useHook) => {
+  beforeEach(() => {
+    resetRendererStores()
+    installMockElectronApi({})
+    vi.mocked(trackEvent).mockClear()
+    vi.mocked(trackFirstEventOnce).mockClear()
+    vi.mocked(takeChunkSaveFailure).mockReturnValue(false)
+  })
+
+  it('counts a normal stop as completed', async () => {
+    const { result } = renderHook(useHook)
+
+    await act(async () => result.current.handleStop())
+
+    expect(trackEvent).toHaveBeenCalledWith('recording_completed', expect.anything())
+    expect(trackFirstEventOnce).toHaveBeenCalledWith(
+      'user_activated',
+      'user_activated',
+      expect.anything()
+    )
+  })
+
+  it('does not count a recording that could not be saved as completed', async () => {
+    vi.mocked(takeChunkSaveFailure).mockReturnValue(true)
+    const { result } = renderHook(useHook)
+
+    await act(async () => result.current.handleStop())
+
+    expect(trackEvent).toHaveBeenCalledWith('recording_stopped', expect.anything())
+    expect(trackEvent).toHaveBeenCalledWith('recording_stop_failed', {
+      failure_code: 'chunk_save_failed'
+    })
+    expect(trackEvent).not.toHaveBeenCalledWith('recording_completed', expect.anything())
+    expect(trackFirstEventOnce).not.toHaveBeenCalled()
+  })
+})
 
 describe.each([
   ['useRecording', () => useRecording()],
