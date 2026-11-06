@@ -41,12 +41,13 @@ test('quitting before the first capture chunk saves audio and survives relaunch'
         async () => (await window.electronAPI.invoke('recording:get-state')).isRecording
       )
     ).toBe(true)
-    await page.waitForTimeout(600)
-    const process = first.electronApp.process()
+    // Override to find how long a recording must run before Windows retains audio.
+    await page.waitForTimeout(Number(process.env.AUTODOC_E2E_EARLY_QUIT_WAIT_MS ?? 600))
+    const appProcess = first.electronApp.process()
     await first.electronApp.evaluate(({ app }) => {
       app.quit()
     })
-    await expect.poll(() => process.exitCode, { timeout: 60_000 }).not.toBeNull()
+    await expect.poll(() => appProcess.exitCode, { timeout: 60_000 }).not.toBeNull()
     const base = path.join(profile, 'recordings')
     const meeting = readdirSync(base)[0]
     expect(meeting).toBeTruthy()
