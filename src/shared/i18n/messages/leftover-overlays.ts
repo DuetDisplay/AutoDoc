@@ -134,10 +134,10 @@ export const leftoverOverlays: Partial<Record<UiLanguageCode, LeftoverOverlay>> 
       'Remover permanentemente todo o áudio, vídeo, transcrição e notas',
     'meeting.confirmDelete': 'Confirmar eliminação',
     'meeting.deleteBlocked':
-      'Pare a gravação e aguarde o fim do salvamento e da transcrição antes de excluí-la.',
-    'meeting.deleteFailed': 'Não foi possível excluir esta gravação. Tente novamente.',
+      'Pare a gravação e aguarde até estar guardada e transcrita antes de a eliminar.',
+    'meeting.deleteFailed': 'Não foi possível eliminar esta gravação. Tente novamente.',
     'recording.saveFailedStopped':
-      'A gravação foi interrompida porque o AutoDoc não conseguiu salvá-la. Parte dela pode estar faltando. Verifique o espaço livre em disco antes de gravar novamente.'
+      'A gravação foi interrompida porque o AutoDoc não conseguiu guardá-la. Parte dela pode estar em falta. Verifique o espaço livre em disco antes de gravar novamente.'
   },
   nl: {
     'meeting.reprocessTranscriptHint':
@@ -430,7 +430,7 @@ export const leftoverOverlays: Partial<Record<UiLanguageCode, LeftoverOverlay>> 
       'Eemalda jäädavalt kogu heli, video, transkriptsioon ja märkmed',
     'meeting.confirmDelete': 'Kinnita kustutamine',
     'meeting.deleteBlocked':
-      'Enne kustutamist peatage salvestamine ja oodake, kuni salvestamine ja transkribeerimine on lõppenud.',
+      'Enne kustutamist peatage salvestamine ja oodake, kuni salvestise talletamine ja transkribeerimine on lõppenud.',
     'meeting.deleteFailed': 'Seda salvestist ei õnnestunud kustutada. Proovige uuesti.',
     'recording.saveFailedStopped':
       'Salvestamine peatus, sest AutoDoc ei saanud salvestist talletada. Osa sellest võib puududa. Enne uut salvestamist kontrollige vaba kettaruumi.'
