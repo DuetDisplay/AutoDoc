@@ -2403,7 +2403,12 @@ export function registerRecordingIpc(
         (!currentState.isRecording || currentState.meetingId !== meetingId) &&
         !allowFinalizingWrite
       ) {
-        return { status: 'ignored' } // Stale or mismatched recording
+        logRecordingDebug('ignored chunk for a recording that is not capturing', meetingId, {
+          type,
+          segmentIndex,
+          bytes: chunk.byteLength
+        })
+        return { status: 'ignored' }
       }
       const firstFailure = chunkWriteFailures.get(meetingId)
       if (firstFailure) return { status: 'failed', code: firstFailure }
@@ -2556,8 +2561,9 @@ export function registerRecordingIpc(
       meetingId,
       context: await getDeletionDiagnostics(meetingId)
     })
-    // Checked after the awaits above, with nothing async before rm.
-    if (isRecordingBusy(meetingId)) {
+    // Checked after the awaits above, with nothing async before rm. Windows refuses to remove a
+    // file transcription has open, after rm has already removed the files before it.
+    if (isRecordingBusy(meetingId) || transcriptionService.isActiveJob(meetingId)) {
       logAutodocEvent({
         area: 'recording',
         level: 'warn',

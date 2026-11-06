@@ -373,6 +373,19 @@ describe('TranscriptionService', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('counts a job as active only until its files are finished', () => {
+    const internals = service as any
+    expect(service.isActiveJob('meeting-123')).toBe(false)
+
+    internals.activeJobId = 'meeting-123'
+    internals.activeStatus = 'transcribing'
+    expect(service.isActiveJob('meeting-123')).toBe(true)
+    expect(service.isActiveJob('other')).toBe(false)
+
+    internals.activeStatus = 'complete'
+    expect(service.isActiveJob('meeting-123')).toBe(false)
+  })
+
   it('does not report a failure for a meeting the user deleted mid-job', async () => {
     fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
     fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' } as any)

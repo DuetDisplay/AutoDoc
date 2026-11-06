@@ -52,7 +52,7 @@ function setPlatform(value: NodeJS.Platform): void {
 
 async function setup(
   platform: NodeJS.Platform,
-  options: { isRecording?: boolean; postProcessingHangs?: boolean } = {}
+  options: { isRecording?: boolean; postProcessingHangs?: boolean; transcribing?: string } = {}
 ) {
   setPlatform(platform)
   vi.resetModules()
@@ -80,7 +80,11 @@ async function setup(
       getRecordingsBaseDir: vi.fn(() => baseDir),
       startRecording: vi.fn()
     } as never,
-    { getStatus: vi.fn(), enqueue } as never,
+    {
+      getStatus: vi.fn(),
+      enqueue,
+      isActiveJob: vi.fn((meetingId: string) => meetingId === options.transcribing)
+    } as never,
     {
       ensureReady: tools,
       ensureFfmpeg: tools,
@@ -134,6 +138,22 @@ describe.each(['darwin', 'win32'] as const)('recording file safety on %s', (plat
       await expect(invoke('recording:delete', MEETING)).resolves.toEqual({ status: 'busy' })
 
       await expect(fsp.access(meetingDir)).resolves.toBeUndefined()
+    })
+
+    it('refuses to delete a recording that is being transcribed', async () => {
+      const { invoke } = await setup(platform, { isRecording: false, transcribing: MEETING })
+
+      await expect(invoke('recording:delete', MEETING)).resolves.toEqual({ status: 'busy' })
+
+      await expect(fsp.readFile(path.join(meetingDir, 'mic-0000.webm'), 'utf8')).resolves.toBe(
+        'kept'
+      )
+    })
+
+    it('still deletes a recording while a different one is being transcribed', async () => {
+      const { invoke } = await setup(platform, { isRecording: false, transcribing: 'other' })
+
+      await expect(invoke('recording:delete', MEETING)).resolves.toEqual({ status: 'deleted' })
     })
 
     it('deletes a recording with no active work', async () => {

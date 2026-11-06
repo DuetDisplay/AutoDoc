@@ -995,6 +995,7 @@ export function MeetingDetail() {
           mergeProgress(payload.status, current, payload.progress)
         )
         setTranscriptionBackendLabel(payload.backendLabel)
+        if (payload.status === 'complete' || payload.status === 'failed') void refreshDetail()
         if (payload.status === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
           window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
@@ -1426,6 +1427,11 @@ export function MeetingDetail() {
       clearInterval(interval)
     }
   }, [id, transcriptionStatus, segmentationStatus])
+
+  // Queued jobs are safe to delete: only a running job holds the meeting's files open.
+  const deleteBlocked =
+    detail?.deleteBlocked === true ||
+    ['downloading', 'transcribing', 'diarizing'].includes(transcriptionStatus)
 
   const handleDelete = async () => {
     if (!id) return
@@ -2046,15 +2052,13 @@ export function MeetingDetail() {
                     {t('meeting.deleteRecording')}
                   </div>
                   <div className="text-[11px] text-ink-faint">
-                    {detail?.deleteBlocked
-                      ? t('meeting.deleteBlocked')
-                      : t('meeting.deleteRecordingHint')}
+                    {deleteBlocked ? t('meeting.deleteBlocked') : t('meeting.deleteRecordingHint')}
                   </div>
                 </div>
-                {!showDeleteConfirm || detail?.deleteBlocked ? (
+                {!showDeleteConfirm || deleteBlocked ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    disabled={detail?.deleteBlocked}
+                    disabled={deleteBlocked}
                     className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark enabled:hover:bg-clay-light disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {t('common.delete')}

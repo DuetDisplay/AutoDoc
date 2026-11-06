@@ -377,7 +377,8 @@ describe('recording IPC source handling', () => {
         } as any,
         {
           getStatus: vi.fn(),
-          enqueue: vi.fn()
+          enqueue: vi.fn(),
+          isActiveJob: vi.fn(() => false)
         } as any,
         {
           ensureReady: vi.fn(),

@@ -338,7 +338,7 @@ export const en = {
   'meeting.cannotUndo': 'This action cannot be undone.',
   'meeting.deleteRecording': 'Delete recording',
   'meeting.deleteBlocked':
-    'Stop the recording and wait for it to finish saving before deleting it.',
+    'Stop the recording and wait for saving and transcription to finish before deleting it.',
   'meeting.deleteFailed': "Couldn't delete this recording. Try again.",
   'meeting.deleteRecordingHint': 'Permanently remove all audio, video, transcript, and notes',
   'meeting.confirmDelete': 'Confirm Delete',

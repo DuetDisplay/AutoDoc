@@ -99,7 +99,8 @@ describe('deleting a recording', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Confirm Delete', exact: true }))
   }
 
-  const blockedReason = 'Stop the recording and wait for it to finish saving before deleting it.'
+  const blockedReason =
+    'Stop the recording and wait for saving and transcription to finish before deleting it.'
 
   it('disables Delete and explains why while the recording is busy', async () => {
     const api = window.electronAPI as unknown as MockElectronAPI
@@ -114,6 +115,48 @@ describe('deleting a recording', () => {
 
     expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
     expect(screen.getByText(blockedReason)).toBeInTheDocument()
+  })
+
+  it.each(['downloading', 'transcribing', 'diarizing'] as const)(
+    'disables Delete while transcription is %s, then enables it when it ends',
+    async (status) => {
+      const api = window.electronAPI as unknown as MockElectronAPI
+      api.setHandler('transcription:get-status', status)
+      await openSettings()
+
+      expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+      expect(screen.getByText(blockedReason)).toBeInTheDocument()
+
+      await act(async () =>
+        api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+      )
+
+      expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+    }
+  )
+
+  it('leaves Delete available for a recording that is only queued', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'queued')
+    await openSettings()
+
+    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+  })
+
+  it('enables Delete again if a refused delete was waiting on transcription', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:delete', { status: 'busy' })
+    await openSettings()
+    await confirmDelete()
+    expect(await screen.findByText(blockedReason)).toBeInTheDocument()
+
+    await act(async () =>
+      api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+    )
   })
 
   it('stays on the page and explains when main refuses a stale Delete', async () => {

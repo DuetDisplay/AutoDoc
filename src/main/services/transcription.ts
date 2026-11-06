@@ -215,6 +215,11 @@ export class TranscriptionService {
     this.onCompleteCallback = callback
   }
 
+  /** True while the job may hold the meeting's files open. A finished job has released them. */
+  isActiveJob(meetingId: string): boolean {
+    return this.activeJobId === meetingId && this.activeStatus !== 'complete'
+  }
+
   hasActiveOrQueuedWork(): boolean {
     return this.processing || this.activeJobId !== null || this.queue.length > 0
   }
