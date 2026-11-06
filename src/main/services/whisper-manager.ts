@@ -1545,6 +1545,11 @@ export class WhisperManager extends EventEmitter {
           await this.ensureMlxWhisperReady()
           return
         } catch (err) {
+          // A failed download needs a retry, not another engine: whisper.cpp needs the network too.
+          const reason = classifyMacLanguageSetupError(err)
+          if (reason === 'setup-download-failed' || reason === 'setup-verification-failed') {
+            throw err
+          }
           logAutodocFailure({
             area: 'whisper',
             message: 'MLX Whisper setup failed; falling back to whisper.cpp',

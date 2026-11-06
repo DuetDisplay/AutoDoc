@@ -550,6 +550,63 @@ describe('Whisper onboarding dependency installation', () => {
       }
     })
 
+    it('stays on MLX after a failed download, so Retry downloads again', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        const ensureEnglish = vi
+          .spyOn(manager as any, 'ensureMacEnglishModel')
+          .mockRejectedValueOnce(new Error('Failed to download speech model: 503 Unavailable'))
+          .mockResolvedValue(undefined)
+        vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(true)
+
+        await expect(manager.ensureReady()).rejects.toThrow('Failed to download speech model')
+        expect(manager.isMlxWhisperSelected()).toBe(true)
+        expect(manager.getTranscriptionBackend()).toBe('mlx-whisper')
+
+        await manager.ensureReady()
+
+        expect(ensureEnglish).toHaveBeenCalledTimes(2)
+        expect(manager.getTranscriptionBackend()).toBe('mlx-whisper')
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('stays on MLX after every source served a bad file', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        vi.spyOn(manager as any, 'ensureMacEnglishModel').mockRejectedValueOnce(
+          new Error('Downloaded speech model failed SHA256 verification: expected a, received b.')
+        )
+
+        await expect(manager.ensureReady()).rejects.toThrow('SHA256')
+
+        expect(manager.isMlxWhisperSelected()).toBe(true)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('still falls back when MLX itself fails, not the download', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        vi.spyOn(manager as any, 'ensureMacEnglishModel').mockResolvedValue(undefined)
+        vi.spyOn(manager as any, 'recoverFromMlxProbeValidationFailure').mockResolvedValue(
+          undefined
+        )
+        vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(false)
+
+        await manager.ensureReady().catch(() => {})
+
+        expect(manager.isMlxWhisperSelected()).toBe(false)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
     it('leaves a custom model override alone', async () => {
       const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
       vi.stubEnv('AUTODOC_MLX_WHISPER_MODEL', 'my-org/my-model')
