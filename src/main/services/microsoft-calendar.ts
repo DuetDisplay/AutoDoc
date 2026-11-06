@@ -11,6 +11,7 @@ import {
 import type { CalendarEvent, CalendarAccount, OAuthTokens } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
 import {
+  CALENDAR_CONNECTION_CANCELLED_MESSAGE,
   NO_AUTH_WORKER_MESSAGE,
   CalendarTransientError,
   ReconnectRequiredCalendarAuthError,
@@ -179,7 +180,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       const timeout = setTimeout(() => {
         rejectAndClose(new Error('Calendar connection timed out'))
       }, OAUTH_CALLBACK_TIMEOUT_MS)
-      const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
+      const cancel = (): void => rejectAndClose(new Error(CALENDAR_CONNECTION_CANCELLED_MESSAGE))
       this.pendingConnect = { cancel, closed }
 
       const closeServer = (): Promise<void> => {

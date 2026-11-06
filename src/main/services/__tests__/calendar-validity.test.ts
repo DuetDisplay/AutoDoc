@@ -3,6 +3,7 @@ import { CalendarManager } from '../calendar-manager'
 import {
   CalendarTransientError,
   ReconnectRequiredCalendarAuthError,
+  isTransientCalendarError,
   isReconnectRequiredGoogleAuthError,
   isReconnectRequiredMicrosoftAuthError
 } from '../calendar-error-classification'
@@ -651,5 +652,20 @@ describe('MicrosoftCalendarProvider token refresh', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
     expect(logAutodocFailure).not.toHaveBeenCalled()
+  })
+})
+
+describe('isTransientCalendarError', () => {
+  it.each([
+    'request to https://www.googleapis.com/calendar/v3 failed, reason: socket hang up',
+    'Client network socket disconnected before secure TLS connection was established',
+    'connect ECONNREFUSED 142.250.72.10:443',
+    'terminated'
+  ])('treats "%s" as temporary', (message) => {
+    expect(isTransientCalendarError(new Error(message))).toBe(true)
+  })
+
+  it('does not treat a sign-in failure as temporary', () => {
+    expect(isTransientCalendarError(new Error('invalid_grant'))).toBe(false)
   })
 })

@@ -22,6 +22,7 @@ import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
+import { isTransientNetworkError } from './network-error-classification'
 import { withSentryFingerprint } from './sentry-fingerprint'
 import {
   createOllamaModelLoadFailedError,
@@ -347,6 +348,19 @@ export function parseWindowsNetstatListeningPids(output: string): number[] {
     }
   }
   return pids
+}
+
+/** A connection dropped during a model download is ordinary and is retried, so it isn't reported. */
+function logModelPullFailure(
+  message: string,
+  error: unknown,
+  context: Record<string, unknown>
+): void {
+  if (isTransientNetworkError(error)) {
+    logAutodocEvent({ area: 'ollama', level: 'warn', message, context })
+  } else {
+    logAutodocFailure({ area: 'ollama', message, error, context })
+  }
 }
 
 export class OllamaManager extends EventEmitter {
@@ -1135,11 +1149,9 @@ export class OllamaManager extends EventEmitter {
       await this.deleteLeftoverModels(next, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'background preferred notes model pull failed',
-        error,
-        context: { pullModel: plan.pullModel, activeModel: this.model }
+      logModelPullFailure('background preferred notes model pull failed', error, {
+        pullModel: plan.pullModel,
+        activeModel: this.model
       })
     }
   }
@@ -1161,11 +1173,9 @@ export class OllamaManager extends EventEmitter {
       await this.scheduleNotesCleanup(adopted ? this.preferredModel : plan.pullModel, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'background preferred notes model pull failed',
-        error,
-        context: { pullModel: plan.pullModel, activeModel: this.model }
+      logModelPullFailure('background preferred notes model pull failed', error, {
+        pullModel: plan.pullModel,
+        activeModel: this.model
       })
     }
   }
@@ -2184,11 +2194,9 @@ export class OllamaManager extends EventEmitter {
         context: { model, alreadyInstalled, elapsedMs: Date.now() - startedAt }
       })
     } catch (error) {
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'ollama model pull failed',
-        error,
-        context: { model, elapsedMs: Date.now() - startedAt }
+      logModelPullFailure('ollama model pull failed', error, {
+        model,
+        elapsedMs: Date.now() - startedAt
       })
       throw error
     }

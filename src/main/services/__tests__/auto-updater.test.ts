@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initAutoUpdater, installUpdate } from '../auto-updater'
 
 const {
+  logAutodocEvent,
   logAutodocFailure,
   checkForUpdates,
   send,
@@ -16,6 +17,7 @@ const {
   let throwOnConfigure = false
   let appVersion = '0.1.19'
   return {
+    logAutodocEvent: vi.fn(),
     logAutodocFailure: vi.fn(),
     checkForUpdates: vi.fn(),
     send: vi.fn(),
@@ -70,6 +72,7 @@ vi.mock('@electron-toolkit/utils', () => ({
 }))
 
 vi.mock('../autodoc-log', () => ({
+  logAutodocEvent,
   logAutodocFailure
 }))
 
@@ -398,6 +401,40 @@ describe('Auto-updater validity characterization', () => {
     vi.advanceTimersByTime(1_000)
 
     expect(quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'HttpError: 503 ',
+    'Cannot parse releases feed: HttpError: 504 ',
+    'net::ERR_INTERNET_DISCONNECTED',
+    'read ETIMEDOUT'
+  ])('logs "%s" locally without reporting it', (message) => {
+    initAutoUpdater()
+    const errorHandler = on.mock.calls.findLast(([eventName]) => eventName === 'error')?.[1] as (
+      error: Error
+    ) => void
+
+    errorHandler(new Error(message))
+
+    expect(logAutodocFailure).not.toHaveBeenCalled()
+    expect(logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ area: 'app', level: 'warn', message: 'Auto-updater failed' })
+    )
+    expect(send).toHaveBeenLastCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'error' })
+    )
+  })
+
+  it('still reports a network-looking failure while installing', () => {
+    initAutoUpdater()
+    quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('read ETIMEDOUT')
+    })
+
+    installUpdate()
+
+    expect(logAutodocFailure).toHaveBeenCalledOnce()
   })
 
   it('releases the recording shutdown lock if native installation fails', () => {

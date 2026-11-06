@@ -2352,3 +2352,45 @@ it('on macOS kills only the port listener, never this app as an Ollama client', 
   expect(execSync.mock.calls[0][0]).toMatch(/^lsof -ti tcp:\d+ -sTCP:LISTEN$/)
   expect(kill.mock.calls).toEqual([[4242, 'SIGKILL']])
 })
+
+describe('background notes model download failures', () => {
+  async function pullFails(error: Error): Promise<LoadedOllamaManager> {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-pull-'))
+    try {
+      const loaded = await loadOllamaManager(rootDir)
+      const manager = new loaded.OllamaManager() as unknown as {
+        startEpoch: number
+        pullNotesModel: Mock
+        pullWindowsPreferredInBackground: (
+          plan: { pullModel: string },
+          epoch: number
+        ) => Promise<void>
+      }
+      manager.pullNotesModel = vi.fn().mockRejectedValue(error)
+      await manager.pullWindowsPreferredInBackground({ pullModel: 'model' }, manager.startEpoch)
+      return loaded
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  }
+
+  it.each([
+    ['a connection that could not be made', new TypeError('fetch failed')],
+    ['a connection dropped mid-download', new TypeError('terminated')]
+  ])('logs %s locally without reporting it', async (_label, error) => {
+    const loaded = await pullFails(error)
+
+    expect(loaded.logAutodocFailure).not.toHaveBeenCalled()
+    expect(loaded.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'background preferred notes model pull failed' })
+    )
+  })
+
+  it('still reports any other download failure', async () => {
+    const loaded = await pullFails(new Error('model manifest is invalid'))
+
+    expect(loaded.logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'background preferred notes model pull failed' })
+    )
+  })
+})

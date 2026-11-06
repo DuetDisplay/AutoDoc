@@ -1,8 +1,9 @@
 import { autoUpdater } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { getConfiguredPublicUpdateFeedUrl } from './distribution-config'
+import { isTransientNetworkError } from './network-error-classification'
 import { isDiskFullError } from './disk-full'
 
 export interface UpdateStatus {
@@ -87,15 +88,13 @@ function reportUpdaterError(message: string, err: unknown): void {
   if (currentStatus.state === 'installing') onInstallFailed?.()
   const error = normalizeUpdaterError(err)
   console.error(`${message}:`, err)
-  logAutodocFailure({
-    area: 'app',
-    message,
-    error,
-    context: {
-      channel: 'stable',
-      currentVersion: app.getVersion()
-    }
-  })
+  const context = { channel: 'stable', currentVersion: app.getVersion() }
+  // A failed check retries in 4 hours, but a failed install leaves the user without the update.
+  if (currentStatus.state !== 'installing' && isTransientNetworkError(error)) {
+    logAutodocEvent({ area: 'app', level: 'warn', message, context })
+  } else {
+    logAutodocFailure({ area: 'app', message, error, context })
+  }
   broadcast({
     state: 'error',
     error: formatUpdaterError(error),
