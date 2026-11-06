@@ -1,3 +1,6 @@
+/** Only unofficial builds lack an auth worker. Polling can't fix that, so it isn't reported. */
+export const NO_AUTH_WORKER_MESSAGE = 'Calendar sign-in is not configured for this build'
+
 export class CalendarTransientError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message)
@@ -116,7 +119,8 @@ function hasStringField(value: unknown, field: string, expected: string): boolea
 export function isReconnectRequiredGoogleAuthError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase()
 
-  if (message.includes('invalid_grant')) {
+  // invalid_request means Google refused this refresh token, and retrying won't change that.
+  if (message.includes('invalid_grant') || message.includes('invalid_request')) {
     return true
   }
 
