@@ -50,9 +50,14 @@ test('quitting before the first capture chunk saves audio and survives relaunch'
     const base = path.join(profile, 'recordings')
     const meeting = readdirSync(base)[0]
     expect(meeting).toBeTruthy()
+    const logPath = path.join(profile, 'logs', 'autodocLog.log')
     expect(
       existsSync(path.join(base, meeting, 'mic.webm')) ||
-        existsSync(path.join(base, meeting, 'system.webm'))
+        existsSync(path.join(base, meeting, 'system.webm')),
+      [
+        `Files after quit: ${readdirSync(path.join(base, meeting)).join(', ')}`,
+        `Log: ${existsSync(logPath) ? readFileSync(logPath, 'utf8').slice(-4_000) : 'none'}`
+      ].join('\n')
     ).toBe(true)
     const audio = path.join(
       base,
