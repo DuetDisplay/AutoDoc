@@ -1,8 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { ReadStream } from 'node:fs'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startRecordingMediaHttpServer, stopRecordingMediaHttpServer } from '../media-http-server'
+
+const { openedStreams } = vi.hoisted(() => ({ openedStreams: [] as ReadStream[] }))
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    createReadStream: (...args: Parameters<typeof actual.createReadStream>) => {
+      const stream = actual.createReadStream(...args)
+      openedStreams.push(stream)
+      return stream
+    }
+  }
+})
 
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
@@ -49,5 +64,62 @@ describe('recording media download responses', () => {
     const invalid = await fetch(base.replace(meetingId, 'not-a-meeting') + '?download=1')
     expect(invalid.status).toBe(404)
     expect(invalid.headers.get('content-disposition')).toBeNull()
+  })
+})
+
+// The player aborts requests when it seeks or the page closes. A file left open
+// afterwards blocks the Windows rename that encrypts the recording (AD-199).
+describe('recording media aborted requests', () => {
+  const largeSize = 64 * 1024 * 1024
+  let largeUrl: string
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'autodoc-media-abort-test-'))
+    await mkdir(join(root, meetingId))
+    await writeFile(join(root, meetingId, 'system.webm'), Buffer.alloc(largeSize))
+    const port = await startRecordingMediaHttpServer(() => root)
+    largeUrl = `http://127.0.0.1:${port}/media/${meetingId}/system.webm`
+  })
+  afterAll(async () => {
+    stopRecordingMediaHttpServer()
+    if (root) await rm(root, { recursive: true, force: true })
+  })
+
+  async function abortAfterFirstChunk(headers: http.OutgoingHttpHeaders): Promise<ReadStream> {
+    const before = openedStreams.length
+    await new Promise<void>((resolve, reject) => {
+      const req = http.get(largeUrl, { headers }, (res) => {
+        res.once('data', () => {
+          req.destroy()
+          resolve()
+        })
+      })
+      req.on('error', (err) => {
+        if ((err as NodeJS.ErrnoException).code !== 'ECONNRESET') reject(err)
+      })
+    })
+    expect(openedStreams.length).toBe(before + 1)
+    return openedStreams[before]
+  }
+
+  function closesWithin(stream: ReadStream, ms: number): Promise<boolean> {
+    if (stream.closed) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms)
+      stream.once('close', () => {
+        clearTimeout(timer)
+        resolve(true)
+      })
+    })
+  }
+
+  it('closes the file when a full response is aborted', async () => {
+    const stream = await abortAfterFirstChunk({})
+    expect(await closesWithin(stream, 2_000)).toBe(true)
+  })
+
+  it('closes the file when a range response is aborted', async () => {
+    const stream = await abortAfterFirstChunk({ Range: `bytes=0-${largeSize - 2}` })
+    expect(await closesWithin(stream, 2_000)).toBe(true)
   })
 })
