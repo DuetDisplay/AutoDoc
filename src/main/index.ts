@@ -75,12 +75,18 @@ import { windowBackgroundForAppearance } from './services/appearance-runtime'
 import { tMain, setMainUiLanguage } from './services/ui-locale'
 import { refreshApplicationMenu } from './services/application-menu'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { isMeetingLanguageAvailable } from '../shared/meeting-language'
 import {
   bindMeetingLanguagePreferenceStore,
   bindWindowsNotesModelSource,
-  resolveRecordingMeetingLanguage
+  currentMeetingLanguageAvailability,
+  resolveRecordingMeetingLanguage,
+  waitForWindowsNotesModel
 } from './services/meeting-language-availability'
-import { bindWindowsMultilingualReadiness } from './services/windows-multilingual-readiness'
+import {
+  bindWindowsMultilingualReadiness,
+  getWindowsMeetingLanguageAvailability
+} from './services/windows-multilingual-readiness'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { speechRuntimeLicenseNotices } from './services/speech-runtime-licenses'
@@ -1989,7 +1995,20 @@ app.whenReady().then(async () => {
     transcriptionService,
     whisperManager,
     calendarManager,
-    () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage())
+    () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage()),
+    async (language) => {
+      await waitForWindowsNotesModel()
+      if (!isMeetingLanguageAvailable(language, currentMeetingLanguageAvailability())) {
+        return `Meeting language ${language} is not available on this computer.`
+      }
+      if (process.platform === 'win32') {
+        const engine = await getWindowsMeetingLanguageAvailability(language)
+        if (engine.availability === 'locked') {
+          return engine.reason ?? "This language isn't available on this PC."
+        }
+      }
+      return null
+    }
   )
   recoverInterruptedRecordings = recoverInterruptedRecordingsImpl
   getUpdateInstallBlockReason = () => {

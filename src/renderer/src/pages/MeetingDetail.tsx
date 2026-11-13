@@ -41,6 +41,13 @@ import { MediaPlaybackControls } from '../components/MediaPlaybackControls'
 import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
+import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
+  type MeetingLanguageAvailability,
+  type MeetingLanguageCode
+} from '../../../shared/meeting-language'
 
 type Tab = 'notes' | 'transcript' | 'settings'
 
@@ -346,10 +353,48 @@ export function MeetingDetail() {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    meetingLanguage?: MeetingLanguageCode
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
     videoCaptureEndedEarly?: boolean
   } | null>(null)
+  // Language chosen in the Reprocess section; saved to the recording when the
+  // transcript is reprocessed. Keyed by meeting so a choice never carries over
+  // to another meeting; null means "keep the recording's language".
+  const [reprocessLanguageDraft, setReprocessLanguageDraft] = useState<{
+    meetingId: string
+    language: MeetingLanguageCode
+  } | null>(null)
+  const reprocessLanguage =
+    reprocessLanguageDraft && reprocessLanguageDraft.meetingId === id
+      ? reprocessLanguageDraft.language
+      : null
+  // Meeting whose language save failed; cleared on a new choice or a retry.
+  const [reprocessLanguageErrorFor, setReprocessLanguageErrorFor] = useState<string | null>(null)
+  // Meeting whose language save is in flight; its picker and Reprocess button
+  // stay locked so the saved language and the shown one cannot diverge.
+  const [reprocessLanguageSavingFor, setReprocessLanguageSavingFor] = useState<string | null>(null)
+  const reprocessLanguageSaving = reprocessLanguageSavingFor === id
+  const [reprocessLanguageAvailability, setReprocessLanguageAvailability] =
+    useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
+  useEffect(() => {
+    let cancelled = false
+    // Engine states mark which languages are already downloaded on this computer.
+    void Promise.all([
+      window.electronAPI.invoke('prefs:get-meeting-language-availability'),
+      window.electronAPI.invoke('whisper:get-meeting-language-states').catch(() => undefined)
+    ])
+      .then(([availability, languageStates]) => {
+        if (cancelled || !availability) return
+        setReprocessLanguageAvailability(
+          languageStates ? { ...availability, languageStates } : availability
+        )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id])
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
@@ -1092,8 +1137,36 @@ export function MeetingDetail() {
       })
   }
 
-  const handleReprocessTranscript = () => {
+  const handleReprocessTranscript = async () => {
     if (!id) return
+    const storedLanguage = detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+    if (reprocessLanguageSaving) return
+    setReprocessLanguageErrorFor(null)
+    if (reprocessLanguage && reprocessLanguage !== storedLanguage) {
+      setReprocessLanguageSavingFor(id)
+      try {
+        await window.electronAPI.invoke('recording:set-meeting-language', id, reprocessLanguage)
+      } catch (error) {
+        // Keep the selection so a second click retries the save instead of
+        // reprocessing in the old language.
+        console.error('Failed to change meeting language:', error)
+        if (activeMeetingIdRef.current === id) setReprocessLanguageErrorFor(id)
+        return
+      } finally {
+        setReprocessLanguageSavingFor((current) => (current === id ? null : current))
+      }
+      if (activeMeetingIdRef.current !== id) {
+        // The user opened another meeting while the save was pending: still
+        // reprocess this one, but leave the displayed meeting's state alone.
+        if (isWindowsRenderer()) {
+          window.electronAPI.invoke('transcription:retry', id, { reprocess: true })
+        } else {
+          window.electronAPI.invoke('transcription:retry', id)
+        }
+        return
+      }
+      setDetail((prev) => (prev ? { ...prev, meetingLanguage: reprocessLanguage } : prev))
+    }
     transcriptionEventRevisionRef.current += 1
     segmentationEventRevisionRef.current += 1
     setTranscriptionStatus('queued')
@@ -1143,7 +1216,11 @@ export function MeetingDetail() {
         (showTranscriptionMemoryFailure ? transcriptionMemoryFailure : segmentationMemoryFailure) ??
         {}
       }
-      onRetry={showTranscriptionMemoryFailure ? handleReprocessTranscript : handleReprocessNotes}
+      onRetry={
+        showTranscriptionMemoryFailure
+          ? () => void handleReprocessTranscript()
+          : handleReprocessNotes
+      }
       onViewTranscript={
         !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
           ? () => setActiveTab('transcript')
@@ -1159,7 +1236,9 @@ export function MeetingDetail() {
   const diskFullCallout = showDiskFullCallout ? (
     <DiskFullCallout
       stage={showTranscriptionDiskFull ? 'transcription' : 'notes'}
-      onRetry={showTranscriptionDiskFull ? handleReprocessTranscript : handleReprocessNotes}
+      onRetry={
+        showTranscriptionDiskFull ? () => void handleReprocessTranscript() : handleReprocessNotes
+      }
     />
   ) : null
   const showCpuFallbackNotice =
@@ -1933,6 +2012,40 @@ export function MeetingDetail() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">
+                      {t('settings.meetingLanguage')}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <MeetingLanguagePicker
+                      value={
+                        reprocessLanguage ?? detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+                      }
+                      disabled={
+                        reprocessLanguageSaving ||
+                        detail?.isFinalizing === true ||
+                        transcriptionStatus === 'transcribing' ||
+                        transcriptionStatus === 'queued' ||
+                        transcriptionStatus === 'downloading' ||
+                        transcriptionStatus === 'diarizing'
+                      }
+                      availability={reprocessLanguageAvailability}
+                      onChange={(language) => {
+                        if (!id) return
+                        setReprocessLanguageErrorFor(null)
+                        setReprocessLanguageDraft({ meetingId: id, language })
+                      }}
+                    />
+                  </div>
+                  {reprocessLanguageErrorFor === id && (
+                    <p role="alert" className="basis-full text-[11px] text-clay-dark">
+                      {t('ui.couldNotSaveThisPreferenceTryAgain')}
+                    </p>
+                  )}
+                </div>
+                <div className="border-t border-border" />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
+                    <div className="text-[12.5px] font-semibold text-ink">
                       {t('meeting.transcript')}
                     </div>
                     <div className="text-[11px] text-ink-faint">
@@ -1940,8 +2053,9 @@ export function MeetingDetail() {
                     </div>
                   </div>
                   <button
-                    onClick={handleReprocessTranscript}
+                    onClick={() => void handleReprocessTranscript()}
                     disabled={
+                      reprocessLanguageSaving ||
                       transcriptionStatus === 'transcribing' ||
                       transcriptionStatus === 'queued' ||
                       transcriptionStatus === 'downloading' ||
