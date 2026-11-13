@@ -2344,14 +2344,17 @@ export function registerRecordingIpc(
       }
       const blockReason = await Promise.resolve(getMeetingLanguageBlockReason(language))
       if (blockReason) throw new Error(blockReason)
-      if (normalizeMeetingLanguage(metadata.meetingLanguage) === language) return
-      await persistRecordingMetadata(meetingDir, { ...metadata, meetingLanguage: language })
+      // The checks above await, and other handlers (title, video status) can
+      // write metadata meanwhile: merge the language into the latest copy.
+      const latest = (await readMetadata(meetingDir)) ?? metadata
+      if (normalizeMeetingLanguage(latest.meetingLanguage) === language) return
+      await persistRecordingMetadata(meetingDir, { ...latest, meetingLanguage: language })
       if (postProcessingLanguages.has(meetingId)) postProcessingLanguages.set(meetingId, language)
       logAutodocEvent({
         area: 'recording',
         message: 'meeting language changed for existing recording',
         meetingId,
-        context: { from: metadata.meetingLanguage ?? null, to: language }
+        context: { from: latest.meetingLanguage ?? null, to: language }
       })
       broadcastEntryUpdated(meetingId)
     }

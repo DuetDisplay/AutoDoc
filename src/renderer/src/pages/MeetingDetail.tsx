@@ -359,12 +359,21 @@ export function MeetingDetail() {
     videoCaptureEndedEarly?: boolean
   } | null>(null)
   // Language chosen in the Reprocess section; saved to the recording when the
-  // transcript is reprocessed. Null means "keep the recording's language".
-  const [reprocessLanguage, setReprocessLanguage] = useState<MeetingLanguageCode | null>(null)
+  // transcript is reprocessed. Keyed by meeting so a choice never carries over
+  // to another meeting; null means "keep the recording's language".
+  const [reprocessLanguageDraft, setReprocessLanguageDraft] = useState<{
+    meetingId: string
+    language: MeetingLanguageCode
+  } | null>(null)
+  const reprocessLanguage =
+    reprocessLanguageDraft && reprocessLanguageDraft.meetingId === id
+      ? reprocessLanguageDraft.language
+      : null
+  // Meeting whose language save failed; cleared on a new choice or a retry.
+  const [reprocessLanguageErrorFor, setReprocessLanguageErrorFor] = useState<string | null>(null)
   const [reprocessLanguageAvailability, setReprocessLanguageAvailability] =
     useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
   useEffect(() => {
-    setReprocessLanguage(null)
     let cancelled = false
     // Engine states mark which languages are already downloaded on this computer.
     void Promise.all([
@@ -1127,15 +1136,28 @@ export function MeetingDetail() {
   const handleReprocessTranscript = async () => {
     if (!id) return
     const storedLanguage = detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+    setReprocessLanguageErrorFor(null)
     if (reprocessLanguage && reprocessLanguage !== storedLanguage) {
       try {
         await window.electronAPI.invoke('recording:set-meeting-language', id, reprocessLanguage)
-        setDetail((prev) => (prev ? { ...prev, meetingLanguage: reprocessLanguage } : prev))
       } catch (error) {
+        // Keep the selection so a second click retries the save instead of
+        // reprocessing in the old language.
         console.error('Failed to change meeting language:', error)
-        setReprocessLanguage(null)
+        if (activeMeetingIdRef.current === id) setReprocessLanguageErrorFor(id)
         return
       }
+      if (activeMeetingIdRef.current !== id) {
+        // The user opened another meeting while the save was pending: still
+        // reprocess this one, but leave the displayed meeting's state alone.
+        if (isWindowsRenderer()) {
+          window.electronAPI.invoke('transcription:retry', id, { reprocess: true })
+        } else {
+          window.electronAPI.invoke('transcription:retry', id)
+        }
+        return
+      }
+      setDetail((prev) => (prev ? { ...prev, meetingLanguage: reprocessLanguage } : prev))
     }
     transcriptionEventRevisionRef.current += 1
     segmentationEventRevisionRef.current += 1
@@ -1998,9 +2020,18 @@ export function MeetingDetail() {
                         transcriptionStatus === 'diarizing'
                       }
                       availability={reprocessLanguageAvailability}
-                      onChange={setReprocessLanguage}
+                      onChange={(language) => {
+                        if (!id) return
+                        setReprocessLanguageErrorFor(null)
+                        setReprocessLanguageDraft({ meetingId: id, language })
+                      }}
                     />
                   </div>
+                  {reprocessLanguageErrorFor === id && (
+                    <p role="alert" className="basis-full text-[11px] text-clay-dark">
+                      {t('ui.couldNotSaveThisPreferenceTryAgain')}
+                    </p>
+                  )}
                 </div>
                 <div className="border-t border-border" />
                 <div className="flex flex-wrap items-center justify-between gap-3">

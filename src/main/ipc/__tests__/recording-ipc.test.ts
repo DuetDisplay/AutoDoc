@@ -1855,12 +1855,26 @@ describe('recording IPC meeting language', () => {
     expect(writes).toHaveLength(1)
     await expect(setLanguage(null, 'meeting-1', 'xx')).rejects.toThrow('not supported')
 
+    // A title saved while the language checks were pending is not overwritten.
+    const { handler: slowHandler } = register({ recordingsDir: '/mock/recordings' })
+    let reads = 0
+    vi.mocked(readMetadata).mockImplementation(async () => {
+      reads += 1
+      return reads === 1 ? persisted : { ...persisted!, customTitle: 'Renamed meanwhile' }
+    })
+    await slowHandler('recording:set-meeting-language')(null, 'meeting-1', 'en')
+    expect(persisted).toEqual(
+      expect.objectContaining({ meetingLanguage: 'en', customTitle: 'Renamed meanwhile' })
+    )
+    expect(writes).toHaveLength(2)
+    vi.mocked(readMetadata).mockImplementation(async () => persisted)
+
     // A recording that is still being saved keeps its language.
     persisted = { ...persisted!, isFinalizing: true }
-    await expect(setLanguage(null, 'meeting-1', 'en')).rejects.toThrow(
+    await expect(setLanguage(null, 'meeting-1', 'de')).rejects.toThrow(
       'until the recording is saved'
     )
-    expect(writes).toHaveLength(1)
+    expect(writes).toHaveLength(2)
 
     vi.mocked(readMetadata).mockResolvedValue(null)
     vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
