@@ -147,6 +147,38 @@ describe('memory failure guidance', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('locks the language picker and Reprocess while the language save is pending', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'complete')
+    let finishSave: () => void = () => {}
+    api.setHandler(
+      'recording:set-meeting-language',
+      () => new Promise<void>((resolve) => (finishSave = resolve))
+    )
+    await renderMeetingDetail()
+    await userEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }))
+    const picker = () => screen.getByRole('button', { name: /meeting language/i })
+    const reprocess = () => screen.getAllByRole('button', { name: 'Reprocess', exact: true })[0]
+    await userEvent.click(picker())
+    await userEvent.click(screen.getByRole('option', { name: /German/ }))
+    await userEvent.click(reprocess())
+
+    // Until the save settles the choice cannot change and cannot be submitted twice.
+    expect(picker()).toBeDisabled()
+    expect(reprocess()).toBeDisabled()
+    await userEvent.click(reprocess())
+    expect(
+      vi.mocked(api.invoke).mock.calls.filter(([c]) => c === 'recording:set-meeting-language')
+    ).toHaveLength(1)
+    expect(api.invoke).not.toHaveBeenCalledWith('transcription:retry', 'test-123')
+
+    await act(async () => finishSave())
+    await vi.waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123')
+    )
+    expect(picker()).toHaveTextContent('German')
+  })
+
   it('shows a persisted transcription shortage in Notes and Transcript and clears it on retry', async () => {
     const api = window.electronAPI as unknown as MockElectronAPI
     api.setHandler('transcription:get-status', 'failed')

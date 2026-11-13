@@ -371,6 +371,10 @@ export function MeetingDetail() {
       : null
   // Meeting whose language save failed; cleared on a new choice or a retry.
   const [reprocessLanguageErrorFor, setReprocessLanguageErrorFor] = useState<string | null>(null)
+  // Meeting whose language save is in flight; its picker and Reprocess button
+  // stay locked so the saved language and the shown one cannot diverge.
+  const [reprocessLanguageSavingFor, setReprocessLanguageSavingFor] = useState<string | null>(null)
+  const reprocessLanguageSaving = reprocessLanguageSavingFor === id
   const [reprocessLanguageAvailability, setReprocessLanguageAvailability] =
     useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
   useEffect(() => {
@@ -1136,8 +1140,10 @@ export function MeetingDetail() {
   const handleReprocessTranscript = async () => {
     if (!id) return
     const storedLanguage = detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+    if (reprocessLanguageSaving) return
     setReprocessLanguageErrorFor(null)
     if (reprocessLanguage && reprocessLanguage !== storedLanguage) {
+      setReprocessLanguageSavingFor(id)
       try {
         await window.electronAPI.invoke('recording:set-meeting-language', id, reprocessLanguage)
       } catch (error) {
@@ -1146,6 +1152,8 @@ export function MeetingDetail() {
         console.error('Failed to change meeting language:', error)
         if (activeMeetingIdRef.current === id) setReprocessLanguageErrorFor(id)
         return
+      } finally {
+        setReprocessLanguageSavingFor((current) => (current === id ? null : current))
       }
       if (activeMeetingIdRef.current !== id) {
         // The user opened another meeting while the save was pending: still
@@ -2013,6 +2021,7 @@ export function MeetingDetail() {
                         reprocessLanguage ?? detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
                       }
                       disabled={
+                        reprocessLanguageSaving ||
                         detail?.isFinalizing === true ||
                         transcriptionStatus === 'transcribing' ||
                         transcriptionStatus === 'queued' ||
@@ -2046,6 +2055,7 @@ export function MeetingDetail() {
                   <button
                     onClick={() => void handleReprocessTranscript()}
                     disabled={
+                      reprocessLanguageSaving ||
                       transcriptionStatus === 'transcribing' ||
                       transcriptionStatus === 'queued' ||
                       transcriptionStatus === 'downloading' ||
