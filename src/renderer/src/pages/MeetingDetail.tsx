@@ -41,6 +41,13 @@ import { MediaPlaybackControls } from '../components/MediaPlaybackControls'
 import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
+import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
+  type MeetingLanguageAvailability,
+  type MeetingLanguageCode
+} from '../../../shared/meeting-language'
 
 type Tab = 'notes' | 'transcript' | 'settings'
 
@@ -346,10 +353,35 @@ export function MeetingDetail() {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    meetingLanguage?: MeetingLanguageCode
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
     videoCaptureEndedEarly?: boolean
   } | null>(null)
+  // Language chosen in the Reprocess section; saved to the recording when the
+  // transcript is reprocessed. Null means "keep the recording's language".
+  const [reprocessLanguage, setReprocessLanguage] = useState<MeetingLanguageCode | null>(null)
+  const [reprocessLanguageAvailability, setReprocessLanguageAvailability] =
+    useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
+  useEffect(() => {
+    setReprocessLanguage(null)
+    let cancelled = false
+    // Engine states mark which languages are already downloaded on this computer.
+    void Promise.all([
+      window.electronAPI.invoke('prefs:get-meeting-language-availability'),
+      window.electronAPI.invoke('whisper:get-meeting-language-states').catch(() => undefined)
+    ])
+      .then(([availability, languageStates]) => {
+        if (cancelled || !availability) return
+        setReprocessLanguageAvailability(
+          languageStates ? { ...availability, languageStates } : availability
+        )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id])
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
@@ -1092,8 +1124,19 @@ export function MeetingDetail() {
       })
   }
 
-  const handleReprocessTranscript = () => {
+  const handleReprocessTranscript = async () => {
     if (!id) return
+    const storedLanguage = detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+    if (reprocessLanguage && reprocessLanguage !== storedLanguage) {
+      try {
+        await window.electronAPI.invoke('recording:set-meeting-language', id, reprocessLanguage)
+        setDetail((prev) => (prev ? { ...prev, meetingLanguage: reprocessLanguage } : prev))
+      } catch (error) {
+        console.error('Failed to change meeting language:', error)
+        setReprocessLanguage(null)
+        return
+      }
+    }
     transcriptionEventRevisionRef.current += 1
     segmentationEventRevisionRef.current += 1
     setTranscriptionStatus('queued')
@@ -1143,7 +1186,11 @@ export function MeetingDetail() {
         (showTranscriptionMemoryFailure ? transcriptionMemoryFailure : segmentationMemoryFailure) ??
         {}
       }
-      onRetry={showTranscriptionMemoryFailure ? handleReprocessTranscript : handleReprocessNotes}
+      onRetry={
+        showTranscriptionMemoryFailure
+          ? () => void handleReprocessTranscript()
+          : handleReprocessNotes
+      }
       onViewTranscript={
         !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
           ? () => setActiveTab('transcript')
@@ -1159,7 +1206,9 @@ export function MeetingDetail() {
   const diskFullCallout = showDiskFullCallout ? (
     <DiskFullCallout
       stage={showTranscriptionDiskFull ? 'transcription' : 'notes'}
-      onRetry={showTranscriptionDiskFull ? handleReprocessTranscript : handleReprocessNotes}
+      onRetry={
+        showTranscriptionDiskFull ? () => void handleReprocessTranscript() : handleReprocessNotes
+      }
     />
   ) : null
   const showCpuFallbackNotice =
@@ -1933,6 +1982,30 @@ export function MeetingDetail() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">
+                      {t('settings.meetingLanguage')}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <MeetingLanguagePicker
+                      value={
+                        reprocessLanguage ?? detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+                      }
+                      disabled={
+                        detail?.isFinalizing === true ||
+                        transcriptionStatus === 'transcribing' ||
+                        transcriptionStatus === 'queued' ||
+                        transcriptionStatus === 'downloading' ||
+                        transcriptionStatus === 'diarizing'
+                      }
+                      availability={reprocessLanguageAvailability}
+                      onChange={setReprocessLanguage}
+                    />
+                  </div>
+                </div>
+                <div className="border-t border-border" />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
+                    <div className="text-[12.5px] font-semibold text-ink">
                       {t('meeting.transcript')}
                     </div>
                     <div className="text-[11px] text-ink-faint">
@@ -1940,7 +2013,7 @@ export function MeetingDetail() {
                     </div>
                   </div>
                   <button
-                    onClick={handleReprocessTranscript}
+                    onClick={() => void handleReprocessTranscript()}
                     disabled={
                       transcriptionStatus === 'transcribing' ||
                       transcriptionStatus === 'queued' ||

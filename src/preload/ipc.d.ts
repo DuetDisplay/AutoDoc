@@ -239,6 +239,7 @@ export interface IpcInvokeEvents {
   'recording:get-media': [meetingId: string]
   'recording:report-media-player-error': [payload: RecordingMediaPlayerErrorReport]
   'recording:get-detail': [meetingId: string]
+  'recording:set-meeting-language': [meetingId: string, language: MeetingLanguageCode]
   'search:query': [query: string]
   'chat:send': [question: string]
   'chat:new': []
@@ -421,10 +422,12 @@ export interface IpcInvokeReturns {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    meetingLanguage?: MeetingLanguageCode
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus
     videoCaptureEndedEarly?: boolean
   }
+  'recording:set-meeting-language': void
   'search:query': SearchResult[]
   'chat:send': string
   'chat:new': void

@@ -1818,6 +1818,53 @@ describe('recording IPC meeting language', () => {
 
     vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
   })
+
+  it('changes the language of a finished recording and reports it in the detail', async () => {
+    let persisted: MeetingMetadata | null = {
+      sourceName: 'Zoom',
+      startedAt: 1,
+      stoppedAt: 2,
+      durationSeconds: 1,
+      meetingLanguage: 'en',
+      customTitle: 'Weekly',
+      videoStatus: 'ready'
+    }
+    const writes: MeetingMetadata[] = []
+    vi.mocked(readMetadata).mockImplementation(async () => persisted)
+    vi.mocked(encryptJSON).mockImplementation(async (metadata) => {
+      persisted = metadata as MeetingMetadata
+      writes.push(persisted)
+    })
+    const { handler } = register({ recordingsDir: '/mock/recordings' })
+    const setLanguage = handler('recording:set-meeting-language')
+
+    await setLanguage(null, 'meeting-1', 'de')
+    expect(persisted).toEqual(
+      expect.objectContaining({
+        meetingLanguage: 'de',
+        customTitle: 'Weekly',
+        videoStatus: 'ready'
+      })
+    )
+    expect(await handler('recording:get-detail')(null, 'meeting-1')).toEqual(
+      expect.objectContaining({ meetingLanguage: 'de' })
+    )
+
+    // Same language again writes nothing; unknown codes are rejected.
+    await setLanguage(null, 'meeting-1', 'de')
+    expect(writes).toHaveLength(1)
+    await expect(setLanguage(null, 'meeting-1', 'xx')).rejects.toThrow('not supported')
+
+    // A recording that is still being saved keeps its language.
+    persisted = { ...persisted!, isFinalizing: true }
+    await expect(setLanguage(null, 'meeting-1', 'en')).rejects.toThrow(
+      'until the recording is saved'
+    )
+    expect(writes).toHaveLength(1)
+
+    vi.mocked(readMetadata).mockResolvedValue(null)
+    vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+  })
 })
 
 describe('buildVideoConcatList', () => {
