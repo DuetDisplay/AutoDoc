@@ -19,7 +19,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
-async function run(flag: string | undefined, tool = false) {
+async function run(flag: string | undefined, tool = false, writerText?: string) {
   vi.clearAllMocks()
   vi.stubEnv('AUTODOC_ASK_AI_CITED_CARDS', flag)
   const sender = { id: 41, send: vi.fn() }
@@ -48,9 +48,11 @@ async function run(flag: string | undefined, tool = false) {
             }
           : {
               message: {
-                content: tool
-                  ? 'There are no saved recordings.'
-                  : 'Second [2], first [1], repeat [2], invalid [77].'
+                content:
+                  writerText ??
+                  (tool
+                    ? 'There are no saved recordings.'
+                    : 'Second [2], first [1], repeat [2], invalid [77].')
               },
               done: true
             }
@@ -143,4 +145,20 @@ it('keeps the native count display and shows no source cards on a tool answer wi
 })
 it('keeps flag-off IPC events and writer requests byte-identical to the default', async () => {
   expect(JSON.stringify(await run('0'))).toBe(JSON.stringify(await run(undefined)))
+})
+// AD-202 Windows: the writer sent only "[0]" and the answer finished blank.
+it('answers with the no-match sentence and no source links when the writer sends only [0]', async () => {
+  const { events } = await run(undefined, false, '[0]')
+  expect(events.filter(([name]) => name === 'chat:sources')).toHaveLength(1)
+  expect(events.find(([name]) => name === 'chat:done')![1]).toMatchObject({
+    content: "I didn't find that in your notes or transcripts.",
+    sources: []
+  })
+})
+it('keeps the writer wording and hides links for a worded [0] reply', async () => {
+  const { events } = await run(undefined, false, 'Nothing about parrots is recorded. [0]')
+  expect(events.find(([name]) => name === 'chat:done')![1]).toMatchObject({
+    content: 'Nothing about parrots is recorded.',
+    sources: []
+  })
 })

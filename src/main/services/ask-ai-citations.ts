@@ -48,6 +48,14 @@ export function answerReportsNoEvidence(answer: string): boolean {
   return /\[0\]/.test(answer) && !/\[[1-9]\d*\]/.test(answer)
 }
 
+/** The app's existing no-match wording (ask-ai-answer.ts), used when the writer sends only [0]. */
+export const ASK_AI_NO_EVIDENCE_FALLBACK = "I didn't find that in your notes or transcripts."
+
+/** A [0] reply with no words (AD-202 Windows: the writer sent only "[0]"). */
+export function answerIsOnlyNoEvidenceMarker(answer: string): boolean {
+  return answerReportsNoEvidence(answer) && applyAnswerCitations(answer, []).answer.trim() === ''
+}
+
 /** Final answer text and source links. With AD-202 rules, a [0] reply shows no links. */
 export function finalizeChatAnswer(
   answer: string,

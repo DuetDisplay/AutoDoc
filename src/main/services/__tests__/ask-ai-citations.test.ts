@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  answerIsOnlyNoEvidenceMarker,
   answerReportsNoEvidence,
   applyAnswerCitations,
   finalizeChatAnswer,
@@ -61,6 +62,15 @@ describe('AD-202 final source links', () => {
     expect(answerReportsNoEvidence('The date is unknown [n].')).toBe(false)
     expect(answerReportsNoEvidence('Room [10] was booked.')).toBe(false)
     expect(answerReportsNoEvidence('No mention.')).toBe(false)
+  })
+
+  it('recognises a [0] reply with no words', () => {
+    expect(answerIsOnlyNoEvidenceMarker('[0]')).toBe(true)
+    expect(answerIsOnlyNoEvidenceMarker(' [0] \n')).toBe(true)
+    expect(answerIsOnlyNoEvidenceMarker('[0][0]')).toBe(true)
+    expect(answerIsOnlyNoEvidenceMarker('Nothing about parrots. [0]')).toBe(false)
+    expect(answerIsOnlyNoEvidenceMarker('[1]')).toBe(false)
+    expect(answerIsOnlyNoEvidenceMarker('')).toBe(false)
   })
 
   it('shows no links and strips the marker for a [0] reply by default', () => {

@@ -49,7 +49,13 @@ import {
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
 import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
 import { runAskAiAgent, type AgentToolDeps } from '../services/ask-ai-agent'
-import { finalizeChatAnswer, type ChatSourceCard } from '../services/ask-ai-citations'
+import {
+  ASK_AI_NO_EVIDENCE_FALLBACK,
+  answerIsOnlyNoEvidenceMarker,
+  finalizeChatAnswer,
+  useAskAiAd202Rules,
+  type ChatSourceCard
+} from '../services/ask-ai-citations'
 import {
   answerInventoryIntent,
   answerQuestion,
@@ -848,6 +854,10 @@ export function registerChatIpc(
         onChunk,
         signal
       })
+      // A writer reply of only "[0]" would otherwise finish as a blank answer (AD-202).
+      // Keep the marker so the final answer still shows no source links.
+      if (useAskAiAd202Rules() && answerIsOnlyNoEvidenceMarker(rewritten))
+        return `${await localizeDirectAnswer(ASK_AI_NO_EVIDENCE_FALLBACK, language, signal)} [0]`
       return rewritten.trim() || result.content
     } catch (error) {
       if (isAbortError(error) || signal?.aborted || result.conversation) throw error

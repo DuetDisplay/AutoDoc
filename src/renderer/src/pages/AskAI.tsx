@@ -56,10 +56,11 @@ function openSource(source: ChatSourceCard): void {
 }
 
 function displayAnswer(message: Message): string {
-  const content = message.content.replace(/\[n\]/g, '')
+  // [0] is the writer's no-evidence marker (AD-202); the final answer arrives without it.
+  const content = message.content.replace(/\[(?:n|0)\]/g, '')
   // Hold a possible literal placeholder until its next chunk resolves it.
   return message.status === 'pending' || message.status === 'streaming'
-    ? content.replace(/\[(?:n)?$/, '')
+    ? content.replace(/\[(?:n|0)?$/, '')
     : content
 }
 

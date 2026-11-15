@@ -368,6 +368,34 @@ describe('AskAI', () => {
     expect(screen.queryByText('Late answer that should be ignored')).not.toBeInTheDocument()
   })
 
+  it('never shows the [0] no-evidence marker while an answer streams (AD-202)', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    let requestId = ''
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      return new Promise(() => {})
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'what about parrots eating carrots?'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    act(() =>
+      api.emit('chat:chunk', { requestId, content: 'Nothing about parrots is recorded. [' })
+    )
+    expect(await screen.findByText('Nothing about parrots is recorded.')).toBeInTheDocument()
+    act(() => api.emit('chat:chunk', { requestId, content: '0]' }))
+    expect(screen.getByText('Nothing about parrots is recorded.')).toBeInTheDocument()
+    expect(screen.queryByText(/\[0\]/)).not.toBeInTheDocument()
+  })
+
   it('shows source cards before the answer and opens the cited meeting', async () => {
     const api = installMockElectronApi({
       'ollama:check-status': true
