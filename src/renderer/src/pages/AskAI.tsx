@@ -37,6 +37,17 @@ function formatSourceTime(startMs: number | null): string | null {
   return `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, '0')}`
 }
 
+/** One link per recording and displayed timestamp; the first passage keeps its number (AD-202). */
+function sourceLinks(sources: ChatSourceCard[]): ChatSourceCard[] {
+  const seen = new Set<string>()
+  return sources.filter((source) => {
+    const key = `${source.meetingId}\u0000${formatSourceTime(source.startMs) ?? ''}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function openSource(source: ChatSourceCard): void {
   const params = new URLSearchParams()
   if (source.startMs != null) params.set('t', String(Math.floor(source.startMs)))
@@ -620,7 +631,7 @@ export function AskAI(): ReactElement {
                       {msg.sources && msg.sources.length > 0 && (
                         <>
                           <div className="flex flex-wrap gap-1.5 pt-1">
-                            {msg.sources.map((source) => (
+                            {sourceLinks(msg.sources).map((source) => (
                               <button
                                 key={`${source.n}-${source.meetingId}`}
                                 data-ask-ai-source

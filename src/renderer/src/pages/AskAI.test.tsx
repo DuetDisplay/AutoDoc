@@ -408,6 +408,56 @@ describe('AskAI', () => {
     expect(window.location.hash).toBe('#/recordings/billing-sync?t=84000')
   })
 
+  it('shows one source link per recording and displayed timestamp (AD-202)', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    const card = (n: number, meetingId: string, title: string, startMs: number | null) => ({
+      n,
+      meetingId,
+      title,
+      quote: `Passage ${n}`,
+      startMs,
+      category: 'information'
+    })
+    api.setHandler('chat:send-stream', (requestId: string) => {
+      queueMicrotask(() => {
+        api.emit('chat:sources', {
+          requestId,
+          inventoryCount: 2,
+          sources: [
+            card(1, 'coastal', 'Coastal Seas', 4_200),
+            card(2, 'coastal', 'Coastal Seas', 4_900),
+            card(3, 'coastal', 'Coastal Seas', 69_000),
+            card(4, 'coastal', 'Coastal Seas', null),
+            card(5, 'coastal', 'Coastal Seas', null),
+            card(6, 'camping', 'Camping', 4_200)
+          ]
+        })
+      })
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Give me the summary'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await screen.findByRole('button', { name: /camping/i })
+    const links = document.querySelectorAll('[data-ask-ai-source]')
+    expect([...links].map((link) => link.textContent)).toEqual([
+      '[1] Coastal Seas · 0:04',
+      '[3] Coastal Seas · 1:09',
+      '[4] Coastal Seas',
+      '[6] Camping · 0:04'
+    ])
+    // Coverage still reports the retrieved passages, not the merged links.
+    expect(document.querySelector('[data-ask-ai-coverage]')).toHaveTextContent('6 passages')
+  })
+
   it('renders clarification options as selectable meetings and sends the meeting id', async () => {
     const api = installMockElectronApi({
       'ollama:check-status': true

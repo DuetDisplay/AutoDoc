@@ -31,6 +31,46 @@ export function numberSourceCards(cards: Array<Omit<ChatSourceCard, 'n'>>): Chat
   return cards.slice(0, 8).map((card, index) => ({ ...card, n: index + 1 }))
 }
 
+/**
+ * AD-202 writer rules: the app shows the count filter itself, and a reply with nothing
+ * relevant ends with [0] so it shows no source links. AUTODOC_ASK_AI_AD202_RULES=0 keeps
+ * the original writer request bytes and source links.
+ */
+export function useAskAiAd202Rules(): boolean {
+  return process.env.AUTODOC_ASK_AI_AD202_RULES !== '0'
+}
+
+export const ASK_AI_NO_EVIDENCE_RULE =
+  'If the evidence has nothing relevant to the request, say so and end with [0].'
+
+/** The writer's [0] marker, with no real citation, means it found nothing relevant. */
+export function answerReportsNoEvidence(answer: string): boolean {
+  return /\[0\]/.test(answer) && !/\[[1-9]\d*\]/.test(answer)
+}
+
+/** Final answer text and source links. With AD-202 rules, a [0] reply shows no links. */
+export function finalizeChatAnswer(
+  answer: string,
+  sources?: ChatSourceCard[]
+): { content: string; sources?: ChatSourceCard[] } {
+  const noEvidence = useAskAiAd202Rules() && answerReportsNoEvidence(answer)
+  if (!sources || sources.length === 0) {
+    const content = noEvidence
+      ? applyAnswerCitations(answer, []).answer.trimEnd()
+      : answer.replace(/\[n\]/g, '')
+    return process.env.AUTODOC_ASK_AI_CITED_CARDS === '1' ? { content, sources: [] } : { content }
+  }
+  const applied = applyAnswerCitations(answer, sources)
+  return {
+    content: noEvidence ? applied.answer.trimEnd() : applied.answer,
+    sources: noEvidence
+      ? []
+      : process.env.AUTODOC_ASK_AI_CITED_CARDS === '1'
+        ? applied.sources
+        : sources
+  }
+}
+
 /** Strip leftover [n] markers. Chips come from retrieved evidence, not model cites. */
 export function applyAnswerCitations(
   answer: string,

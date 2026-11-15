@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { applyAnswerCitations, numberSourceCards } from '../ask-ai-citations'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  answerReportsNoEvidence,
+  applyAnswerCitations,
+  finalizeChatAnswer,
+  numberSourceCards
+} from '../ask-ai-citations'
 
 const sources = numberSourceCards([
   {
@@ -44,4 +49,51 @@ it('strips literal citation placeholders without changing ordinary bracketed wor
   expect(applyAnswerCitations('One [n]. Two [1]. Keep [notes].', sources).answer).toBe(
     'One. Two. Keep [notes].'
   )
+})
+
+describe('AD-202 final source links', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('recognises only an uncited [0] reply as reporting no relevant evidence', () => {
+    expect(answerReportsNoEvidence('Nothing about parrots is recorded. [0]')).toBe(true)
+    expect(answerReportsNoEvidence('Priya owns it [1].')).toBe(false)
+    expect(answerReportsNoEvidence('Priya owns it [1]; the date is unknown [0].')).toBe(false)
+    expect(answerReportsNoEvidence('The date is unknown [n].')).toBe(false)
+    expect(answerReportsNoEvidence('Room [10] was booked.')).toBe(false)
+    expect(answerReportsNoEvidence('No mention.')).toBe(false)
+  })
+
+  it('shows no links and strips the marker for a [0] reply by default', () => {
+    const final = finalizeChatAnswer(
+      'There is no evidence about parrots eating carrots. [0]',
+      sources
+    )
+    expect(final).toEqual({
+      content: 'There is no evidence about parrots eating carrots.',
+      sources: []
+    })
+    expect(finalizeChatAnswer('Nothing relevant was recorded [0].')).toEqual({
+      content: 'Nothing relevant was recorded.'
+    })
+  })
+
+  it('keeps every retrieved link for an answer without [0]', () => {
+    const final = finalizeChatAnswer('Priya owns the invoice export.', sources)
+    expect(final.sources).toEqual(sources)
+    expect(
+      finalizeChatAnswer('Priya owns it [1]; the date is unknown [0].', sources).sources
+    ).toEqual(sources)
+  })
+
+  it('keeps the original links and text when AUTODOC_ASK_AI_AD202_RULES=0', () => {
+    vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '0')
+    // Original stripping, unchanged: it leaves the space before a final marker.
+    expect(finalizeChatAnswer('Nothing about parrots. [0]', sources)).toEqual({
+      content: 'Nothing about parrots. ',
+      sources
+    })
+    expect(finalizeChatAnswer('Nothing about parrots [n]. [0]')).toEqual({
+      content: 'Nothing about parrots . [0]'
+    })
+  })
 })

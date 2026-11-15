@@ -49,7 +49,7 @@ import {
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
 import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
 import { runAskAiAgent, type AgentToolDeps } from '../services/ask-ai-agent'
-import { applyAnswerCitations, type ChatSourceCard } from '../services/ask-ai-citations'
+import { finalizeChatAnswer, type ChatSourceCard } from '../services/ask-ai-citations'
 import {
   answerInventoryIntent,
   answerQuestion,
@@ -758,20 +758,7 @@ export function registerChatIpc(
     applyAskAiAnswerToSession(session, result)
   }
 
-  const finalizeAnswer = (
-    answer: string,
-    sources?: ChatSourceCard[]
-  ): { content: string; sources?: ChatSourceCard[] } => {
-    if (!sources || sources.length === 0)
-      return process.env.AUTODOC_ASK_AI_CITED_CARDS === '1'
-        ? { content: answer.replace(/\[n\]/g, ''), sources: [] }
-        : { content: answer.replace(/\[n\]/g, '') }
-    const applied = applyAnswerCitations(answer, sources)
-    return {
-      content: applied.answer,
-      sources: process.env.AUTODOC_ASK_AI_CITED_CARDS === '1' ? applied.sources : sources
-    }
-  }
+  const finalizeAnswer = finalizeChatAnswer
 
   const maybeRewriteAnswer = async (
     question: string,

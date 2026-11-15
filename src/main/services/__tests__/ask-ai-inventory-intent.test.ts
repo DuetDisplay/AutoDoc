@@ -39,7 +39,11 @@ describe('conservative native inventory intents', () => {
     'Koliko posnetkov imam?',
     'Mitu salvestist mul on?',
     'Cik ierakstu man ir?',
-    'Kiek įrašų turiu?'
+    'Kiek įrašų turiu?',
+    // AD-202: an existence question is answered by the same saved-recording count.
+    'Do i have recordings?',
+    'Do I have any recordings?',
+    'do I have recorded meetings'
   ])('routes %s to authoritative count', (question) => {
     expect(parseAskAiQuestion(question).act).toBe('count')
   })
@@ -60,7 +64,9 @@ describe('conservative native inventory intents', () => {
     '録音した会議で何件の決定をしましたか？',
     '録音した会議はいくつありますか昨日',
     'How many recordings do I have yesterday?',
-    'Delete my recordings'
+    'Delete my recordings',
+    'Do I have recordings about Atlas?',
+    'Do I have recordings from yesterday?'
   ])(
     'does not turn a topical/action/window request into an unfiltered inventory: %s',
     (question) => {

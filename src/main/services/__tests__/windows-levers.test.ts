@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import baseline from './fixtures/windows-levers-defaults.json'
 import { leverWriterCases, leverMeetings } from './windows-levers-fixtures'
 vi.mock('../mac-processing-profile', () => ({ macUsesAskAiAppendFollowups: () => false }))
@@ -12,6 +12,8 @@ vi.mock('../crypto', () => ({
 import { streamAskAiWriter, resolveAskAiWriterContext } from '../ask-ai-writer'
 import { AskAiPassages } from '../ask-ai-passages'
 import { OllamaEmbeddingProvider } from '../ollama-embedding'
+// Frozen request fixtures record the writer rules before AD-202.
+beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '0'))
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()

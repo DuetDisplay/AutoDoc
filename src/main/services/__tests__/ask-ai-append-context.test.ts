@@ -27,6 +27,8 @@ const tool = {
 }
 // These frozen baselines cover the explicit rollback layout.
 beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '0'))
+// Frozen request fixtures record the writer rules before AD-202.
+beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '0'))
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()

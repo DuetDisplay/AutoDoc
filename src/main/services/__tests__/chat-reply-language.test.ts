@@ -134,6 +134,41 @@ it('recognizes previously unseen short English editing requests', () => {
     expect(detectChatQuestionLanguage(question)).toBe('en')
 })
 
+// AD-202: franc alone read these short English questions as Indonesian.
+it.each([
+  'can monkeys eats bananas?',
+  'can monkeys eat bananas?',
+  'do monkeys eat bananas?',
+  'does Atlas have a budget?',
+  'did Mira sign off?',
+  'can parrots eat carrots?'
+])('keeps an English auxiliary question in English: %s', (question) => {
+  expect(detectChatQuestionLanguage(question)).toBe('en')
+})
+
+it.each([
+  ['Is het budget goedgekeurd?', 'nl'],
+  ['Is Mira klaar?', 'nl'],
+  ['Was de vergadering lang?', 'nl'],
+  ['Was Harbor goedgekeurd?', 'nl'],
+  ['Was ist die Frist?', 'de'],
+  ['Was hat Nico gesagt?', 'de'],
+  ['Will er die Folien senden?', 'de'],
+  ['Hat Mira zugestimmt?', 'de'],
+  ['Do kiedy trzeba to zrobić?', 'pl'],
+  ['Do kiedy?', 'pl'],
+  ['Do której godziny?', 'pl'],
+  ['Do que se trata a reunião?', 'pt'],
+  ['Do meio da tarde?', 'pt'],
+  ['Do čtvrtka to stihneme?', 'cs'],
+  ['Are cineva cheia?', 'ro'],
+  ['Are Mira termenul?', 'ro'],
+  ['Apakah monyet makan pisang?', 'id'],
+  ['Siapa yang bertanggung jawab?', 'id']
+])('does not let an English-looking opener override another language: %s', (question, language) => {
+  expect(detectChatQuestionLanguage(question)).toBe(language)
+})
+
 it('uses full French sentence evidence before an ambiguous English opening cue', () => {
   expect(
     detectChatQuestionLanguage(

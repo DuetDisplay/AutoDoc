@@ -12,7 +12,7 @@ export function nativeInventoryIntent(question: string): 'count' | 'list' | null
   const count = [
     /^(?:combien (?:de |d’|d')?(?:réunions enregistrées|enregistrements)(?: ai[- ]je| j'ai| j’ai)?|quel est le nombre (?:de mes |d’|d')enregistrements)$/u,
     /^(?:私の)?(?:録音した会議|録音|録画|保存した会議)(?:は|が)?(?:全部で|合計)?(?:いくつ|何件|何個)(?:ありますか|ですか)?$/u,
-    /^(?:how many recordings do i have|how many recorded meetings do i have|count my recordings)$/u,
+    /^(?:how many recordings do i have|how many recorded meetings do i have|count my recordings|do i have (?:any )?(?:recordings|recorded meetings))$/u,
     /^(?:wie viele (?:aufnahmen|aufgezeichnete besprechungen) habe ich)$/u,
     /^(?:cuántas (?:grabaciones|reuniones grabadas) tengo)$/u,
     /^(?:quante (?:registrazioni|riunioni registrate) ho)$/u,

@@ -141,6 +141,9 @@ const questionCues: Array<[string, RegExp]> = [
   ['sl', /\b(?:posnetkov|posnetke|odgovoren|migracijo)\b/iu]
 ]
 
+const englishAuxiliaryOpening =
+  /^(?:can|could|do|does|did|is|are|was|were|will|would|should|have|has)(?!\p{L})/iu
+
 export function detectChatQuestionLanguage(question: string): string | undefined {
   const text = unquoted(chatReplyRequest(question).question)
     .normalize('NFKC')
@@ -167,6 +170,11 @@ export function detectChatQuestionLanguage(question: string): string | undefined
   const supportedDetection = languages.some(([code]) => code === detectedCode)
   const cue = questionCues.find(([, pattern]) => pattern.test(text))?.[0]
   if (cue && detectedCode === cue) return cue
+  // An English auxiliary opening ("can/do/is …") with a certain English tinyld result is
+  // English. franc alone read "Can monkeys eat bananas?" as Indonesian (AD-202). The
+  // opener is only a corroborating cue: it never overrides another language on its own.
+  if (englishAuxiliaryOpening.test(text) && detected?.lang === 'en' && detected.accuracy >= 0.99)
+    return 'en'
   const candidates = francAll(text.slice(0, 2000), { only: [...byIso.keys()], minLength: 10 })
   const [first, second] = candidates
   // Full-sentence evidence outranks an ambiguous opening verb or a name.

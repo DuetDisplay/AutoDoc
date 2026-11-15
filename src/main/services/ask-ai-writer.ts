@@ -2,6 +2,7 @@ import { useAskAiAppendFollowups, withAskAiWriterLoadFallback } from './ask-ai-w
 import {
   ASK_AI_WRITER_TOOLS,
   ASK_AI_WRITER_TOOL_INSTRUCTIONS,
+  ASK_AI_WRITER_TOOL_INSTRUCTIONS_AD202,
   parseWriterToolText,
   validateWriterToolCall,
   type WriterToolCall
@@ -26,7 +27,11 @@ import {
   type AppendWriterState,
   type PackedWriterBlock
 } from './ask-ai-append'
-import type { ChatSourceCard } from './ask-ai-citations'
+import {
+  ASK_AI_NO_EVIDENCE_RULE,
+  useAskAiAd202Rules,
+  type ChatSourceCard
+} from './ask-ai-citations'
 
 const WRITABLE_INTENTS = new Set<AskAiIntent>(['lookup', 'summary', 'actions', 'compare'])
 const WRITER_EXCERPT_CAP = 12
@@ -269,10 +274,16 @@ async function streamAskAiWriterAttempt(params: AskAiWriterParams): Promise<stri
       ? `Answer using ONLY the supplied meeting evidence. ${shape} Preserve numeric values, units and dates; never calculate new numbers. Preserve qualifiers and negation. Never infer reasons or causal relationships. Distinguish rejected proposals from approved decisions. If missing, say so. No unasked facts, headings or extra commentary. ${chatLanguageInstruction(params.language ?? 'en')} Copy names exactly; do not transliterate them.`
       : `${chatLanguageInstruction(params.language ?? 'en')} Copy names exactly as written; do not transliterate them.`
   const toolsEnabled = Boolean(params.executeTool && params.conversation && chatApi && !nativeApi)
+  const ad202Rules = Boolean(params.conversation && useAskAiAd202Rules())
   const system =
     baseSystem +
-    (toolsEnabled ? ` ${ASK_AI_WRITER_TOOL_INSTRUCTIONS}` : '') +
+    (ad202Rules ? ` ${ASK_AI_NO_EVIDENCE_RULE}` : '') +
+    (toolsEnabled
+      ? ` ${ad202Rules ? ASK_AI_WRITER_TOOL_INSTRUCTIONS_AD202 : ASK_AI_WRITER_TOOL_INSTRUCTIONS}`
+      : '') +
     (languageInSystem ? ` ${languageRule}` : '')
+  // The packing allowance below keeps the original instructions (AD-202 rules are about the
+  // same length), so the evidence and history selected for a request are unchanged.
   const toolReserve = toolsEnabled ? Math.min(1000, Math.floor(packingNumCtx * 0.3)) : 400
   // Keep the relocated rules in the packing allowance so evidence and history stay unchanged.
   const budgetSystem =

@@ -84,6 +84,12 @@ export const ASK_AI_WRITER_TOOLS = [
 export const ASK_AI_WRITER_TOOL_INSTRUCTIONS =
   'Use calculate for new arithmetic, never mental calculations. Use count_recordings for saved-recording counts/lists; passages are incomplete samples. State the count filter used, including date boundaries and keyword/title/participant criteria. A tool error is not evidence: explain or ask for clarification, never invent a result. At most one batch of tools is available; after results answer without further tool calls.'
 
+/** AD-202: without "State the count filter used …". The app already shows the filter of a
+ * real count_recordings call, and the instruction made the writer describe filters it never
+ * applied. */
+export const ASK_AI_WRITER_TOOL_INSTRUCTIONS_AD202 =
+  'Use calculate for new arithmetic, never mental calculations. Use count_recordings for saved-recording counts/lists; passages are incomplete samples. A tool error is not evidence: explain or ask for clarification, never invent a result. At most one batch of tools is available; after results answer without further tool calls.'
+
 export interface WriterToolCall {
   id?: string
   function: { name: string; arguments: unknown }

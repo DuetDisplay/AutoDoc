@@ -142,7 +142,13 @@ export function prepareAppendWriterRequest(params: {
       layout = 'fallback'
     }
   }
-  const visibleIds = initial || layout === 'fallback' ? currentIds : [...residentIds, ...currentIds]
+  // Source links show this turn's passages, as initial and fallback turns do. Earlier
+  // resident passages stay in the request but are only listed for the default-off
+  // cited-card experiment, which resolves conversation-wide [n] markers (AD-202).
+  const visibleIds =
+    initial || layout === 'fallback' || process.env.AUTODOC_ASK_AI_CITED_CARDS !== '1'
+      ? currentIds
+      : [...residentIds, ...currentIds]
   const sources = initial
     ? params.sources
     : [...new Set(visibleIds)]
