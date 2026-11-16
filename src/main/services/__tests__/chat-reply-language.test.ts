@@ -146,6 +146,26 @@ it.each([
   expect(detectChatQuestionLanguage(question)).toBe('en')
 })
 
+// AD-202: too short for either detector; franc read these as French, Italian or Dutch.
+it.each(['is it done?', 'is it late?', 'are we done?', 'is it over budget?', 'is it raining?'])(
+  'keeps a short English auxiliary-pronoun question in English: %s',
+  (question) => {
+    expect(detectChatQuestionLanguage(question)).toBe('en')
+  }
+)
+
+it.each([
+  ['Is het klaar?', 'nl'],
+  ['Is dit goedgekeurd?', 'nl'],
+  ['Hebben we een deadline?', 'nl'],
+  ['Was het budget goedgekeurd?', 'nl'],
+  ['Was ist das?', 'de'],
+  ['Do i soldi a Giulia?', 'it'],
+  ['Do i compiti a chi?', 'it']
+])('keeps a short non-English question whose opener looks English: %s', (question, language) => {
+  expect(detectChatQuestionLanguage(question)).toBe(language)
+})
+
 it.each([
   ['Is het budget goedgekeurd?', 'nl'],
   ['Is Mira klaar?', 'nl'],

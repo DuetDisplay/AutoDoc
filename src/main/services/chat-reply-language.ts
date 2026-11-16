@@ -143,6 +143,9 @@ const questionCues: Array<[string, RegExp]> = [
 
 const englishAuxiliaryOpening =
   /^(?:can|could|do|does|did|is|are|was|were|will|would|should|have|has)(?!\p{L})/iu
+// Not "do i" or "do my": Italian "Do i documenti a Marco?" and Polish "Do my…" start the same way.
+const englishQuestionOpening =
+  /^(?!do\s+(?:i|my)(?!\p{L}))(?:can|could|do|does|did|is|are|was|were|will|would|should|have|has)\s+(?:i|you|we|they|he|she|it|this|that|these|those|there|the|my|our|your|their|anyone|anybody|anything|someone|somebody|something|everyone|everything)(?!\p{L})/iu
 
 export function detectChatQuestionLanguage(question: string): string | undefined {
   const text = unquoted(chatReplyRequest(question).question)
@@ -175,6 +178,11 @@ export function detectChatQuestionLanguage(question: string): string | undefined
   // opener is only a corroborating cue: it never overrides another language on its own.
   if (englishAuxiliaryOpening.test(text) && detected?.lang === 'en' && detected.accuracy >= 0.99)
     return 'en'
+  // Both detectors misread short questions: "is it done?" as French, "is it over budget?" as
+  // Dutch (AD-202). In a question of up to six words, an auxiliary followed by an English
+  // pronoun or determiner ("is it", "are we", "did anyone") is English. Dutch "is het" and
+  // German "was ist" don't match, and another language's question cue still wins.
+  if (words.length <= 6 && englishQuestionOpening.test(text) && (!cue || cue === 'en')) return 'en'
   const candidates = francAll(text.slice(0, 2000), { only: [...byIso.keys()], minLength: 10 })
   const [first, second] = candidates
   // Full-sentence evidence outranks an ambiguous opening verb or a name.
