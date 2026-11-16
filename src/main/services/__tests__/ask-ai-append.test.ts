@@ -11,8 +11,6 @@ import type { AskAiExcerpt } from '../ask-ai-answer'
 
 // These frozen baselines cover the explicit rollback layout.
 beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_LANGUAGE_IN_SYSTEM', '0'))
-// Frozen request fixtures record the writer rules before AD-202.
-beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '0'))
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
@@ -80,8 +78,8 @@ const passage = (id: string, text: string): AskAiExcerpt => ({
   kind: 'note',
   text
 })
-it('changes the frozen f60 requests by exactly the two AD-202 sentences by default', async () => {
-  vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', undefined)
+it('changes the frozen f60 requests by exactly the two AD-202 sentences when AUTODOC_ASK_AI_AD202_RULES=1', async () => {
+  vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '1')
   const filterSentence =
     ' State the count filter used, including date boundaries and keyword/title/participant criteria.'
   const noEvidence =

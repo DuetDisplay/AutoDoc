@@ -147,7 +147,8 @@ it('keeps flag-off IPC events and writer requests byte-identical to the default'
   expect(JSON.stringify(await run('0'))).toBe(JSON.stringify(await run(undefined)))
 })
 // AD-202 Windows: the writer sent only "[0]" and the answer finished blank.
-it('answers with the no-match sentence and no source links when the writer sends only [0]', async () => {
+it('answers with the no-match sentence and no source links when the writer sends only [0] with AUTODOC_ASK_AI_AD202_RULES=1', async () => {
+  vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '1')
   const { events } = await run(undefined, false, '[0]')
   expect(events.filter(([name]) => name === 'chat:sources')).toHaveLength(1)
   expect(events.find(([name]) => name === 'chat:done')![1]).toMatchObject({
@@ -155,7 +156,8 @@ it('answers with the no-match sentence and no source links when the writer sends
     sources: []
   })
 })
-it('keeps the writer wording and hides links for a worded [0] reply', async () => {
+it('keeps the writer wording and hides links for a worded [0] reply with AUTODOC_ASK_AI_AD202_RULES=1', async () => {
+  vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '1')
   const { events } = await run(undefined, false, 'Nothing about parrots is recorded. [0]')
   expect(events.find(([name]) => name === 'chat:done')![1]).toMatchObject({
     content: 'Nothing about parrots is recorded.',

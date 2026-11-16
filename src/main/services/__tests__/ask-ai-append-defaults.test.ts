@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn() }))
 const frozen = JSON.parse(
   readFileSync(
@@ -11,8 +11,6 @@ const frozen = JSON.parse(
 const originalPlatform = process.platform
 const originalArch = process.arch
 
-// Frozen request fixtures record the writer rules before AD-202.
-beforeEach(() => vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '0'))
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   Object.defineProperty(process, 'arch', { value: originalArch, configurable: true })

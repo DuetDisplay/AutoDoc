@@ -32,12 +32,13 @@ export function numberSourceCards(cards: Array<Omit<ChatSourceCard, 'n'>>): Chat
 }
 
 /**
- * AD-202 writer rules: the app shows the count filter itself, and a reply with nothing
- * relevant ends with [0] so it shows no source links. AUTODOC_ASK_AI_AD202_RULES=0 keeps
- * the original writer request bytes and source links.
+ * AD-202 writer rules, off unless AUTODOC_ASK_AI_AD202_RULES=1: the app shows the count filter
+ * itself, and a reply with nothing relevant ends with [0] so it shows no source links. Mac
+ * testing found the writer often sent only "[0]", including for requests about the chat
+ * itself, and the changed rules altered other answers, so 1.3.4 keeps the original rules.
  */
 export function useAskAiAd202Rules(): boolean {
-  return process.env.AUTODOC_ASK_AI_AD202_RULES !== '0'
+  return process.env.AUTODOC_ASK_AI_AD202_RULES === '1'
 }
 
 export const ASK_AI_NO_EVIDENCE_RULE =

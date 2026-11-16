@@ -73,7 +73,8 @@ describe('AD-202 final source links', () => {
     expect(answerIsOnlyNoEvidenceMarker('')).toBe(false)
   })
 
-  it('shows no links and strips the marker for a [0] reply by default', () => {
+  it('shows no links and strips the marker for a [0] reply when AUTODOC_ASK_AI_AD202_RULES=1', () => {
+    vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '1')
     const final = finalizeChatAnswer(
       'There is no evidence about parrots eating carrots. [0]',
       sources
@@ -87,7 +88,8 @@ describe('AD-202 final source links', () => {
     })
   })
 
-  it('keeps every retrieved link for an answer without [0]', () => {
+  it('keeps every retrieved link for an answer without [0] when AUTODOC_ASK_AI_AD202_RULES=1', () => {
+    vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '1')
     const final = finalizeChatAnswer('Priya owns the invoice export.', sources)
     expect(final.sources).toEqual(sources)
     expect(
@@ -95,8 +97,8 @@ describe('AD-202 final source links', () => {
     ).toEqual(sources)
   })
 
-  it('keeps the original links and text when AUTODOC_ASK_AI_AD202_RULES=0', () => {
-    vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', '0')
+  it.each([undefined, '0'])('keeps the original links and text by default (rules %s)', (rules) => {
+    vi.stubEnv('AUTODOC_ASK_AI_AD202_RULES', rules)
     // Original stripping, unchanged: it leaves the space before a final marker.
     expect(finalizeChatAnswer('Nothing about parrots. [0]', sources)).toEqual({
       content: 'Nothing about parrots. ',
