@@ -22,7 +22,7 @@ AutoDoc is an open-source, local-first meeting notes app for macOS and Windows. 
 
 <!-- latest-release:start -->
 
-**New in v1.3.3:** Dark Mode and UI localization in 27 languages, plus bug and security fixes. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
+**New in v1.3.4:** a faster Ask AI beta with links to meeting moments, plus recording and privacy fixes. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
 
 <!-- latest-release:end -->
 
