@@ -11,53 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Ask about this meeting** on a recording opens Ask AI limited to that
-  meeting. Clear the filter to ask across all your meetings again.
-- Ask AI prepares its search index in the background and shows its progress,
-  so the first answer doesn't wait for it.
+- **Ask about this meeting** opens Ask AI from a recording with the search
+  limited to that meeting. Clear the filter to search across all meetings.
+- Ask AI prepares its search index in the background and shows its progress.
 - Ask AI is marked Beta, with a one-time notice explaining what to expect.
 
 ### Changed
 
-- Ask AI answers faster and more accurately. It searches passages from your
-  notes and transcripts, and each answer links to the moments it came from;
-  click a link to open the recording at that time.
-- Ask AI follows up on the same meeting, and replies in the language of your
-  question.
-- Ask AI only appears on computers that can run it well: those using the
-  `qwen3:4b-instruct` model with GPU acceleration. Other computers don't show
-  it, and skip its downloads and indexing. Recording, transcription and notes
-  are unchanged.
+- Ask AI answers faster and more accurately by searching passages from meeting
+  notes and transcripts. Source links open recordings at the corresponding
+  moments.
+- Follow-up questions stay focused on the same meeting, and replies use the
+  language of the question.
+- Ask AI is available on computers using the `qwen3:4b-instruct` model with
+  GPU acceleration. Other computers no longer show Ask AI and skip its
+  associated downloads and indexing. Recording, transcription, and notes
+  remain available.
+- Crash reporting excludes window and meeting titles and reduces duplicate
+  reports and reports for expected events, such as cancelled calendar
+  connections and temporary network errors.
 
 ### Fixed
 
-- Ask AI source links no longer pile up across follow-up questions, and no two
-  links point to the same moment.
-- "Do I have recordings?" answers with your recording count, without source
-  links.
-- Short English questions, such as "can monkeys eat bananas?" or "is it done?",
-  get an English reply.
-- Speech models still download on a Mac when Hugging Face can't be reached,
-  including in mainland China, using ModelScope or hf-mirror with every file
-  checked against a pinned hash. The English Mac model and the Ollama runtime are
-  now hash-checked too, and the Ollama download resumes after an interruption.
-- AutoDoc restarts its local AI server within seconds if it stops unexpectedly,
-  instead of waiting for the next health check.
-- A Google calendar that can no longer sync now asks you to reconnect, instead of
-  silently stopping.
-- AutoDoc no longer gets stuck refusing new recordings when a quit or update
-  install doesn't finish. It recovers on its own, or exits if it was already
-  shutting down.
-- Crash reports no longer include window or meeting titles, which were sent with
-  button clicks in the recording picker and with some reports of very short
-  recordings.
-- A failed recording start no longer stops a recording that is already running.
-- A recording can't be deleted while it is still recording, saving or being
-  transcribed. If AutoDoc can't save a recording, for example on a full disk, it
-  stops recording and tells you instead of continuing without saving.
-- On Windows, a recording's audio is now encrypted as soon as transcription
-  finishes, even if you opened the recording while it was processing. Before, it
-  could stay unencrypted until AutoDoc restarted.
+- Ask AI source links no longer accumulate across follow-up questions or
+  include duplicate links to the same moment.
+- Asking whether you have recordings returns the recording count without
+  unnecessary source links. Short English questions receive English replies.
+- Mac speech-model downloads can use ModelScope or hf-mirror when Hugging Face
+  is unavailable, including in mainland China. Downloaded files, including the
+  English Mac model, are checked against pinned hashes.
+- The Ollama runtime download is verified and can resume after interruption.
+- AutoDoc restarts its local AI server more promptly if it exits unexpectedly.
+- A Google Calendar connection that can no longer sync asks you to reconnect.
+- An interrupted quit or update installation no longer leaves AutoDoc
+  indefinitely unable to start new recordings.
+- A failed recording start no longer stops a recording already in progress.
+- Recordings cannot be deleted while recording, saving, or transcribing.
+  If a recording chunk cannot be saved, AutoDoc stops capture and explains
+  what happened.
+- On Windows, recording audio is encrypted after transcription finishes even
+  if the recording was opened during processing.
+
+### Known limitation
+
+- Ask AI source links show passages that were searched, which may include
+  passages the answer did not use. A question with no answer in your
+  meetings can still show source links and a passage-count line.
 
 ## [1.3.3] — 2026-10-30
 
