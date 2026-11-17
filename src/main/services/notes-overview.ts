@@ -10,6 +10,7 @@ import {
   type QuantityMention
 } from './notes-quantity-canonicalizer'
 import { isEnglishMeetingJob, meetingOutputTokenCap } from './notes-language'
+import { throwIfNotesPreempted } from './notes-preemption'
 
 export interface NotesOverviewGenerateRequest {
   prompt: string
@@ -396,6 +397,7 @@ async function requestOverview(
       format: overviewOnly ? OVERVIEW_ONLY_FORMAT : OVERVIEW_RESPONSE_FORMAT
     })
   } catch (error) {
+    throwIfNotesPreempted(error)
     const message = error instanceof Error ? error.message : String(error)
     return { parsed: null, failure: `generate failed: ${message}` }
   }

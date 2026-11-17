@@ -1,4 +1,5 @@
 import { logAutodocEvent } from './autodoc-log'
+import { withSentryFingerprint } from './sentry-fingerprint'
 import {
   createOllamaModelLoadFailedError,
   isOllamaModelLoadFailureError
@@ -129,7 +130,10 @@ export function createOllamaRuntimeRecovery(
           options.markSetupReady()
           return
         }
-        lastError = new Error('Ollama recovery finished but serve or notes model is not ready')
+        lastError = withSentryFingerprint(
+          new Error('Ollama recovery finished but serve or notes model is not ready'),
+          ['ollama-recovery-not-ready']
+        )
         logAutodocEvent({
           area: 'ollama',
           message: 'ollama recovery attempt not ready',

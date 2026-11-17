@@ -37,6 +37,10 @@ async function launchApp(options: {
       ...process.env,
       NODE_ENV: 'test',
       AUTODOC_TEST_MODE: '1',
+      // UI tests must not start Ask AI indexing; extraEnv can opt back in.
+      AUTODOC_ASK_AI_INDEX_PREWARM: '0',
+      // CI machines have no GPU, and Ask AI is hidden without one.
+      AUTODOC_ASK_AI_AVAILABLE: '1',
       ...(options.realSetup ? { AUTODOC_TEST_REAL_SETUP: '1' } : { AUTODOC_E2E: '1' }),
       ...(options.scenario ? { AUTODOC_E2E_SCENARIO: JSON.stringify(options.scenario) } : {}),
       ...(options.userDataDir ? { AUTODOC_TEST_USER_DATA_DIR: options.userDataDir } : {}),

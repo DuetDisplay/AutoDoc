@@ -41,6 +41,25 @@ describe('calendar IPC', () => {
     delete process.env.AUTODOC_OFFICIAL_BUILD
   })
 
+  it('does not report a calendar connection the user cancelled', async () => {
+    const manager = {
+      connect: vi.fn().mockRejectedValue(new Error('Calendar connection cancelled')),
+      fetchAllUpcomingEvents: vi.fn(),
+      getAccounts: vi.fn(() => []),
+      startSync: vi.fn()
+    } as unknown as CalendarManager
+
+    registerCalendarIpc(manager)
+
+    const connectHandler = handle.mock.calls.find(
+      ([channel]) => channel === 'calendar:connect'
+    )?.[1] as ((_event: unknown, provider: 'google' | 'microsoft') => Promise<unknown>) | undefined
+
+    await expect(connectHandler?.({}, 'google')).rejects.toThrow('Calendar connection cancelled')
+
+    expect(logAutodocFailure).not.toHaveBeenCalled()
+  })
+
   it('logs calendar connection failures with provider and build configuration', async () => {
     const manager = {
       connect: vi.fn().mockRejectedValue(new Error('Calendar OAuth is not configured')),

@@ -19,6 +19,12 @@ describe('parseClaimVerdict', () => {
 describe('verifyOverviewClaims', () => {
   const overview = { text: 'The team reviewed the launch. Nothing was decided.', sources: [] }
 
+  it('propagates intentional preemption instead of accepting unchecked claims', async () => {
+    const complete = vi.fn(async () => { throw new Error('SEGMENTATION_PREEMPTED') })
+    await expect(verifyOverviewClaims(overview, '- Launch reviewed', complete)).rejects.toThrow('SEGMENTATION_PREEMPTED')
+    expect(complete).toHaveBeenCalledOnce()
+  })
+
   it('drops unsupported sentences, logs only their position and length, and returns null when none remain', async () => {
     const complete = vi.fn<ClaimCompleteFn>(async (prompt) =>
       verdict(

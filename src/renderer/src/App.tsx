@@ -1,13 +1,14 @@
 import { updateInstallBlockMessage } from './services/update-install-status'
 import { useT } from './services/i18n'
 import { useEffect, useRef, useState } from 'react'
-import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { HashRouter, Navigate, Routes, Route, useLocation } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { Upcoming } from './pages/Upcoming'
 import { Recordings } from './pages/Recordings'
 import { MeetingDetail } from './pages/MeetingDetail'
 import { Search } from './pages/Search'
 import { AskAI } from './pages/AskAI'
+import { useAskAiAvailable } from './stores/ask-ai-availability'
 import { Settings } from './pages/Settings'
 import { ROUTES } from '../../shared/constants'
 import { NOTES_ENGINE_VERSION } from '../../shared/notes-feedback'
@@ -86,6 +87,13 @@ function RouteDiagnosticTracker() {
   }, [location.pathname])
 
   return null
+}
+
+/** Ask AI is hidden on machines that cannot run it well, so a stale link goes home. */
+function AskAiRoute() {
+  const available = useAskAiAvailable()
+  if (available === null) return null
+  return available ? <AskAI /> : <Navigate to={ROUTES.upcoming} replace />
 }
 
 function UpdateReadyPrompt({
@@ -1098,7 +1106,7 @@ export default function App() {
               />
               <Route path={ROUTES.meetingDetail} element={<MeetingDetail />} />
               <Route path={ROUTES.search} element={<Search />} />
-              <Route path={ROUTES.askAi} element={<AskAI />} />
+              <Route path={ROUTES.askAi} element={<AskAiRoute />} />
               <Route path={ROUTES.settings} element={<Settings />} />
             </Routes>
           </div>

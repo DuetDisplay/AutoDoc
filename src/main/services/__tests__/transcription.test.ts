@@ -373,6 +373,59 @@ describe('TranscriptionService', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('counts a job as active only until its files are finished', () => {
+    const internals = service as any
+    expect(service.isActiveJob('meeting-123')).toBe(false)
+
+    internals.activeJobId = 'meeting-123'
+    internals.activeStatus = 'transcribing'
+    expect(service.isActiveJob('meeting-123')).toBe(true)
+    expect(service.isActiveJob('other')).toBe(false)
+
+    internals.activeStatus = 'complete'
+    expect(service.isActiveJob('meeting-123')).toBe(false)
+  })
+
+  it('does not report a failure for a meeting the user deleted mid-job', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' } as any)
+    fsMock.stat.mockRejectedValue({ code: 'ENOENT' } as any)
+    autodocLogMock.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('deleted-meeting', 'ENOENT: no such file or directory')
+
+    expect(autodocLogMock.logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('still reports a failure when the meeting folder exists', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockResolvedValue(undefined)
+    fsMock.stat.mockResolvedValue({} as any)
+    autodocLogMock.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('meeting-123', 'whisper.cpp timed out')
+
+    expect(autodocLogMock.logAutodocFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    'The speech model is missing or incomplete. Select the meeting language in Settings to download it.',
+    'parakeet worker failed: Transcription worker client disposed'
+  ])('only logs the expected failure "%s"', async (message) => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockResolvedValue(undefined)
+    fsMock.stat.mockResolvedValue({} as any)
+    autodocLogMock.logAutodocFailure.mockClear()
+    autodocLogMock.logAutodocEvent.mockClear()
+
+    await (service as any).markFailed('meeting-123', message)
+
+    expect(autodocLogMock.logAutodocFailure).not.toHaveBeenCalled()
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Transcription failed', meetingId: 'meeting-123' })
+    )
+  })
+
   it('is idempotent - enqueuing same meetingId twice does not duplicate', () => {
     vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
 
@@ -1816,7 +1869,10 @@ describe('TranscriptionService', () => {
 
     await expect(
       (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    ).rejects.toThrow(/faster-whisper worker failed/)
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('faster-whisper worker failed'),
+      sentryFingerprint: ['transcription-worker-failed', 'faster-whisper']
+    })
   })
 
   it.each(['887A0005', '887A0006'] as const)(

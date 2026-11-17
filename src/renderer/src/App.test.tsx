@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { useRecordingPickerStore } from './stores/recording-picker'
+import { resetAskAiAvailabilityForTests } from './stores/ask-ai-availability'
 import { shouldLogRendererDiagnosticToAppLog } from '../../shared/diagnostics'
 import {
   createCalendarAccount,
@@ -41,6 +42,10 @@ vi.mock('./hooks/useRecording', () => ({
 
 vi.mock('./components/Sidebar', () => ({
   Sidebar: () => <div>Sidebar</div>
+}))
+
+vi.mock('./pages/AskAI', () => ({
+  AskAI: () => <h1>Ask AI</h1>
 }))
 
 vi.mock('./components/RecordingBanner', () => ({
@@ -101,6 +106,48 @@ describe('App', () => {
 
     expect(await screen.findByText('Sidebar')).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+  })
+
+  describe('Ask AI route', () => {
+    const shell = {
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    }
+
+    it('sends a link to Ask AI home where Ask AI is hidden', async () => {
+      resetAskAiAvailabilityForTests(false)
+      installMockElectronApi(shell)
+      window.location.hash = '#/ask-ai'
+
+      render(<App />)
+
+      expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+      expect(window.location.hash).toBe('#/')
+    })
+
+    it('shows nothing at the route while unknown, then Ask AI as soon as it is known', async () => {
+      resetAskAiAvailabilityForTests(null)
+      const api = installMockElectronApi({
+        ...shell,
+        'chat:availability': () => new Promise(() => {})
+      })
+      window.location.hash = '#/ask-ai'
+
+      render(<App />)
+
+      expect(await screen.findByText('Sidebar')).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Ask AI' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Upcoming' })).not.toBeInTheDocument()
+      expect(window.location.hash).toBe('#/ask-ai')
+
+      act(() => {
+        api.emit('chat:availability-changed', true)
+      })
+
+      expect(await screen.findByRole('heading', { name: 'Ask AI' })).toBeInTheDocument()
+    })
   })
 
   it('reacts to a calendar disconnect and returns Upcoming to the connect state', async () => {

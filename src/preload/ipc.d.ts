@@ -1,3 +1,5 @@
+import type { AskAiIndexStatus } from '../shared/ask-ai-index-status'
+import type { ChatCountSummary, RecordingChunkResult } from '../shared/types'
 import type { SpeechLicenseNotice } from '../shared/speech-licenses'
 import type { MemoryFailure } from '../shared/memory-failure'
 import type {
@@ -89,7 +91,7 @@ export interface SearchResult {
   meetingId: string
   title: string
   date: number
-  matches: { type: 'transcript' | 'segment'; text: string; category?: string }[]
+  matches: { type: 'transcript' | 'segment'; text: string; category?: string; startMs?: number }[]
 }
 
 export interface ChatHistoryMessage {
@@ -110,6 +112,15 @@ export interface ChatClarificationOption {
   score: number
 }
 
+export interface ChatSourceCard {
+  n: number
+  meetingId: string
+  title: string
+  quote: string
+  startMs: number | null
+  category: string
+}
+
 export interface IpcSendEvents {
   'recording:quit-ready': [requestId: string, error?: string]
   'recording:audio-only-reminder': [title: string, body: string]
@@ -124,6 +135,8 @@ export interface IpcInvokeEvents {
   'app:get-locale': []
   'prefs:get-ui-appearance-announcement-pending': []
   'prefs:dismiss-ui-appearance-announcement': []
+  'prefs:get-ask-ai-beta-notice-pending': []
+  'prefs:dismiss-ask-ai-beta-notice': []
   'prefs:get-meeting-language-announcement-pending': []
   'prefs:dismiss-meeting-language-announcement': []
   'prefs:get-onboarding-language-confirmed': []
@@ -243,8 +256,21 @@ export interface IpcInvokeEvents {
   'search:query': [query: string]
   'chat:send': [question: string]
   'chat:new': []
+  'chat:activity': [typedAt: number]
+  'chat:close': []
+  'chat:notes-work': []
   'chat:cancel': [requestId: string]
-  'chat:send-stream': [requestId: string, question: string, history?: ChatHistoryMessage[]]
+  'chat:send-stream': [
+    requestId: string,
+    question: string,
+    history?: ChatHistoryMessage[],
+    scopedMeetingIds?: string[],
+    searchAll?: boolean
+  ]
+  'chat:availability': []
+  'chat:index-status': []
+  'chat:inventory-count': []
+  'chat:warmup': []
   'chat:select-recording-stream': [
     requestId: string,
     meetingId: string,
@@ -321,6 +347,8 @@ export interface IpcInvokeReturns {
   'app:get-locale': string
   'prefs:get-ui-appearance-announcement-pending': boolean
   'prefs:dismiss-ui-appearance-announcement': void
+  'prefs:get-ask-ai-beta-notice-pending': boolean
+  'prefs:dismiss-ask-ai-beta-notice': void
   'prefs:get-meeting-language-announcement-pending': boolean
   'prefs:dismiss-meeting-language-announcement': void
   'prefs:get-onboarding-language-confirmed': boolean
@@ -376,12 +404,12 @@ export interface IpcInvokeReturns {
   'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
   'recording:finalize-stop': void
   'recording:get-state': RecordingState
-  'recording:save-chunk': void
+  'recording:save-chunk': RecordingChunkResult
   'recording:save-segment-timing': void
   'recording:save-segment-end': void
   'recording:video-capture-ended-early': void
   'recording:update-title': void
-  'recording:delete': void
+  'recording:delete': { status: 'deleted' | 'busy' }
   'recording:retry-video': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-memory-failure': MemoryFailure | undefined
@@ -423,6 +451,7 @@ export interface IpcInvokeReturns {
     durationSeconds: number | null
     isFinalizing?: boolean
     meetingLanguage?: MeetingLanguageCode
+    deleteBlocked?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus
     videoCaptureEndedEarly?: boolean
@@ -431,8 +460,15 @@ export interface IpcInvokeReturns {
   'search:query': SearchResult[]
   'chat:send': string
   'chat:new': void
+  'chat:activity': void
+  'chat:close': void
+  'chat:notes-work': Array<{ meetingId: string; title: string }>
   'chat:cancel': void
   'chat:send-stream': void
+  'chat:availability': boolean
+  'chat:index-status': AskAiIndexStatus
+  'chat:inventory-count': number
+  'chat:warmup': { warmed: boolean; reason?: string }
   'chat:select-recording-stream': void
   'detection:dismiss': void
   'detection:source-selection-required': void
@@ -489,6 +525,8 @@ export interface IpcInvokeReturns {
 }
 
 export interface IpcOnEvents {
+  'chat:availability-changed': [available: boolean]
+  'chat:index-status-changed': [status: AskAiIndexStatus]
   'recording:prepare-to-quit': [requestId: string]
   'recording:status-changed': [state: RecordingState]
   'recording:entry-updated': [payload: { meetingId: string }]
@@ -506,11 +544,18 @@ export interface IpcOnEvents {
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
   'chat:chunk': [payload: { requestId: string; content: string }]
+  'chat:sources': [
+    payload: { requestId: string; sources: ChatSourceCard[]; inventoryCount: number }
+  ]
+  'chat:count-result': [payload: { requestId: string; summary: ChatCountSummary }]
   'chat:done': [
     payload: {
       requestId: string
       content: string
       clarificationOptions?: ChatClarificationOption[]
+      offerSearchAll?: boolean
+      sources?: ChatSourceCard[]
+      inventoryCount?: number
     }
   ]
   'chat:error': [payload: { requestId: string; error: string }]

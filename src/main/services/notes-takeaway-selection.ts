@@ -1,4 +1,5 @@
 import type { Segment } from '../../shared/types'
+import { throwIfNotesPreempted } from './notes-preemption'
 import { containsCjk } from './unicode-text'
 
 /**
@@ -120,7 +121,8 @@ export async function selectKeyTakeaways(
     return picks
       ? { status: 'selected', ids: picks.map((index) => candidates[index]!.id) }
       : { status: 'failed', reason: 'invalid-answer' }
-  } catch {
+  } catch (error) {
+    throwIfNotesPreempted(error)
     return { status: 'failed', reason: 'error' }
   }
 }

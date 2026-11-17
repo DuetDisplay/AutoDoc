@@ -105,6 +105,10 @@ export function registerPrefsIpc(
   ipcMain.handle('prefs:dismiss-ui-appearance-announcement', () =>
     prefsStore.dismissUiAppearanceAnnouncement()
   )
+  ipcMain.handle('prefs:get-ask-ai-beta-notice-pending', () =>
+    prefsStore.isAskAiBetaNoticePending()
+  )
+  ipcMain.handle('prefs:dismiss-ask-ai-beta-notice', () => prefsStore.dismissAskAiBetaNotice())
   ipcMain.handle('app:get-locale', () => app.getLocale())
 
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {

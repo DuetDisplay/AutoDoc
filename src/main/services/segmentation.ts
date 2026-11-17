@@ -20,6 +20,7 @@ import {
 } from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { isMeetingDirMissing } from './meeting-dir'
 import { readMetadata } from './calendar-matcher'
 import {
   activeMeetingLanguage,
@@ -64,8 +65,12 @@ import {
 import type { OllamaAccelerator } from './ollama-accelerator'
 import { getSystemMemorySnapshot } from './windows-transcription-runtime'
 import { meetingSegmentsFromDisk, withoutNextStepCandidates } from './writer-catalog'
-import type { WindowsProcessingProfile } from './windows-processing-profile'
+import {
+  isMemoryHealthyForConcurrentDualSource,
+  type WindowsProcessingProfile
+} from './windows-processing-profile'
 import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
+import { useAskAiGenerationPriority } from './ask-ai-policy'
 import {
   isMissingOllamaModelError,
   isOllamaConnectionError,
@@ -211,8 +216,72 @@ export class SegmentationService {
       | null = null
   ) {}
 
+  private interactiveHolds = 0
+  private interactiveResumeJobs = new Set<string>()
+  private processingSettled: Promise<void> | null = null
+  private resolveProcessingSettled: (() => void) | null = null
+
+  isHeldForInteractiveAnswer(): boolean {
+    return this.interactiveHolds > 0
+  }
+
+  /** Suspend the current notes attempt using the existing safe preemption path.
+   * The meeting stays queued and source files are unchanged. Only an in-flight
+   * notes attempt is retried; recording/transcription never enters this lease. */
+  async holdForInteractiveAnswer(signal?: AbortSignal): Promise<() => void> {
+    this.interactiveHolds++
+    let released = false
+    const release = (): void => {
+      if (released) return
+      released = true
+      this.interactiveHolds = Math.max(0, this.interactiveHolds - 1)
+      if (this.interactiveHolds === 0) {
+        if (this.queue.length > 0)
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes resuming after interactive conversation',
+            meetingId: this.queue[0]
+          })
+        void this.processNext()
+      }
+    }
+    try {
+      signal?.throwIfAborted()
+      const meetingId = this.activeJobId
+      if (meetingId) {
+        this.interactiveResumeJobs.add(meetingId)
+        if (!this.queue.includes(meetingId)) this.queue.unshift(meetingId)
+        this.enqueueSource.set(meetingId, this.activeJobSource ?? 'direct')
+        logAutodocEvent({
+          area: 'segmentation',
+          message: 'notes yielding for interactive answer',
+          meetingId
+        })
+        const settled = this.processingSettled
+        while (this.processing && this.activeJobId === meetingId) {
+          signal?.throwIfAborted()
+          this.llmProvider.abortActiveRequests?.('SEGMENTATION_PREEMPTED')
+          await Promise.race([
+            settled ?? Promise.resolve(),
+            new Promise<void>((resolve) => setTimeout(resolve, 50))
+          ])
+          if (!settled) break
+        }
+      }
+      signal?.throwIfAborted()
+      return release
+    } catch (error) {
+      release()
+      throw error
+    }
+  }
+
   hasActiveOrQueuedWork(): boolean {
     return this.processing || this.activeJobId !== null || this.queue.length > 0
+  }
+
+  getPendingMeetingIds(): string[] {
+    return [...new Set([...(this.activeJobId ? [this.activeJobId] : []), ...this.queue])]
   }
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
@@ -256,8 +325,10 @@ export class SegmentationService {
   }
 
   async getStatus(meetingId: string): Promise<SegmentationStatus> {
-    if (this.activeJobId === meetingId && this.activeStatus) {
-      return this.activeStatus
+    if (this.activeJobId === meetingId) {
+      // A newly dequeued job awaits its directory snapshot before publishing
+      // an active status. Its old segments must not masquerade as completion.
+      return this.activeStatus ?? 'queued'
     }
     if (this.queue.includes(meetingId)) {
       return 'queued'
@@ -381,10 +452,13 @@ export class SegmentationService {
   }
 
   private async processNext(): Promise<void> {
-    if (this.processing) return
+    if (this.processing || this.interactiveHolds > 0) return
     if (this.queue.length === 0) return
 
     this.processing = true
+    this.processingSettled = new Promise<void>((resolve) => {
+      this.resolveProcessingSettled = resolve
+    })
     const meetingId = this.queue.shift()!
     this.activeJobId = meetingId
     this.activeJobSource = this.enqueueSource.get(meetingId) ?? 'direct'
@@ -392,6 +466,7 @@ export class SegmentationService {
     const dirSnapshot = await this.captureDirSnapshot(meetingId).catch(() => undefined)
 
     try {
+      if (this.interactiveHolds > 0) throw new Error('SEGMENTATION_PREEMPTED')
       await this.processJob(meetingId)
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err))
@@ -406,7 +481,13 @@ export class SegmentationService {
       this.activeProgress = undefined
       this.activeActivity = null
       this.processing = false
-      this.enqueueSource.delete(meetingId)
+      if (!this.queue.includes(meetingId)) {
+        this.enqueueSource.delete(meetingId)
+        this.interactiveResumeJobs.delete(meetingId)
+      }
+      this.resolveProcessingSettled?.()
+      this.resolveProcessingSettled = null
+      this.processingSettled = null
       this.processNext()
     }
   }
@@ -506,7 +587,32 @@ export class SegmentationService {
 
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
-    this.reapNotesRunners('before-notes-profile', meetingId)
+    const resumingInteractiveJob = this.interactiveResumeJobs.delete(meetingId)
+    const healthyWindowsMemory =
+      process.platform === 'win32' &&
+      isMemoryHealthyForConcurrentDualSource(getSystemMemorySnapshot())
+    const retainingResumeRunners =
+      resumingInteractiveJob && (process.platform !== 'win32' || healthyWindowsMemory)
+    const retainingInteractiveGpuRunners =
+      process.platform === 'win32' &&
+      useAskAiGenerationPriority() &&
+      this.getWindowsProcessingProfile?.()?.id === 'win-gpu' &&
+      !getDevNotesModelOverride() &&
+      healthyWindowsMemory
+    if (retainingResumeRunners || retainingInteractiveGpuRunners) {
+      // This is the same interrupted job, not a new profile/session. Reaping
+      // here would evict both healthy writer and embedding runners after every
+      // answer and turn the next follow-up into another cold model load.
+      logAutodocEvent({
+        area: 'segmentation',
+        message: retainingResumeRunners
+          ? 'notes resuming with retained runners'
+          : 'notes starting with retained interactive GPU runners',
+        meetingId
+      })
+    } else {
+      this.reapNotesRunners('before-notes-profile', meetingId)
+    }
     const macProcessingProfile =
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
     const windowsProcessingProfile =
@@ -728,20 +834,30 @@ export class SegmentationService {
       })
       this.safeInvokeOnComplete(meetingId)
     } finally {
-      if (process.platform === 'darwin' || process.platform === 'win32') {
-        await this.llmProvider.releaseResources?.(meetingId).catch((error) => {
-          logAutodocEvent({
-            area: 'segmentation',
-            message: 'llm resource release failed',
-            meetingId,
-            level: 'warn',
-            context: {
-              error: error instanceof Error ? error.message : String(error),
-              processingProfile: this.getProcessingProfileLogContext()
-            }
+      if (
+        (process.platform === 'darwin' || process.platform === 'win32') &&
+        this.interactiveHolds === 0
+      ) {
+        const unloadAccepted = await this.llmProvider
+          .releaseResources?.(meetingId)
+          .catch((error) => {
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'llm resource release failed',
+              meetingId,
+              level: 'warn',
+              context: {
+                error: error instanceof Error ? error.message : String(error),
+                processingProfile: this.getProcessingProfileLogContext()
+              }
+            })
           })
-        })
-        this.reapNotesRunners('after-notes', meetingId)
+        // The runtime has accepted unloading this job's writer. Force-killing
+        // every remaining child would also kill healthy Ask AI embeddings and
+        // leave stale entries in Ollama's scheduler, adding a five-second
+        // recovery wait to the next semantic lookup. Keep fallback reaping for
+        // failed/unsupported unloads, never for an acknowledged clean unload.
+        if (unloadAccepted !== true) this.reapNotesRunners('after-notes', meetingId)
         await this.logNotesResourceSnapshot('notes resources released', meetingId)
       }
     }
@@ -777,6 +893,19 @@ export class SegmentationService {
     return process.platform === 'darwin' || process.platform === 'win32'
   }
 
+  private notesCompletionOptions<T extends { num_ctx: number }>(options: T): T {
+    const selectedContext = this.llmProvider.getGenerationContextTokens?.()
+    // All stages share the already selected writer window. Smaller helper
+    // windows otherwise unload/reload the same model between 8K and 4K on
+    // Windows, including a five-second GPU recovery wait. Never expand beyond
+    // the existing hardware profile or reduce an explicitly larger request.
+    return selectedContext &&
+      Number.isSafeInteger(selectedContext) &&
+      selectedContext >= options.num_ctx
+      ? { ...options, num_ctx: selectedContext }
+      : options
+  }
+
   /**
    * The notes model checks each overview sentence against the notes.
    * The request bypasses the meeting-language directive; the answer is an enum.
@@ -805,7 +934,7 @@ export class SegmentationService {
       })
       return null
     }
-    return (prompt, options) => completePrompt(prompt, options)
+    return (prompt, options) => completePrompt(prompt, this.notesCompletionOptions(options))
   }
 
   /**
@@ -835,7 +964,7 @@ export class SegmentationService {
     return async (notes, k) => {
       const startedAt = Date.now()
       const outcome = await selectKeyTakeaways(notes, k, (prompt, options) =>
-        completePrompt(prompt, options)
+        completePrompt(prompt, this.notesCompletionOptions(options))
       )
       logAutodocEvent({
         area: 'segmentation',
@@ -932,7 +1061,9 @@ export class SegmentationService {
       let missingModelError: unknown
       const claimComplete = presentationMode ? this.claimVerificationComplete(meetingId) : null
       const result = await runNotesScanPipeline(segments, {
-        embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
+        embed: this.llmProvider.embedNotes
+          ? (texts) => this.llmProvider.embedNotes!(texts)
+          : undefined,
         title,
         meetingId,
         presentationMode,
@@ -948,20 +1079,7 @@ export class SegmentationService {
         })),
         generate: (request) => {
           if (missingModelError) return Promise.reject(missingModelError)
-          if (!loggedScanRequest) {
-            loggedScanRequest = true
-            logAutodocEvent({
-              area: 'segmentation',
-              message: 'notes scan first ollama request',
-              meetingId,
-              context: {
-                num_ctx: request.num_ctx,
-                num_predict: request.num_predict
-              }
-            })
-          }
-          const prompt = appendMeetingLanguageDirective(request.prompt, activeMeetingLanguage())
-          const result = this.llmProvider.completePrompt!(prompt, {
+          const requestOptions = this.notesCompletionOptions({
             num_ctx: request.num_ctx,
             num_predict: request.num_predict,
             temperature: request.temperature,
@@ -969,6 +1087,21 @@ export class SegmentationService {
             stop: request.stop,
             format: request.format
           })
+          if (!loggedScanRequest) {
+            loggedScanRequest = true
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'notes scan first ollama request',
+              meetingId,
+              context: {
+                num_ctx: requestOptions.num_ctx,
+                requestedNumCtx: request.num_ctx,
+                num_predict: request.num_predict
+              }
+            })
+          }
+          const prompt = appendMeetingLanguageDirective(request.prompt, activeMeetingLanguage())
+          const result = this.llmProvider.completePrompt!(prompt, requestOptions)
           if (process.platform !== 'win32') return result
           return result.catch((error) => {
             if (isMissingOllamaModelError(error)) missingModelError = error
@@ -995,15 +1128,20 @@ export class SegmentationService {
       })
       const repository = new NotesRepository(this.recordingsBaseDir)
       await repository.promoteLegacyToV2(meetingId, result.content, {
-        expectedLegacyRevision: computeLegacyNotesRevision(meetingId, withoutNextStepCandidates(segments)),
+        expectedLegacyRevision: computeLegacyNotesRevision(
+          meetingId,
+          withoutNextStepCandidates(segments)
+        ),
         sourceTranscriptRevision: computeTranscriptRevision(meetingId, transcripts),
         sourceAttributionRevision: computeNotesAttributionRevision(meetingId, transcripts)
       })
-      const writerItemCount = [segments.decisions, segments.actionItems, segments.information,
-        segments.discussion, segments.statusUpdates].reduce(
-        (total, bucket) => total + bucket.length,
-        0
-      )
+      const writerItemCount = [
+        segments.decisions,
+        segments.actionItems,
+        segments.information,
+        segments.discussion,
+        segments.statusUpdates
+      ].reduce((total, bucket) => total + bucket.length, 0)
       const presentedItemCount =
         result.content.keyTakeaways.length +
         result.content.decisions.length +
@@ -1163,12 +1301,18 @@ export class SegmentationService {
     meetingId: string,
     preferredModel?: string
   ): Promise<boolean> {
+    const checkInterrupted = (): void => {
+      if (this.interactiveHolds > 0) throw new Error('SEGMENTATION_PREEMPTED')
+    }
+    checkInterrupted()
     // macOS/Linux keep shared startup readiness and the original error behavior.
     if (process.platform !== 'win32') {
       await this.ollamaManager.waitUntilReady()
+      checkInterrupted()
     } else {
       try {
         await this.ollamaManager.waitUntilReady()
+        checkInterrupted()
         if (this.ollamaManager.prepareModelForGeneration) {
           // waitUntilReady() returns a cached promise that survives an unexpected serve exit,
           // so a dead serve must be restarted here instead of failing model preparation.
@@ -1182,6 +1326,7 @@ export class SegmentationService {
             this.ollamaManager.isServerRunning &&
             !(await this.ollamaManager.isServerRunning())
           ) {
+            checkInterrupted()
             logAutodocEvent({
               area: 'segmentation',
               message: 'notes generation starting stopped Ollama before model preparation',
@@ -1190,10 +1335,12 @@ export class SegmentationService {
             recovered = true
             await recoverRuntime()
           }
+          checkInterrupted()
           let activeModel: string
           try {
             activeModel = await this.ollamaManager.prepareModelForGeneration(preferredModel)
           } catch (error) {
+            checkInterrupted()
             if (recovered || !recoverRuntime || !isOllamaConnectionError(error)) throw error
             logAutodocEvent({
               area: 'segmentation',
@@ -1213,6 +1360,7 @@ export class SegmentationService {
           })
         }
       } catch (error) {
+        checkInterrupted()
         if (error instanceof Error && 'code' in error && error.code === 'OLLAMA_START_CANCELLED') {
           throw error
         }
@@ -1220,6 +1368,7 @@ export class SegmentationService {
       }
     }
 
+    checkInterrupted()
     if (!this.ollamaManager.isReadyForGeneration) {
       return true
     }
@@ -1233,6 +1382,7 @@ export class SegmentationService {
       return true
     }
 
+    checkInterrupted()
     const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
     if (deferCount === 0 && this.ollamaManager.recoverUnhealthyRuntime) {
       logAutodocEvent({
@@ -1341,18 +1491,20 @@ export class SegmentationService {
           : null
       if (code !== 'ENOENT') throw err
     }
-    logAutodocFailure({
-      area: 'segmentation',
-      message: 'Meeting notes generation failed',
-      error,
-      meetingId,
-      context: {
-        ...context,
-        errorCode,
-        retries,
-        processingProfile: this.getProcessingProfileLogContext()
-      }
-    })
+    // Deleting a recording mid-job fails the job's final write. That is not a notes failure.
+    if (!(await isMeetingDirMissing(join(this.recordingsBaseDir, meetingId))))
+      logAutodocFailure({
+        area: 'segmentation',
+        message: 'Meeting notes generation failed',
+        error,
+        meetingId,
+        context: {
+          ...context,
+          errorCode,
+          retries,
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
     this.broadcastStatus(meetingId, 'failed', undefined, errorCode, {
       memoryFailure: memoryFailureFromError(errorMsg)
     })

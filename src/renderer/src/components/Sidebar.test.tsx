@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Sidebar } from './Sidebar'
 import { createElectronApiMock } from '../test/fixtures'
+import { resetAskAiAvailabilityForTests } from '../stores/ask-ai-availability'
 
 const defaultSetupStatus = { phase: 'ready', percent: 100 }
 const trackEventMock = vi.hoisted(() => vi.fn())
@@ -51,6 +52,46 @@ describe('Sidebar', () => {
     expect(screen.getByText('AI Notes')).toBeInTheDocument()
     expect(screen.getByText('Search')).toBeInTheDocument()
     expect(screen.getByText('Ask AI')).toBeInTheDocument()
+  })
+
+  it('marks only the Ask AI item with the Beta badge', async () => {
+    await renderSidebar()
+    expect(screen.getByText('Ask AI').closest('a')).toHaveTextContent('Beta')
+    expect(document.querySelectorAll('[data-beta-badge]')).toHaveLength(1)
+  })
+
+  it('hides Ask AI where it is unavailable', async () => {
+    resetAskAiAvailabilityForTests(false)
+    await renderSidebar()
+    expect(screen.getByText('Search')).toBeInTheDocument()
+    expect(screen.queryByText('Ask AI')).not.toBeInTheDocument()
+  })
+
+  it('shows no Ask AI while the decision is unknown, then shows it once it is known', async () => {
+    resetAskAiAvailabilityForTests(null)
+    let decide: (available: boolean) => void = () => {}
+    const invoke = window.electronAPI.invoke as ReturnType<typeof vi.fn>
+    const base = invoke.getMockImplementation()!
+    invoke.mockImplementation((channel: string) =>
+      channel === 'chat:availability'
+        ? new Promise<boolean>((resolve) => (decide = resolve))
+        : base(channel)
+    )
+    await renderSidebar()
+    expect(screen.queryByText('Ask AI')).not.toBeInTheDocument()
+    await act(async () => decide(true))
+    expect(screen.getByText('Ask AI')).toBeInTheDocument()
+  })
+
+  it('treats a failed availability request as unavailable', async () => {
+    resetAskAiAvailabilityForTests(null)
+    const invoke = window.electronAPI.invoke as ReturnType<typeof vi.fn>
+    const base = invoke.getMockImplementation()!
+    invoke.mockImplementation((channel: string) =>
+      channel === 'chat:availability' ? Promise.reject(new Error('no handler')) : base(channel)
+    )
+    await renderSidebar()
+    expect(screen.queryByText('Ask AI')).not.toBeInTheDocument()
   })
 
   it('renders settings link', async () => {

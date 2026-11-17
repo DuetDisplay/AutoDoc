@@ -41,18 +41,24 @@ test('quitting before the first capture chunk saves audio and survives relaunch'
         async () => (await window.electronAPI.invoke('recording:get-state')).isRecording
       )
     ).toBe(true)
-    await page.waitForTimeout(600)
-    const process = first.electronApp.process()
+    // Inside the first 5s chunk, but past the first second, when Windows recorders have no output yet.
+    await page.waitForTimeout(3_000)
+    const appProcess = first.electronApp.process()
     await first.electronApp.evaluate(({ app }) => {
       app.quit()
     })
-    await expect.poll(() => process.exitCode, { timeout: 60_000 }).not.toBeNull()
+    await expect.poll(() => appProcess.exitCode, { timeout: 60_000 }).not.toBeNull()
     const base = path.join(profile, 'recordings')
     const meeting = readdirSync(base)[0]
     expect(meeting).toBeTruthy()
+    const logPath = path.join(profile, 'logs', 'autodocLog.log')
     expect(
       existsSync(path.join(base, meeting, 'mic.webm')) ||
-        existsSync(path.join(base, meeting, 'system.webm'))
+        existsSync(path.join(base, meeting, 'system.webm')),
+      [
+        `Files after quit: ${readdirSync(path.join(base, meeting)).join(', ')}`,
+        `Log: ${existsSync(logPath) ? readFileSync(logPath, 'utf8').slice(-4_000) : 'none'}`
+      ].join('\n')
     ).toBe(true)
     const audio = path.join(
       base,

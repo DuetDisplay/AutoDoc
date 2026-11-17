@@ -9,6 +9,7 @@ import {
   getE2ECalendarEvents
 } from '../services/e2e-fixtures'
 import { logAutodocFailure } from '../services/autodoc-log'
+import { CALENDAR_CONNECTION_CANCELLED_MESSAGE } from '../services/calendar-error-classification'
 import { getConfiguredAuthWorkerUrl, isOfficialAutoDocBuild } from '../services/distribution-config'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
@@ -75,6 +76,7 @@ export function registerCalendarIpc(
 
       return account
     } catch (err) {
+      if (err instanceof Error && err.message === CALENDAR_CONNECTION_CANCELLED_MESSAGE) throw err
       logAutodocFailure({
         area: 'calendar',
         message: 'Calendar connection failed',

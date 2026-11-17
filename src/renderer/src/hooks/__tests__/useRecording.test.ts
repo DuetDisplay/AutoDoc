@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useRecording, useRecordingActions } from '../useRecording'
 import { getSavedSourcePreference } from '../../services/recording-source-preferences'
 import { installMockElectronApi, resetRendererStores } from '../../test/fixtures'
+import { trackEvent, trackFirstEventOnce } from '../../services/analytics'
+import { startCapture, stopCapture, takeChunkSaveFailure } from '../../services/recording-capture'
 
 vi.mock('../../services/recording-capture', () => ({
   startCapture: vi.fn(async () => {}),
   stopCapture: vi.fn(async () => {}),
   setUnrecoverableCaptureHandler: vi.fn(),
-  setVideoDisabledHandler: vi.fn()
+  setVideoDisabledHandler: vi.fn(),
+  takeChunkSaveFailure: vi.fn(() => false)
 }))
 
 vi.mock('../../services/finish-recording', () => ({
@@ -40,6 +43,46 @@ const trackingContext = {
   recordingIntent: 'meeting' as const,
   selectionEventId: 'timed'
 }
+
+describe.each([
+  ['useRecording', () => useRecording()],
+  ['useRecordingActions', () => useRecordingActions()]
+])('%s stop analytics', (_name, useHook) => {
+  beforeEach(() => {
+    resetRendererStores()
+    installMockElectronApi({ 'recording:get-state': { isRecording: false } })
+    vi.mocked(trackEvent).mockClear()
+    vi.mocked(trackFirstEventOnce).mockClear()
+    vi.mocked(takeChunkSaveFailure).mockReturnValue(false)
+  })
+
+  it('counts a normal stop as completed', async () => {
+    const { result } = renderHook(useHook)
+
+    await act(async () => result.current.handleStop())
+
+    expect(trackEvent).toHaveBeenCalledWith('recording_completed', expect.anything())
+    expect(trackFirstEventOnce).toHaveBeenCalledWith(
+      'user_activated',
+      'user_activated',
+      expect.anything()
+    )
+  })
+
+  it('does not count a recording that could not be saved as completed', async () => {
+    vi.mocked(takeChunkSaveFailure).mockReturnValue(true)
+    const { result } = renderHook(useHook)
+
+    await act(async () => result.current.handleStop())
+
+    expect(trackEvent).toHaveBeenCalledWith('recording_stopped', expect.anything())
+    expect(trackEvent).toHaveBeenCalledWith('recording_stop_failed', {
+      failure_code: 'chunk_save_failed'
+    })
+    expect(trackEvent).not.toHaveBeenCalledWith('recording_completed', expect.anything())
+    expect(trackFirstEventOnce).not.toHaveBeenCalled()
+  })
+})
 
 describe.each([
   ['useRecording', () => useRecording()],
@@ -86,5 +129,54 @@ describe.each([
       sourceId: 'window:huddle',
       sourceName: 'Huddle - Slack'
     })
+  })
+})
+
+describe.each([
+  ['useRecording', () => useRecording()],
+  ['useRecordingActions', () => useRecordingActions()]
+])('%s handleStart rollback', (_name, useHook) => {
+  const stopInvokes = () =>
+    vi
+      .mocked(window.electronAPI.invoke)
+      .mock.calls.filter(([channel]) => channel === 'recording:stop')
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetRendererStores()
+    installMockElectronApi({
+      'recording:get-state': { isRecording: false },
+      'recording:start': { meetingId: 'meeting-1' },
+      'recording:stop': undefined
+    })
+  })
+
+  it('leaves everything alone when the main process refused to start', async () => {
+    const invoke = vi.mocked(window.electronAPI.invoke)
+    const mocked = invoke.getMockImplementation()!
+    invoke.mockImplementation(((channel: string, ...args: unknown[]) =>
+      channel === 'recording:start'
+        ? Promise.reject(new Error('refused'))
+        : (mocked as (...callArgs: unknown[]) => unknown)(channel, ...args)) as never)
+    const { result } = renderHook(useHook)
+
+    await act(async () => {
+      await expect(result.current.handleStart('window:1', 'Zoom')).rejects.toThrow('refused')
+    })
+
+    expect(stopCapture).not.toHaveBeenCalled()
+    expect(stopInvokes()).toHaveLength(0)
+  })
+
+  it('stops the main process when capture fails after it started', async () => {
+    vi.mocked(startCapture).mockRejectedValueOnce(new Error('no capture'))
+    const { result } = renderHook(useHook)
+
+    await act(async () => {
+      await expect(result.current.handleStart('window:1', 'Zoom')).rejects.toThrow('no capture')
+    })
+
+    expect(stopCapture).toHaveBeenCalledOnce()
+    expect(stopInvokes()).toHaveLength(1)
   })
 })

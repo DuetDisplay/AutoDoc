@@ -500,10 +500,53 @@ describe('ChatRecordingIndex', () => {
       []
     )
 
-    expect(result.context).toContain('Move invoices onto the new export pipeline.')
-    expect(result.context).toContain('Review the billing PR')
+    expect(result.directAnswer).toContain('billing migration')
+    expect(result.directAnswer).not.toContain('old CSV importer only')
+    expect(result.context).toBe('')
     expect(result.diagnostics.selectedMeetingIds).toEqual(['billing-sync'])
-    expect(result.context).not.toContain('old CSV importer only')
+    expect(result.context).not.toContain('Cite claims')
+    expect(result.sources?.length).toBeGreaterThan(0)
+  })
+
+  it('answers a decision question from V2 notes without waiting for the model', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'billing-sync', {
+      startedAt: new Date(2026, 4, 27, 10, 0).getTime(),
+      sourceName: 'Entire screen',
+      calendarTitle: 'Billing Sync',
+      notesV2: {
+        schemaVersion: 2,
+        overview: {
+          text: 'The team aligned on billing migration and the invoice export.',
+          sources: [{ startMs: 1200, endMs: 4000 }]
+        },
+        keyTakeaways: [
+          {
+            id: 't1',
+            text: 'Ship the invoice export this week. Priya owns the billing follow-up.',
+            sources: [{ startMs: 84_000, endMs: 90_000 }]
+          }
+        ],
+        sections: [],
+        decisions: [
+          {
+            id: 'd1',
+            text: 'Use the new invoice export pipeline instead of the legacy CSV importer.',
+            sources: [{ startMs: 60_000, endMs: 70_000 }]
+          }
+        ],
+        nextSteps: []
+      }
+    })
+
+    const result = await new ChatRecordingIndex(baseDir).buildContext(
+      'What did we decide about the invoice export?',
+      []
+    )
+
+    expect(result.directAnswer).toContain('invoice export pipeline')
+    expect(result.context).toBe('')
+    expect(result.sources?.some((source) => source.startMs === 60_000)).toBe(true)
   })
 
   it('uses structured notes first and transcript excerpts as fallback for matched meetings', async () => {

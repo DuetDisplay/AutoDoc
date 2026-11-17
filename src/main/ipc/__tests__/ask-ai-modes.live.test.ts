@@ -162,7 +162,8 @@ describe.skipIf(!LIVE)('Ask AI modes LIVE eval (v1 vs hybrid vs agent)', () => {
       {
         waitUntilReady: vi.fn().mockResolvedValue(undefined),
         isServerRunning: vi.fn().mockResolvedValue(true),
-        getBaseUrl: () => BASE_URL
+        getBaseUrl: () => BASE_URL,
+        getAskAiModel: () => MODEL
       } as never,
       { getModel: () => MODEL } as never,
       {

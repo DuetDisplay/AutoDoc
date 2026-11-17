@@ -7,7 +7,7 @@ import {
 
 const v2Document = {
   schemaVersion: 2,
-  overview: { text: 'The team aligned on billing migration.' },
+  overview: { text: 'The team aligned on billing migration.', sources: [{ startMs: 1_200, endMs: 4_000 }] },
   keyTakeaways: [{ id: 't1', text: 'Ship the invoice export' }],
   sections: [
     {
@@ -35,6 +35,9 @@ describe('notes-search-text', () => {
     expect(entries.some((entry) => entry.category === 'actionItems' && entry.owner === 'Priya')).toBe(
       true
     )
+    expect(entries.find((entry) => entry.id === 'overview')?.sources).toEqual([
+      { startMs: 1_200, endMs: 4_000 }
+    ])
   })
 
   it('matches an organic section heading even when the words are not in the bullet', () => {

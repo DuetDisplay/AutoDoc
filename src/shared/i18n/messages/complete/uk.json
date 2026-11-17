@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Віддаєте перевагу темному оформленню? Увімкніть темний режим.",
   "announcement.done": "Готово",
   "announcement.meetingLanguageBody": "Розшифровки та нотатки тепер доступні {count} мовами!",
-  "announcement.meetingLanguageDescription": "Виберіть мову, якою розмовляють на ваших зустрічах. Нові розшифровки та нотатки будуть цією мовою."
+  "announcement.meetingLanguageDescription": "Виберіть мову, якою розмовляють на ваших зустрічах. Нові розшифровки та нотатки будуть цією мовою.",
+  "askAi.indexingPreparingAnnouncement": "Підготовка зустрічей для функції «Запитати ШІ».",
+  "askAi.indexingPausedAnnouncement": "Підготовку для «Запитати ШІ» призупинено, поки записується зустріч або створюються нотатки."
 }

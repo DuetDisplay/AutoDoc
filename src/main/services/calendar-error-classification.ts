@@ -1,3 +1,10 @@
+import { isTransientNetworkError } from './network-error-classification'
+
+export const CALENDAR_CONNECTION_CANCELLED_MESSAGE = 'Calendar connection cancelled'
+
+/** Only unofficial builds lack an auth worker. Polling can't fix that, so it isn't reported. */
+export const NO_AUTH_WORKER_MESSAGE = 'Calendar sign-in is not configured for this build'
+
 export class CalendarTransientError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message)
@@ -48,25 +55,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function isTransientCalendarError(error: unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase()
-
-  return (
-    [
-      'enotfound',
-      'err_name_not_resolved',
-      'err_network_io_suspended',
-      'eai_again',
-      'econnreset',
-      'etimedout',
-      'fetch failed',
-      'network error',
-      'networkerror',
-      'timeout',
-      'temporarily unavailable',
-      'service unavailable'
-    ].some((pattern) => message.includes(pattern)) ||
-    /\b(408|425|429|500|502|503|504)\b/.test(message)
-  )
+  return isTransientNetworkError(error)
 }
 
 export function isUnsupportedMicrosoftMailboxError(error: unknown): boolean {
@@ -116,7 +105,8 @@ function hasStringField(value: unknown, field: string, expected: string): boolea
 export function isReconnectRequiredGoogleAuthError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase()
 
-  if (message.includes('invalid_grant')) {
+  // invalid_request means Google refused this refresh token, and retrying won't change that.
+  if (message.includes('invalid_grant') || message.includes('invalid_request')) {
     return true
   }
 

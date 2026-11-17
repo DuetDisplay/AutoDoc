@@ -1,4 +1,5 @@
 import { containsCjk } from './unicode-text'
+import { throwIfNotesPreempted } from './notes-preemption'
 
 /**
  * Checks each sentence of the generated Mac overview against the notes it was
@@ -119,7 +120,8 @@ export async function verifyOverviewClaims<T extends { text: string }>(
     let verdict: ClaimVerdict | null = null
     try {
       verdict = await askVerdict(complete, fill(OVERVIEW_SENTENCE_PROMPT, { catalog, sentence }))
-    } catch {
+    } catch (error) {
+      throwIfNotesPreempted(error)
       verdict = null
     }
     if (verdict === null) errors += 1

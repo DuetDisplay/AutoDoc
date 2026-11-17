@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { RecordingService } from '../recording'
+import { RecordingService, RecordingShutdownError } from '../recording'
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -30,6 +30,24 @@ describe('RecordingService', () => {
     expect(state.isRecording).toBe(false)
     expect(state.meetingId).toBeNull()
     expect(state.startedAt).toBeNull()
+  })
+
+  it('counts capture startup as active before the recording state is published', async () => {
+    const pending = service.startRecording('source-123', 'Synthetic workshop')
+    expect(service.getState().isRecording).toBe(false)
+    expect(service.hasActiveCapture()).toBe(true)
+    await pending
+    service.stopRecording()
+    expect(service.hasActiveCapture()).toBe(false)
+  })
+
+  it('keeps capture admission closed between stop and processing handoff, releasing on completion or failure', async () => {
+    await service.startRecording('source-123', 'Synthetic workshop')
+    const stopped = service.stopRecording(true)
+    expect(service.getState().isRecording).toBe(false)
+    expect(service.hasActiveCapture()).toBe(true)
+    service.completeProcessingHandoff(stopped.meetingId)
+    expect(service.hasActiveCapture()).toBe(false)
   })
 
   it('transitions to recording state on start', async () => {
@@ -87,5 +105,16 @@ describe('RecordingService', () => {
 
   it('throws if stopping when not recording', () => {
     expect(() => service.stopRecording()).toThrow('Not recording')
+  })
+})
+
+describe('RecordingService during shutdown', () => {
+  it('refuses a new recording with an identifiable error', async () => {
+    const service = new RecordingService()
+    service.setShutdownPending(true)
+
+    await expect(service.startRecording('window:1', 'Zoom')).rejects.toBeInstanceOf(
+      RecordingShutdownError
+    )
   })
 })

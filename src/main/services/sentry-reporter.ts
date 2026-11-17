@@ -1,5 +1,6 @@
 import type * as SentryType from '@sentry/electron/main'
 import { getDiagnosticTrail } from './diagnostic-trail'
+import { isDiskFullError } from './disk-full'
 import type { DiagnosticLogAttachment } from './diagnostic-log-upload'
 
 export interface ErrorContext {
@@ -79,7 +80,10 @@ export function captureError(error: unknown, context: ErrorContext): void {
     } else {
       scope.setExtras({ diagnosticTrail })
     }
-    const fingerprint = context.fingerprint ?? getErrorFingerprint(error)
+    // A full disk fails many steps at once, and it's one problem wherever it surfaces.
+    const fingerprint = isDiskFullError(error)
+      ? ['disk-full']
+      : (context.fingerprint ?? getErrorFingerprint(error))
     if (fingerprint) attachmentAwareScope.setFingerprint?.(fingerprint)
     if (context.diagnosticLogAttachment) {
       attachmentAwareScope.addAttachment?.(context.diagnosticLogAttachment)
@@ -116,6 +120,11 @@ export function captureMessage(message: string, context: MessageContext): void {
 
     messageAwareSentry.captureMessage?.(message, context.level ?? 'info')
   })
+}
+
+/** Sends queued events before an exit that would otherwise drop them. */
+export async function closeSentry(timeoutMs: number): Promise<void> {
+  await Sentry?.close(timeoutMs)
 }
 
 export function setGlobalContext(key: string, data: Record<string, unknown>): void {

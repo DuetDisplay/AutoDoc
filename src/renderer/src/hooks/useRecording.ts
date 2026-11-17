@@ -5,6 +5,7 @@ import {
   startCapture,
   stopCapture,
   setUnrecoverableCaptureHandler,
+  takeChunkSaveFailure,
   setVideoDisabledHandler
 } from '../services/recording-capture'
 import { detectMeetingWindow } from '../services/window-detection'
@@ -46,6 +47,28 @@ function getSourceSelectionMode(
  * Full recording hook — sets up IPC listener, timer, and actions.
  * Mount this ONCE at the App level to avoid duplicate timers.
  */
+async function trackRecordingFinished(durationSeconds: number): Promise<void> {
+  const durationBucket = toDurationBucket(durationSeconds)
+  trackEvent('recording_stopped', {
+    duration_bucket: durationBucket
+  })
+  if (takeChunkSaveFailure()) {
+    trackEvent('recording_stop_failed', { failure_code: 'chunk_save_failed' })
+    return
+  }
+  trackEvent('recording_completed', {
+    duration_bucket: durationBucket
+  })
+  const daysSinceFirstLaunch = await getDaysSinceFirstLaunch()
+  await trackFirstEventOnce('recording_completed', 'first_recording_completed', {
+    days_since_first_launch: daysSinceFirstLaunch
+  })
+  await trackFirstEventOnce('user_activated', 'user_activated', {
+    activation_reason: 'first_recording_completed',
+    days_since_first_launch: daysSinceFirstLaunch
+  })
+}
+
 export function useRecording() {
   const {
     isRecording,
@@ -129,6 +152,7 @@ export function useRecording() {
         source_selection_mode: getSourceSelectionMode(selectionContext)
       })
       const startPromise = (async () => {
+        let mainStarted = false
         try {
           const paths = await window.electronAPI.invoke(
             'recording:start',
@@ -136,6 +160,7 @@ export function useRecording() {
             sourceNameParam,
             trackingContext ?? null
           )
+          mainStarted = true
           await startCapture(sourceId, paths.meetingId, sourceNameParam)
           recordDiagnosticAction({
             category: 'recording',
@@ -163,10 +188,13 @@ export function useRecording() {
             sourceType: getRecordingSourceType(sourceId),
             sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
           })
-          // Rollback main process state if capture fails (e.g. permission denied)
-          await stopCapture()
-          await window.electronAPI.invoke('recording:stop').catch(() => {})
-          reset()
+          // Rollback main process state if capture fails (e.g. permission denied). A refused start
+          // left nothing to undo, and may have been refused because another recording is running.
+          if (mainStarted) {
+            await stopCapture()
+            await window.electronAPI.invoke('recording:stop').catch(() => {})
+            reset()
+          }
           trackEvent('recording_start_failed', {
             failure_code: 'capture_start_failed',
             source_type: getRecordingSourceType(sourceId)
@@ -194,21 +222,7 @@ export function useRecording() {
     try {
       await finishRecording()
       const durationSeconds = useRecordingStore.getState().elapsedSeconds
-      const durationBucket = toDurationBucket(durationSeconds)
-      trackEvent('recording_stopped', {
-        duration_bucket: durationBucket
-      })
-      trackEvent('recording_completed', {
-        duration_bucket: durationBucket
-      })
-      const daysSinceFirstLaunch = await getDaysSinceFirstLaunch()
-      await trackFirstEventOnce('recording_completed', 'first_recording_completed', {
-        days_since_first_launch: daysSinceFirstLaunch
-      })
-      await trackFirstEventOnce('user_activated', 'user_activated', {
-        activation_reason: 'first_recording_completed',
-        days_since_first_launch: daysSinceFirstLaunch
-      })
+      await trackRecordingFinished(durationSeconds)
       reset()
     } catch (err) {
       trackEvent('recording_stop_failed', { failure_code: 'capture_stop_failed' })
@@ -305,6 +319,7 @@ export function useRecordingActions() {
       }
 
       const startPromise = (async () => {
+        let mainStarted = false
         try {
           trackEvent('recording_start_requested', {
             trigger: trackingContext ? 'auto_record' : 'manual',
@@ -317,6 +332,7 @@ export function useRecordingActions() {
             sourceNameParam,
             trackingContext ?? null
           )
+          mainStarted = true
           await startCapture(sourceId, paths.meetingId, sourceNameParam)
           if (selectionContext && startOptions?.rememberSource) {
             saveSourcePreference(selectionContext, {
@@ -340,9 +356,11 @@ export function useRecordingActions() {
             failure_code: 'capture_start_failed',
             source_type: getRecordingSourceType(sourceId)
           })
-          await stopCapture()
-          await window.electronAPI.invoke('recording:stop')
-          reset()
+          if (mainStarted) {
+            await stopCapture()
+            await window.electronAPI.invoke('recording:stop')
+            reset()
+          }
           throw err
         } finally {
           startPromiseRef.current = null
@@ -359,21 +377,7 @@ export function useRecordingActions() {
     try {
       const durationSeconds = useRecordingStore.getState().elapsedSeconds
       await finishRecording()
-      const durationBucket = toDurationBucket(durationSeconds)
-      trackEvent('recording_stopped', {
-        duration_bucket: durationBucket
-      })
-      trackEvent('recording_completed', {
-        duration_bucket: durationBucket
-      })
-      const daysSinceFirstLaunch = await getDaysSinceFirstLaunch()
-      await trackFirstEventOnce('recording_completed', 'first_recording_completed', {
-        days_since_first_launch: daysSinceFirstLaunch
-      })
-      await trackFirstEventOnce('user_activated', 'user_activated', {
-        activation_reason: 'first_recording_completed',
-        days_since_first_launch: daysSinceFirstLaunch
-      })
+      await trackRecordingFinished(durationSeconds)
       reset()
     } catch (err) {
       trackEvent('recording_stop_failed', { failure_code: 'capture_stop_failed' })

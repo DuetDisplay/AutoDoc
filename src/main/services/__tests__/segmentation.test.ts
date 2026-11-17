@@ -6,6 +6,7 @@ import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
 import { NotesRepository } from '../notes-repository'
 import * as notesScanPipeline from '../notes-scan-pipeline'
+import * as windowsRuntime from '../windows-transcription-runtime'
 import { computeLegacyNotesRevision } from '../notes-revision'
 import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
@@ -112,30 +113,63 @@ describe('SegmentationService', () => {
   })
 
   it.each(['win32', 'darwin'] as const)(
-    'removes only exact copies after generation and before persistence on %s', async (platform) => {
+    'removes only exact copies after generation and before persistence on %s',
+    async (platform) => {
       const original = process.platform
       Object.defineProperty(process, 'platform', { value: platform, configurable: true })
       const item = {
-        id: 'meeting-information:duplicate', meetingId: 'meeting', category: 'information' as const,
-        topic: null, title: 'Release date', content: 'No release date has been announced.',
-        assignee: null, deadline: null, sourceStartMs: 1000, sourceEndMs: 1000
+        id: 'meeting-information:duplicate',
+        meetingId: 'meeting',
+        category: 'information' as const,
+        topic: null,
+        title: 'Release date',
+        content: 'No release date has been announced.',
+        assignee: null,
+        deadline: null,
+        sourceStartMs: 1000,
+        sourceEndMs: 1000
       }
-      const generated = { decisions: [], actionItems: [], information: [item, { ...item }], discussion: [], statusUpdates: [] }
+      const generated = {
+        decisions: [],
+        actionItems: [],
+        information: [item, { ...item }],
+        discussion: [],
+        statusUpdates: []
+      }
       const expected = { ...generated, information: [item] }
       vi.mocked(provider.summarize).mockResolvedValue(generated)
       fsMock.access.mockResolvedValue(undefined)
-      fsMock.readFile.mockResolvedValue(JSON.stringify([
-        { id: 'row', meetingId: 'meeting', speaker: 'me', text: item.content, startMs: 1000, endMs: 5000, confidence: 1 }
-      ]))
+      fsMock.readFile.mockResolvedValue(
+        JSON.stringify([
+          {
+            id: 'row',
+            meetingId: 'meeting',
+            speaker: 'me',
+            text: item.content,
+            startMs: 1000,
+            endMs: 5000,
+            confidence: 1
+          }
+        ])
+      )
       const persist = vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
-      const scan = vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v2' })
+      const scan = vi
+        .spyOn(service as any, 'persistScanLayerNotes')
+        .mockResolvedValue({ notesLayout: 'v2' })
       try {
         await (service as any).processJob('meeting')
         expect(provider.summarize).toHaveBeenCalledOnce()
         expect(persist).toHaveBeenCalledWith('meeting', expected, { overwriteWhenV2Exists: true })
-        expect(scan).toHaveBeenCalledWith('meeting', expected, expect.any(Array), expect.any(Function))
+        expect(scan).toHaveBeenCalledWith(
+          'meeting',
+          expected,
+          expect.any(Array),
+          expect.any(Function)
+        )
         expect(generated.information).toHaveLength(2)
-        expect(vi.mocked(provider.summarize).mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0])
+        expect(vi.mocked(provider.summarize).mock.invocationCallOrder[0]).toBeLessThan(
+          persist.mock.invocationCallOrder[0]
+        )
         expect(persist.mock.invocationCallOrder[0]).toBeLessThan(scan.mock.invocationCallOrder[0])
       } finally {
         persist.mockRestore()
@@ -147,6 +181,33 @@ describe('SegmentationService', () => {
 
   describe('overview claim verification', () => {
     const judge = () => vi.fn(async () => JSON.stringify({ verdict: 'supported' }))
+
+    it('shares the selected writer context with smaller notes helpers without raising its ceiling', async () => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      const complete = judge()
+      provider.completePrompt = complete
+      provider.getGenerationContextTokens = () => 8192
+      const options = {
+        num_ctx: 4096,
+        num_predict: 24,
+        temperature: 0,
+        seed: 42,
+        format: { type: 'object' }
+      }
+      try {
+        await (service as any).claimVerificationComplete()('Check a claim', options)
+        expect(complete).toHaveBeenCalledWith('Check a claim', { ...options, num_ctx: 8192 })
+        expect(options.num_ctx).toBe(4096)
+        provider.getGenerationContextTokens = () => 4096
+        expect((service as any).notesCompletionOptions({ num_ctx: 2048 }).num_ctx).toBe(4096)
+        expect((service as any).notesCompletionOptions({ num_ctx: 8192 }).num_ctx).toBe(8192)
+        provider.getGenerationContextTokens = () => NaN
+        expect((service as any).notesCompletionOptions(options)).toBe(options)
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    })
 
     it.each([
       ['darwin', true],
@@ -466,6 +527,39 @@ describe('SegmentationService', () => {
         expect(readiness.prepareModelForGeneration).toHaveBeenCalledTimes(2)
       })
 
+      it.each(['probe', 'prepare'] as const)(
+        'does not recover a notes attempt interrupted by an interactive hold during %s',
+        async (phase) => {
+          let release: (() => void) | undefined
+          const interrupt = async (): Promise<never> => {
+            release = await service.holdForInteractiveAnswer()
+            throw new TypeError('fetch failed')
+          }
+          const readiness = makeReadiness({
+            isServerRunning: vi.fn(async () => {
+              if (phase === 'probe') {
+                release = await service.holdForInteractiveAnswer()
+                return false
+              }
+              return true
+            }),
+            prepareModelForGeneration: vi.fn(interrupt)
+          })
+          service = makeService(readiness)
+          try {
+            await expect((service as any).ensureOllamaReadyForGeneration('m-held')).rejects.toThrow(
+              'SEGMENTATION_PREEMPTED'
+            )
+            expect(readiness.recoverUnhealthyRuntime).not.toHaveBeenCalled()
+            expect(readiness.prepareModelForGeneration).toHaveBeenCalledTimes(
+              phase === 'prepare' ? 1 : 0
+            )
+          } finally {
+            release?.()
+          }
+        }
+      )
+
       it('does not retry more than once when recovery already ran in this call', async () => {
         const readiness = makeReadiness({
           prepareModelForGeneration: vi.fn().mockRejectedValue(new TypeError('fetch failed'))
@@ -591,18 +685,63 @@ describe('SegmentationService', () => {
     vi.stubEnv('AUTODOC_TEST_WINDOWS_TOPIC_WRITER', 'lines')
     const complete = vi.fn()
     service.onComplete(complete)
-    const scan = vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v1', errorCode: 'scan_or_persist', userReason: 'Could not update notes.' })
+    const scan = vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({
+      notesLayout: 'v1',
+      errorCode: 'scan_or_persist',
+      userReason: 'Could not update notes.'
+    })
     const broadcast = vi.spyOn(service as any, 'broadcastStatus')
     fsMock.access.mockResolvedValue(undefined)
-    fsMock.readFile.mockResolvedValue(JSON.stringify([{ id: 'row', meetingId: 'failure-case', speaker: 'them', text: 'The supplier renewed the agreement.', startMs: 0, endMs: 65000, confidence: 1 }]) as any)
-    vi.mocked(provider.summarize).mockResolvedValue({ decisions: [], actionItems: [], discussion: [], statusUpdates: [], information: [{ id: 'note', meetingId: 'failure-case', category: 'information', title: 'Renewal', content: 'The supplier renewed the agreement.', topic: 'Contract', assignee: null, deadline: null, sourceStartMs: 0, sourceEndMs: 65000 }] })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'row',
+          meetingId: 'failure-case',
+          speaker: 'them',
+          text: 'The supplier renewed the agreement.',
+          startMs: 0,
+          endMs: 65000,
+          confidence: 1
+        }
+      ]) as any
+    )
+    vi.mocked(provider.summarize).mockResolvedValue({
+      decisions: [],
+      actionItems: [],
+      discussion: [],
+      statusUpdates: [],
+      information: [
+        {
+          id: 'note',
+          meetingId: 'failure-case',
+          category: 'information',
+          title: 'Renewal',
+          content: 'The supplier renewed the agreement.',
+          topic: 'Contract',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 65000
+        }
+      ]
+    })
     try {
       await (service as any).processJob('failure-case')
-      expect(broadcast).toHaveBeenCalledWith('failure-case', 'failed', undefined, 'scan_or_persist', expect.any(Object))
+      expect(broadcast).toHaveBeenCalledWith(
+        'failure-case',
+        'failed',
+        undefined,
+        'scan_or_persist',
+        expect.any(Object)
+      )
       expect(complete).not.toHaveBeenCalled()
-      expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(expect.objectContaining({ message: 'notes generation completed' }))
+      expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'notes generation completed' })
+      )
     } finally {
-      scan.mockRestore(); broadcast.mockRestore(); vi.unstubAllEnvs()
+      scan.mockRestore()
+      broadcast.mockRestore()
+      vi.unstubAllEnvs()
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
     }
   })
@@ -678,12 +817,21 @@ describe('SegmentationService', () => {
         }
       ]
 
-      const withDrafts = { ...segments, nextStepCandidates: [{
-        ...segments.actionItems[0], id: 'rejected-draft', sourceStartMs: 90_000, sourceEndMs: 90_000
-      }] }
+      const withDrafts = {
+        ...segments,
+        nextStepCandidates: [
+          {
+            ...segments.actionItems[0],
+            id: 'rejected-draft',
+            sourceStartMs: 90_000,
+            sourceEndMs: 90_000
+          }
+        ]
+      }
       await scanService.saveSegments('meeting-mac-lossless', withDrafts)
       expect(cryptoMock.encryptJSON).toHaveBeenCalledWith(
-        segments, join('/mock/home/AutoDoc/recordings', 'meeting-mac-lossless', 'segments.json')
+        segments,
+        join('/mock/home/AutoDoc/recordings', 'meeting-mac-lossless', 'segments.json')
       )
       const result = await (scanService as any).persistScanLayerNotes(
         'meeting-mac-lossless',
@@ -890,6 +1038,28 @@ describe('SegmentationService', () => {
     service.retry('meeting-123')
 
     expect(fsMock.unlink).not.toHaveBeenCalled()
+  })
+
+  it('does not report a failure for a meeting the user deleted mid-job', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' })
+    fsMock.stat.mockRejectedValue({ code: 'ENOENT' })
+    mocks.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('deleted-meeting', 'ENOENT: no such file or directory')
+
+    expect(mocks.logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('still reports a failure when the meeting folder exists', async () => {
+    fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+    fsMock.writeFile.mockResolvedValue(undefined)
+    fsMock.stat.mockResolvedValue({} as any)
+    mocks.logAutodocFailure.mockClear()
+
+    await (service as any).markFailed('meeting-123', 'notes failed')
+
+    expect(mocks.logAutodocFailure).toHaveBeenCalledTimes(1)
   })
 
   it('does not throw when marking a deleted meeting as failed', async () => {
@@ -1759,7 +1929,9 @@ describe('SegmentationService', () => {
         if (String(path).endsWith('segments.error')) savedError = String(data)
       })
       vi.mocked(provider.getLastWriterSkips!).mockReturnValue(
-        writerSkipped ? [{ chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }] : []
+        writerSkipped
+          ? [{ chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }]
+          : []
       )
 
       await expect((service as any).processJob('m2')).resolves.toBeUndefined()
@@ -1927,6 +2099,180 @@ describe('SegmentationService', () => {
       },
       join('/mock/home/AutoDoc/recordings', 'm3', 'segments.json')
     )
+  })
+
+  it('holds and safely resumes a preempted notes job exactly once', async () => {
+    let rejectAttempt: ((reason: Error) => void) | undefined
+    vi.spyOn(service as any, 'captureDirSnapshot').mockResolvedValue(undefined)
+    const job = vi
+      .spyOn(service as any, 'processJob')
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectAttempt = reject
+          })
+      )
+      .mockResolvedValue(undefined)
+    vi.mocked(provider.abortActiveRequests!).mockImplementation(() =>
+      rejectAttempt?.(new Error('SEGMENTATION_PREEMPTED'))
+    )
+    const failed = vi.spyOn(service as any, 'markFailed').mockResolvedValue(undefined)
+    service.enqueue('interactive-notes', 'direct')
+    await vi.waitFor(() => expect(job).toHaveBeenCalledTimes(1))
+    const release = await service.holdForInteractiveAnswer()
+    expect(service.isHeldForInteractiveAnswer()).toBe(true)
+    expect((service as any).queue).toEqual(['interactive-notes'])
+    expect((service as any).interactiveResumeJobs.has('interactive-notes')).toBe(true)
+    expect(failed).not.toHaveBeenCalled()
+    release()
+    release()
+    await vi.waitFor(() => expect(job).toHaveBeenCalledTimes(2))
+    expect(service.isHeldForInteractiveAnswer()).toBe(false)
+    expect((service as any).queue).toEqual([])
+    expect((service as any).interactiveResumeJobs.size).toBe(0)
+  })
+
+  it('does not report stale completion while a dequeued job captures its snapshot', async () => {
+    const snapshot = deferred<undefined>()
+    vi.spyOn(service as any, 'captureDirSnapshot').mockReturnValue(snapshot.promise)
+    vi.spyOn(service as any, 'processJob').mockResolvedValue(undefined)
+    fsMock.access.mockResolvedValue(undefined)
+    service.enqueue('reprocessing')
+    expect((service as any).activeJobId).toBe('reprocessing')
+    expect((service as any).activeStatus).toBeNull()
+    expect(await service.getStatus('reprocessing')).toBe('queued')
+    snapshot.resolve(undefined)
+    await vi.waitFor(() => expect((service as any).processing).toBe(false))
+  })
+
+  it('releases a notes hold when the requesting chat was canceled', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    await expect(service.holdForInteractiveAnswer(controller.signal)).rejects.toThrow()
+    expect(service.isHeldForInteractiveAnswer()).toBe(false)
+  })
+
+  it('does not kill healthy unrelated runners after an accepted writer unload', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const reap = vi.spyOn(service as any, 'reapNotesRunners').mockImplementation(() => {})
+    vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v2' })
+    fsMock.access.mockResolvedValue(undefined)
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'row',
+          meetingId: 'unload',
+          speaker: 'me',
+          text: 'Mira owns the migration.',
+          startMs: 0,
+          endMs: 15000,
+          confidence: 1
+        }
+      ])
+    )
+    try {
+      vi.mocked(provider.releaseResources!).mockResolvedValue(true)
+      await (service as any).processJob('unload')
+      expect(provider.releaseResources).toHaveBeenCalledWith('unload')
+      expect(reap).not.toHaveBeenCalledWith('after-notes', 'unload')
+      vi.mocked(provider.releaseResources!).mockResolvedValue(false)
+      reap.mockClear()
+      await (service as any).processJob('unload')
+      expect(reap).toHaveBeenCalledWith('after-notes', 'unload')
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('preserves runners only for the next attempt of the same interrupted job', async () => {
+    const memory = vi
+      .spyOn(windowsRuntime, 'getSystemMemorySnapshot')
+      .mockReturnValue({ freeMemoryGiB: 9, totalMemoryGiB: 32 })
+    const reap = vi.spyOn(service as any, 'reapNotesRunners').mockImplementation(() => {})
+    vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v2' })
+    fsMock.access.mockResolvedValue(undefined)
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'row',
+          meetingId: 'resume',
+          speaker: 'me',
+          text: 'Mira owns the migration.',
+          startMs: 0,
+          endMs: 15000,
+          confidence: 1
+        }
+      ])
+    )
+    try {
+      ;(service as any).interactiveResumeJobs.add('resume')
+      await (service as any).processJob('resume')
+      expect(reap).not.toHaveBeenCalledWith('before-notes-profile', 'resume')
+      expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'notes resuming with retained runners',
+          meetingId: 'resume'
+        })
+      )
+      reap.mockClear()
+      await (service as any).processJob('resume')
+      expect(reap).toHaveBeenCalledWith('before-notes-profile', 'resume')
+    } finally {
+      memory.mockRestore()
+    }
+  })
+
+  it('retains initial GPU runners by default only with known healthy Windows memory', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const memory = vi.spyOn(windowsRuntime, 'getSystemMemorySnapshot')
+    const reap = vi.spyOn(service as any, 'reapNotesRunners').mockImplementation(() => {})
+    vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v2' })
+    ;(service as any).getWindowsProcessingProfile = () => ({ id: 'win-gpu' })
+    fsMock.access.mockResolvedValue(undefined)
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'row',
+          meetingId: 'gpu',
+          speaker: 'me',
+          text: 'Mira owns the migration.',
+          startMs: 0,
+          endMs: 15000,
+          confidence: 1
+        }
+      ])
+    )
+    try {
+      vi.stubEnv('AUTODOC_ASK_AI_GENERATION_PRIORITY', undefined)
+      vi.stubEnv('AUTODOC_TEST_NOTES_MODEL', '')
+      for (const freeMemoryGiB of [9, 2, null]) {
+        memory.mockReturnValue({ freeMemoryGiB, totalMemoryGiB: 32 })
+        reap.mockClear()
+        await (service as any).processJob('gpu')
+        const calls = reap.mock.calls.filter(([reason]) => reason === 'before-notes-profile')
+        expect(calls.length).toBe(freeMemoryGiB === 9 ? 0 : 1)
+        ;(service as any).interactiveResumeJobs.add('gpu')
+        reap.mockClear()
+        await (service as any).processJob('gpu')
+        expect(reap.mock.calls.filter(([reason]) => reason === 'before-notes-profile').length).toBe(
+          freeMemoryGiB === 9 ? 0 : 1
+        )
+      }
+      memory.mockReturnValue({ freeMemoryGiB: 9, totalMemoryGiB: 32 })
+      vi.stubEnv('AUTODOC_ASK_AI_GENERATION_PRIORITY', '0')
+      reap.mockClear()
+      await (service as any).processJob('gpu')
+      expect(reap).toHaveBeenCalledWith('before-notes-profile', 'gpu')
+    } finally {
+      memory.mockRestore()
+      vi.unstubAllEnvs()
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
   })
 
   it('prioritizes direct jobs ahead of recovery-scan jobs', () => {

@@ -16,6 +16,22 @@ afterEach(() => {
 })
 
 describe('OllamaSetupCoordinator', () => {
+  it('reports whether setup is in flight', async () => {
+    const setup = deferred()
+    const coordinator = new OllamaSetupCoordinator(
+      { startAndPull: vi.fn(() => setup.promise) },
+      { retryDelaysMs: [0] }
+    )
+    expect(coordinator.isSetupInFlight()).toBe(false)
+
+    const running = coordinator.ensureRunning()
+    expect(coordinator.isSetupInFlight()).toBe(true)
+
+    setup.resolve()
+    await running
+    expect(coordinator.isSetupInFlight()).toBe(false)
+  })
+
   it('shares one in-flight setup attempt across callers', async () => {
     const setup = deferred()
     const manager = {

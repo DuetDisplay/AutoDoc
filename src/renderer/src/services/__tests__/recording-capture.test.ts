@@ -198,7 +198,7 @@ describe('recording-capture', () => {
       configurable: true,
       value: {
         send: vi.fn(),
-        invoke: vi.fn().mockResolvedValue(undefined),
+        invoke: vi.fn().mockResolvedValue({ status: 'written' }),
         on: vi.fn(() => vi.fn())
       }
     })
@@ -1519,6 +1519,144 @@ describe('recording-capture', () => {
     expect(isCapturing()).toBe(true)
 
     await stopCapture()
+  })
+
+  describe('when a recording chunk cannot be saved', () => {
+    const chunk = { size: 4, arrayBuffer: async () => new ArrayBuffer(4) } as Blob
+    let recorders: MockMediaRecorder[]
+
+    function answerChunksWith(answer: () => Promise<unknown>): void {
+      vi.mocked(window.electronAPI.invoke).mockImplementation(((channel: string) =>
+        channel === 'recording:save-chunk' ? answer() : Promise.resolve(undefined)) as never)
+    }
+
+    async function startWithStopHandler(meetingId = 'meeting-save') {
+      const capture = await import('../recording-capture')
+      const { useToastStore } = await import('../../stores/toast')
+      useToastStore.setState({ activeToast: null })
+      const onUnrecoverable = vi.fn().mockResolvedValue(undefined)
+      capture.setUnrecoverableCaptureHandler(onUnrecoverable)
+      await capture.startCapture('window:1', meetingId, 'Zoom Meeting')
+      return { ...capture, useToastStore, onUnrecoverable }
+    }
+
+    function emitChunkFromEveryTrack(): void {
+      for (const recorder of recorders) recorder.ondataavailable?.({ data: chunk })
+    }
+
+    beforeEach(() => {
+      recorders = []
+      vi.stubGlobal(
+        'MediaRecorder',
+        class extends MockMediaRecorder {
+          constructor(stream: MockMediaStream, options?: MediaRecorderOptions) {
+            super(stream, options)
+            recorders.push(this)
+          }
+        }
+      )
+    })
+
+    it('stops capture and notifies once when every track fails together', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOENT' }))
+      const { isCapturing, useToastStore, onUnrecoverable } = await startWithStopHandler()
+      expect(recorders.length).toBeGreaterThan(1)
+
+      emitChunkFromEveryTrack()
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(isCapturing()).toBe(false)
+      expect(onUnrecoverable).toHaveBeenCalledTimes(1)
+      expect(useToastStore.getState().activeToast).toMatchObject({
+        type: 'warning',
+        messageKey: 'recording.saveFailedStopped'
+      })
+    })
+
+    it('treats an unexpected rejection like a failed write', async () => {
+      answerChunksWith(() => Promise.reject(new Error('IPC failed')))
+      const { isCapturing, onUnrecoverable } = await startWithStopHandler()
+
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(isCapturing()).toBe(false)
+      expect(onUnrecoverable).toHaveBeenCalledTimes(1)
+    })
+
+    it('remembers a failed save once, for the code that records the outcome', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOENT' }))
+      const { takeChunkSaveFailure } = await startWithStopHandler()
+      expect(takeChunkSaveFailure()).toBe(false)
+
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(takeChunkSaveFailure()).toBe(true)
+      expect(takeChunkSaveFailure()).toBe(false)
+    })
+
+    it('does not carry a failed save into the next recording', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOENT' }))
+      const { startCapture, stopCapture, takeChunkSaveFailure } =
+        await startWithStopHandler('meeting-first')
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      answerChunksWith(() => Promise.resolve({ status: 'written' }))
+      await startCapture('window:1', 'meeting-second', 'Zoom Meeting')
+
+      expect(takeChunkSaveFailure()).toBe(false)
+      await stopCapture()
+    })
+
+    it('keeps recording when chunks are written or ignored', async () => {
+      const answers = [{ status: 'written' }, { status: 'ignored' }]
+      answerChunksWith(() => Promise.resolve(answers.shift() ?? { status: 'written' }))
+      const { isCapturing, stopCapture, useToastStore, onUnrecoverable } =
+        await startWithStopHandler()
+
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(isCapturing()).toBe(true)
+      expect(onUnrecoverable).not.toHaveBeenCalled()
+      expect(useToastStore.getState().activeToast).toBeNull()
+      await stopCapture()
+    })
+
+    it('notifies without a second stop when the last chunks fail during a normal stop', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOSPC' }))
+      const { stopCapture, useToastStore, onUnrecoverable } = await startWithStopHandler()
+
+      const stopping = stopCapture()
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+      await stopping
+
+      expect(onUnrecoverable).not.toHaveBeenCalled()
+      expect(useToastStore.getState().activeToast).toMatchObject({
+        messageKey: 'recording.saveFailedStopped'
+      })
+    })
+
+    it('handles a failure in a later recording after an earlier one failed', async () => {
+      answerChunksWith(() => Promise.resolve({ status: 'failed', code: 'ENOENT' }))
+      const { startCapture, isCapturing, onUnrecoverable } =
+        await startWithStopHandler('meeting-first')
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(onUnrecoverable).toHaveBeenCalledTimes(1)
+
+      recorders = []
+      await startCapture('window:1', 'meeting-second', 'Zoom Meeting')
+      emitChunkFromEveryTrack()
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(isCapturing()).toBe(false)
+      expect(onUnrecoverable).toHaveBeenCalledTimes(2)
+    })
   })
 
   it('falls back to the next recorder MIME option when MediaRecorder.start throws', async () => {

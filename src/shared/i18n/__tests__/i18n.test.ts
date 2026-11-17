@@ -5,6 +5,7 @@ import {
   htmlLangForUiLanguage,
   UI_LANGUAGE_CODES
 } from '../../ui-language'
+import { localeCatalogs } from '../messages/locales'
 import { en, type MessageKey } from '../messages/en'
 import { CHROME_OVERLAY_KEYS } from '../messages/chrome-overlays'
 import { UPCOMING_OVERLAY_KEYS } from '../messages/upcoming-overlays'
@@ -57,4 +58,12 @@ describe('UI language', () => {
       }
     }
   })
+})
+
+it('provides coverage templates and passage plurals in all 27 catalogues', () => {
+  for (const language of UI_LANGUAGE_CODES) {
+    const catalog = language === 'en' ? en : localeCatalogs[language]
+    for (const key of ['askAi.coverage', 'count.passages.one', 'count.passages.other'])
+      expect((catalog as Record<string, string>)[key], `${language} ${key}`).toBeTruthy()
+  }
 })

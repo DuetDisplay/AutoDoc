@@ -81,13 +81,24 @@ export function releaseAnnouncement(release) {
   return `${RELEASE_START}\n\n**New in ${release.tag_name}:** ${teaser} [Read the latest release notes](${latestReleaseUrl}).\n\n${RELEASE_END}`
 }
 
-export function syncReadmeRelease(readme, release) {
+export function syncReadmeRelease(readme, release, { preserveNewer = false } = {}) {
   const starts = readme.split(RELEASE_START).length - 1
   const ends = readme.split(RELEASE_END).length - 1
   const start = readme.indexOf(RELEASE_START)
   const end = readme.indexOf(RELEASE_END)
   if (starts !== 1 || ends !== 1 || end < start) {
     throw new Error('README.md must contain exactly one ordered latest-release marker pair')
+  }
+  if (preserveNewer) {
+    const existing = readme.slice(start, end).match(/\*\*New in v(\d+)\.(\d+)\.(\d+):\*\*/)
+    const incoming = (release.tag_name ?? '').match(/^v(\d+)\.(\d+)\.(\d+)$/)
+    if (existing && incoming) {
+      for (let index = 1; index <= 3; index++) {
+        const difference = Number(existing[index]) - Number(incoming[index])
+        if (difference > 0) return readme
+        if (difference < 0) break
+      }
+    }
   }
   const announcement = releaseAnnouncement(release)
   if (!announcement) return readme
@@ -104,7 +115,9 @@ if (isMain) {
   const release = JSON.parse(fs.readFileSync(process.argv[jsonFlag + 1], 'utf8'))
   const readmePath = new URL('../README.md', import.meta.url)
   const before = fs.readFileSync(readmePath, 'utf8')
-  const after = syncReadmeRelease(before, release)
+  const after = syncReadmeRelease(before, release, {
+    preserveNewer: process.argv.includes('--preserve-newer')
+  })
   verifyReadmeReleaseLinks(after)
   const changed = after !== before
   if (changed) fs.writeFileSync(readmePath, after)

@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Vēlaties tumšāku izskatu? Ieslēdziet tumšo režīmu.",
   "announcement.done": "Gatavs",
   "announcement.meetingLanguageBody": "Transkripti un piezīmes tagad atbalsta {count} valodas!",
-  "announcement.meetingLanguageDescription": "Izvēlieties valodu, kurā runājat sapulcēs. Jaunie transkripti un piezīmes tiks veidoti šajā valodā."
+  "announcement.meetingLanguageDescription": "Izvēlieties valodu, kurā runājat sapulcēs. Jaunie transkripti un piezīmes tiks veidoti šajā valodā.",
+  "askAi.indexingPreparingAnnouncement": "Sanāksmju sagatavošana funkcijai Jautāt AI.",
+  "askAi.indexingPausedAnnouncement": "Sagatavošana funkcijai Jautāt AI ir apturēta, kamēr tiek ierakstīta sanāksme vai veidotas piezīmes."
 }
