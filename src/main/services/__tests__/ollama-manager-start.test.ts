@@ -1885,3 +1885,30 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 })
+
+it('does not reap a live Ask AI runner at a notes boundary and releases requests once', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-interactive-lease-'))
+  try {
+    const { OllamaManager } = await loadOllamaManager(dir)
+    const manager = new OllamaManager()
+    const list = vi.spyOn(manager as never, 'listManagedLlamaServers').mockReturnValue([])
+    const releaseFirst = manager.beginInteractiveRequest()
+    const releaseSecond = manager.beginInteractiveRequest()
+    manager.reapLeftoverRunners('before-scan')
+    expect(list).not.toHaveBeenCalled()
+    releaseFirst()
+    releaseFirst()
+    manager.reapLeftoverRunners('after-notes')
+    expect(list).not.toHaveBeenCalled()
+    releaseSecond()
+    manager.reapLeftoverRunners('before-scan')
+    expect(list).toHaveBeenCalled()
+    list.mockClear()
+    const releaseThird = manager.beginInteractiveRequest()
+    manager.reapLeftoverRunners('stop')
+    expect(list).toHaveBeenCalled()
+    releaseThird()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

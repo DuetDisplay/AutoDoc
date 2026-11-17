@@ -52,6 +52,7 @@ import {
   shouldSanitizeWindowsWriterRecords
 } from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
+import { useAskAiGenerationPriority } from './services/ask-ai-policy'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import {
   createOllamaRuntimeRecovery,
@@ -63,6 +64,7 @@ import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
 import { registerChatIpc } from './ipc/chat-ipc'
+import { MeetingIndexService } from './services/meeting-index'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import {
   PrefsStore,
@@ -1398,6 +1400,7 @@ app.whenReady().then(async () => {
     getNotesAccelerator: () => managedOllamaManager.getNotesAccelerator()
   }
   const ollamaRuntime = {
+    beginInteractiveRequest: () => managedOllamaManager.beginInteractiveRequest(),
     waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     getBaseUrl: () => managedOllamaManager.getBaseUrl()
@@ -2326,13 +2329,36 @@ app.whenReady().then(async () => {
       preparedMeetingLanguage = language
     }
   )
-  registerSearchIpc(recordingService.getRecordingsBaseDir())
+  const meetingIndex = new MeetingIndexService(recordingService.getRecordingsBaseDir())
+  registerSearchIpc(recordingService.getRecordingsBaseDir(), meetingIndex)
   registerChatIpc(
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
     calendarManager,
-    () => prefsStore.getMeetingLanguage()
+    () => prefsStore.getMeetingLanguage(),
+    {
+      meetingIndex,
+      getWriterContextTokens: () => notesOllamaProvider.getGenerationContextTokens(),
+      isProcessing: () =>
+        transcriptionService.hasActiveOrQueuedWork() ||
+        (segmentationService.hasActiveOrQueuedWork() &&
+          !segmentationService.isHeldForInteractiveAnswer()),
+      acquireGenerationPriority: async (signal) => {
+        if (
+          !useAskAiGenerationPriority() ||
+          recordingService.getState().isRecording ||
+          transcriptionService.hasActiveOrQueuedWork()
+        )
+          return () => {}
+        return segmentationService.holdForInteractiveAnswer(signal)
+      },
+      canWarmup: () =>
+        !recordingService.getState().isRecording &&
+        !transcriptionService.hasActiveOrQueuedWork() &&
+        !segmentationService.hasActiveOrQueuedWork() &&
+        localProcessingCoordinator.getActiveKind() == null
+    }
   )
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 

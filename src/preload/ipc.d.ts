@@ -1,3 +1,4 @@
+import type { ChatCountSummary } from '../shared/types'
 import type { SpeechLicenseNotice } from '../shared/speech-licenses'
 import type { MemoryFailure } from '../shared/memory-failure'
 import type {
@@ -89,7 +90,7 @@ export interface SearchResult {
   meetingId: string
   title: string
   date: number
-  matches: { type: 'transcript' | 'segment'; text: string; category?: string }[]
+  matches: { type: 'transcript' | 'segment'; text: string; category?: string; startMs?: number }[]
 }
 
 export interface ChatHistoryMessage {
@@ -108,6 +109,15 @@ export interface ChatClarificationOption {
   participants: string[]
   notePreview: string | null
   score: number
+}
+
+export interface ChatSourceCard {
+  n: number
+  meetingId: string
+  title: string
+  quote: string
+  startMs: number | null
+  category: string
 }
 
 export interface IpcSendEvents {
@@ -243,7 +253,13 @@ export interface IpcInvokeEvents {
   'chat:send': [question: string]
   'chat:new': []
   'chat:cancel': [requestId: string]
-  'chat:send-stream': [requestId: string, question: string, history?: ChatHistoryMessage[]]
+  'chat:send-stream': [
+    requestId: string,
+    question: string,
+    history?: ChatHistoryMessage[],
+    scopedMeetingIds?: string[]
+  ]
+  'chat:warmup': []
   'chat:select-recording-stream': [
     requestId: string,
     meetingId: string,
@@ -430,6 +446,7 @@ export interface IpcInvokeReturns {
   'chat:new': void
   'chat:cancel': void
   'chat:send-stream': void
+  'chat:warmup': { warmed: boolean; reason?: string }
   'chat:select-recording-stream': void
   'detection:dismiss': void
   'detection:source-selection-required': void
@@ -503,11 +520,14 @@ export interface IpcOnEvents {
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
   'chat:chunk': [payload: { requestId: string; content: string }]
+  'chat:sources': [payload: { requestId: string; sources: ChatSourceCard[] }]
+  'chat:count-result': [payload: { requestId: string; summary: ChatCountSummary }]
   'chat:done': [
     payload: {
       requestId: string
       content: string
       clarificationOptions?: ChatClarificationOption[]
+      sources?: ChatSourceCard[]
     }
   ]
   'chat:error': [payload: { requestId: string; error: string }]

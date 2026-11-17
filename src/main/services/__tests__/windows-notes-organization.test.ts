@@ -31,6 +31,15 @@ function catalog(): MeetingSegments {
   }))
   return { information, decisions: [], actionItems: [], discussion: [], statusUpdates: [] }
 }
+it('propagates intentional preemption instead of marking organization successful', async () => {
+  const input = catalog()
+  input.information = Array.from({ length: 9 }, (_, index) => ({
+    ...input.information[0], id: `record-${index}`, content: `The library opens at ${index + 10} AM.`
+  }))
+  await expect(organizeWindowsNotes(input, async () => {
+    throw new Error('SEGMENTATION_PREEMPTED')
+  }, 'test')).rejects.toThrow('SEGMENTATION_PREEMPTED')
+})
 it('changes only labels and source-checked overview, preserving every underlying record', () => {
   const input = catalog()
   const result = applyWindowsOrganization(

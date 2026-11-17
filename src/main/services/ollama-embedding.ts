@@ -9,6 +9,10 @@ const EMBED_KEEP_ALIVE = process.env.AUTODOC_ASK_AI_EMBED_KEEP_ALIVE ?? '10m'
 export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
   readonly model: string
   private availability: boolean | null = null
+  private modelDigest: string | null = null
+  get cacheIdentity(): string {
+    return `${this.model}:${this.modelDigest ?? 'unknown'}`
+  }
   private availabilityCheckedAt = 0
 
   constructor(
@@ -40,12 +44,15 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
         return false
       }
 
-      const data = (await res.json()) as { models?: { name?: string; model?: string }[] }
-      this.availability =
-        data.models?.some((entry) => {
-          const name = entry.name ?? entry.model ?? ''
-          return name === this.model || name.startsWith(`${this.model}:`)
-        }) ?? false
+      const data = (await res.json()) as {
+        models?: { name?: string; model?: string; digest?: string }[]
+      }
+      const installed = data.models?.find((entry) => {
+        const name = entry.name ?? entry.model ?? ''
+        return name === this.model || name.startsWith(`${this.model}:`)
+      })
+      this.availability = Boolean(installed)
+      this.modelDigest = installed?.digest ?? null
       this.availabilityCheckedAt = Date.now()
       return this.availability
     } catch {

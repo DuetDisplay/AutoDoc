@@ -27,6 +27,8 @@ export interface ChatTurnSession {
   calendarEventCount: number
   /** Recordings currently in focus from the prior turn (drill-down target). */
   focusedRecordingIds: string[]
+  /** Sources actually cited by the last substantive answer, not an inventory list. */
+  evidenceRecordingIds?: string[]
   /** True when the previous assistant turn asked a clarifying question. */
   lastTurnWasClarification: boolean
 }
@@ -289,6 +291,13 @@ export function classifyChatTurn(
   // 3. Count confirmation ("so four then?", "only 4?", "is that all of them?").
   const countConfirmation = classifyCountConfirmation(normalized, session)
   if (countConfirmation) return countConfirmation
+  const evidenceIds = session.evidenceRecordingIds ?? session.focusedRecordingIds
+  if (
+    isEvidenceRecheck(normalized) &&
+    evidenceIds.length > 0 &&
+    (hasPriorAssistantTurn || session.evidenceRecordingIds?.length)
+  )
+    return { kind: 'scoped_followup', meetingIds: [...evidenceIds] }
 
   // 4. Direct coreference to a specific prior list item ("the second one",
   //    "the last one", "the calendar auth one").
@@ -614,9 +623,39 @@ function resolveScopedFollowUp(normalized: string, session: ChatTurnSession): st
   return []
 }
 
+/** Whole-phrase challenges only. A named topic or date opens normal retrieval. */
+export function isEvidenceRecheck(normalized: string): boolean {
+  return (
+    /^(?:are you sure(?: about that)?|you sure|is that correct|really)(?: (?:please )?(?:show|give)(?: me)? (?:the )?(?:evidence|sources?|proof))?$/.test(
+      normalized
+    ) ||
+    /^(?:please )?(?:(?:show|give)(?: me)? (?:the )?(?:evidence|sources?|proof)|(?:verify|confirm|double check) (?:that|it))$/.test(
+      normalized
+    ) ||
+    /^(?:êtes vous sûr[e]?(?: montre moi la source)?|montre moi la source|本当ですか(?: 証拠を見せてください)?|証拠を見せてください)$/.test(
+      normalized
+    )
+  )
+}
+
 export function isImplicitFollowUp(normalized: string): boolean {
+  // Whole generic follow-ups only: a named meeting/topic or date must open a
+  // fresh scope. These reuse the already cited meeting across question languages.
   if (
-    /\b(anything else|what else|more|details|elaborate|what about that|that meeting|this meeting|it)\b/.test(
+    /^(?:et )?(?:quand (?:est|était|sera)(?: prévu)? (?:le|ce|son) (?:lancement|déploiement)|(?:quel|quelle) (?:est|était) (?:son|sa|le|la) (?:budget|date|responsable)|qui (?:en est|est le) responsable)$/u.test(
+      normalized
+    ) ||
+    /^(?:y )?(?:cu[aá]ndo (?:es|ser[aá]|est[aá] previsto) (?:el|su) lanzamiento|cu[aá]l es (?:su|el) presupuesto|qui[eé]n es (?:su|el) responsable)$/u.test(
+      normalized
+    ) ||
+    /^(?:その|それの)(?:予算|発売日|担当者)(?:は|が)?(?:いつ|いくら|誰|だれ)?(?:ですか|は誰ですか)?$/u.test(
+      normalized
+    )
+  )
+    return true
+
+  if (
+    /\b(anything else|what else|more|details|elaborate|what about that|that meeting|this meeting|(?:that|this) (?:launch|budget|deadline|decision|date|project|plan|migration|service)|it|its|their)\b/.test(
       normalized
     )
   ) {

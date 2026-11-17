@@ -21,6 +21,12 @@ const notes = [
   { id: 'd', title: '', content: 'Gabor will add the email to his workflow.' }
 ]
 
+it('propagates intentional preemption instead of falling back and continuing notes', async () => {
+  const complete = vi.fn(async () => { throw new Error('SEGMENTATION_PREEMPTED') })
+  await expect(selectKeyTakeaways(notes, 2, complete)).rejects.toThrow('SEGMENTATION_PREEMPTED')
+  expect(complete).toHaveBeenCalledOnce()
+})
+
 describe('takeawaySelectionPrompt', () => {
   it('numbers every note once, in order, with title and text', () => {
     const prompt = takeawaySelectionPrompt(notes, 2)!

@@ -664,3 +664,9 @@ export interface AppStorageInfo {
   otherLocalDataBytes: number
   totalBytes: number
 }
+
+/** Native saved-recording count metadata shown independently of model prose. */
+export interface ChatCountSummary {
+  count: number
+  filterDescription: string
+}

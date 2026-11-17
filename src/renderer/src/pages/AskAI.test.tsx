@@ -30,6 +30,19 @@ describe('AskAI', () => {
     ).toBeInTheDocument()
   })
 
+  it('clears a stale reconnecting hint when the actual health check recovers', async () => {
+    let connected = false
+    const api = installMockElectronApi({ 'ollama:check-status': false })
+    api.setHandler('ollama:check-status', () => connected)
+    render(<AskAI />)
+    await screen.findByText(/local AI is reconnecting in the background/i)
+    connected = true
+    act(() => api.emit('ollama:setup-progress', { phase: 'ready', percent: 100 }))
+    await waitFor(() =>
+      expect(screen.queryByText(/local AI is reconnecting/i)).not.toBeInTheDocument()
+    )
+  })
+
   it('sends a grounded question and renders the assistant answer', async () => {
     const api = installMockElectronApi({
       'ollama:check-status': true
@@ -76,8 +89,13 @@ describe('AskAI', () => {
       fireEvent.keyDown(input, { key: 'Enter' })
     })
 
-    expect(window.electronAPI.invoke).toHaveBeenCalledTimes(2)
+    expect(
+      vi
+        .mocked(window.electronAPI.invoke)
+        .mock.calls.filter(([channel]) => channel === 'chat:send-stream')
+    ).toHaveLength(1)
     expect(window.electronAPI.invoke).toHaveBeenCalledWith('ollama:check-status')
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:warmup')
     expect(window.electronAPI.invoke).toHaveBeenCalledWith(
       'chat:send-stream',
       expect.any(String),
@@ -327,6 +345,7 @@ describe('AskAI', () => {
       vi.advanceTimersByTime(45_000)
     })
 
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', requestId)
     expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
 
     act(() => {
@@ -334,6 +353,45 @@ describe('AskAI', () => {
     })
 
     expect(screen.queryByText('Late answer that should be ignored')).not.toBeInTheDocument()
+  })
+
+  it('shows source cards before the answer and opens the cited meeting', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', (requestId: string) => {
+      queueMicrotask(() => {
+        api.emit('chat:sources', {
+          requestId,
+          sources: [
+            {
+              n: 1,
+              meetingId: 'billing-sync',
+              title: 'Billing Sync — May 27 at 10:00 AM',
+              quote: 'Ship the invoice export this week.',
+              startMs: 84_000,
+              category: 'information'
+            }
+          ]
+        })
+      })
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Who owns the invoice export?'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const chip = await screen.findByRole('button', { name: /billing sync/i })
+    expect(chip).toHaveTextContent('1:24')
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
+    expect(screen.queryByText('Priya will ship the invoice export [1].')).not.toBeInTheDocument()
+    await user.click(chip)
+    expect(window.location.hash).toBe('#/recordings/billing-sync?t=84000')
   })
 
   it('renders clarification options as selectable meetings and sends the meeting id', async () => {
@@ -417,5 +475,129 @@ describe('AskAI', () => {
     expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:new')
     expect(screen.queryByText('Old context')).not.toBeInTheDocument()
     expect(screen.queryByText('Answer for: Old context')).not.toBeInTheDocument()
+  })
+  it('keeps an attached meeting chip through follow-ups and clears it on New chat', async () => {
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    useChatStore.getState().startMeetingChat({ meetingId: 'scope-a', title: 'Lumen review' })
+    api.setHandler('chat:send-stream', (requestId: string) =>
+      queueMicrotask(() => api.emit('chat:done', { requestId, content: 'Mara owns the review.' }))
+    )
+    render(<AskAI />)
+    expect(screen.getByRole('group', { name: 'Meeting scope' })).toHaveTextContent(
+      'Only this meeting: Lumen review'
+    )
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/ask a question/i), 'Who owns this?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Mara owns the review.')
+    expect(api.invoke).toHaveBeenCalledWith(
+      'chat:send-stream',
+      expect.any(String),
+      'Who owns this?',
+      [],
+      ['scope-a']
+    )
+    await user.type(screen.getByPlaceholderText(/ask a question/i), 'What does she need to do?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith(
+        'chat:send-stream',
+        expect.any(String),
+        'What does she need to do?',
+        expect.any(Array),
+        ['scope-a']
+      )
+    )
+    await user.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(screen.queryByRole('group', { name: 'Meeting scope' })).not.toBeInTheDocument()
+    expect(useChatStore.getState().meetingScope).toBeNull()
+  })
+  it('removes the chip and re-asks the exact out-of-scope question with one Search all meetings click', async () => {
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    useChatStore.getState().startMeetingChat({ meetingId: 'scope-a', title: 'Lumen review' })
+    api.setHandler(
+      'chat:send-stream',
+      (requestId: string, _question: string, _history: unknown, ids?: string[]) =>
+        queueMicrotask(() =>
+          api.emit('chat:done', {
+            requestId,
+            content: ids ? 'That answer is not in this meeting.' : 'Harbor has the requested code.'
+          })
+        )
+    )
+    render(<AskAI />)
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/ask a question/i), 'What is the Harbor code?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('That answer is not in this meeting.')
+    await user.click(screen.getByRole('button', { name: 'Search all meetings' }))
+    await screen.findByText('Harbor has the requested code.')
+    expect(screen.queryByRole('group', { name: 'Meeting scope' })).not.toBeInTheDocument()
+    const requests = api.invoke.mock.calls.filter(([name]) => name === 'chat:send-stream')
+    expect(requests[0]).toEqual([
+      'chat:send-stream',
+      expect.any(String),
+      'What is the Harbor code?',
+      [],
+      ['scope-a']
+    ])
+    expect(requests[1]).toEqual([
+      'chat:send-stream',
+      expect.any(String),
+      'What is the Harbor code?',
+      []
+    ])
+  })
+  it('lets the user remove an unused meeting chip and starts the next turn globally', async () => {
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    useChatStore.getState().startMeetingChat({ meetingId: 'scope-a', title: 'Lumen review' })
+    api.setHandler('chat:send-stream', (requestId: string) =>
+      queueMicrotask(() => api.emit('chat:done', { requestId, content: 'Global answer.' }))
+    )
+    render(<AskAI />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Remove meeting scope' }))
+    await user.type(screen.getByPlaceholderText(/ask a question/i), 'What changed?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Global answer.')
+    expect(api.invoke).toHaveBeenCalledWith(
+      'chat:send-stream',
+      expect.any(String),
+      'What changed?',
+      []
+    )
+  })
+  it('shows the native count and every actual filter even when the model prose omits a bound', async () => {
+    const api = installMockElectronApi({ 'ollama:check-status': true })
+    api.setHandler('chat:send-stream', (requestId: string) =>
+      queueMicrotask(() => {
+        api.emit('chat:count-result', {
+          requestId,
+          summary: {
+            count: 2,
+            filterDescription:
+              'all saved recordings on or after 2026-09-01, on or before 2026-09-30, whose notes or transcript contain all keyword terms "budget"'
+          }
+        })
+        api.emit('chat:done', { requestId, content: 'There are two recordings since September1.' })
+      })
+    )
+    render(<AskAI />)
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question/i),
+      'Count recordings mentioning budget since September1.'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByRole('note')).toHaveTextContent(
+      'Counted 2: all saved recordings on or after 2026-09-01, on or before 2026-09-30'
+    )
+    expect(screen.getByRole('note')).toHaveTextContent('keyword terms "budget"')
+    await user.type(screen.getByPlaceholderText(/ask a question/i), 'Which dates were used?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    const calls = api.invoke.mock.calls.filter(([name]) => name === 'chat:send-stream')
+    expect((calls.at(-1)![3] as Array<{ content: string }>).at(-1)?.content).toContain(
+      'on or before 2026-09-30'
+    )
   })
 })

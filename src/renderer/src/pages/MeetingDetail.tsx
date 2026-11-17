@@ -1,9 +1,10 @@
+import { useChatStore } from '../stores/chat'
 import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
+import { NOTES_WRITER_PROGRESS_END, ROUTES } from '../../../shared/constants'
 import type { MessageKey } from '../../../shared/i18n'
 import { useI18n, useT } from '../services/i18n'
 import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
@@ -320,6 +321,9 @@ export function MeetingDetail() {
   const [searchParams] = useSearchParams()
   const initialTab = (searchParams.get('tab') as Tab) || 'notes'
   const highlightText = searchParams.get('highlight') || ''
+  const seekParam = searchParams.get('t')
+  const seekMsParam = seekParam == null || seekParam === '' ? Number.NaN : Number(seekParam)
+  const pendingSeekMs = Number.isFinite(seekMsParam) && seekMsParam >= 0 ? seekMsParam : null
   const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
@@ -566,6 +570,17 @@ export function MeetingDetail() {
     },
     [id, scrollTranscriptIntoView]
   )
+
+  const soughtMsRef = useRef<number | null>(null)
+  useEffect(() => {
+    soughtMsRef.current = null
+  }, [id])
+  useEffect(() => {
+    if (pendingSeekMs == null || !media) return
+    if (soughtMsRef.current === pendingSeekMs) return
+    soughtMsRef.current = pendingSeekMs
+    seekToSegment(pendingSeekMs)
+  }, [pendingSeekMs, media, seekToSegment])
 
   const cyclePlaybackRate = useCallback(() => {
     const el = mediaRef.current
@@ -1578,7 +1593,20 @@ export function MeetingDetail() {
             </button>
           ))}
         </div>
-        <div className="pb-1.5">
+        <div className="ml-auto flex max-w-full flex-wrap items-start justify-end gap-2 pb-1.5">
+          <button
+            type="button"
+            disabled={!id || !detail}
+            onClick={() => {
+              if (!id || !detail) return
+              useChatStore.getState().startMeetingChat({ meetingId: id, title: detail.title })
+              void window.electronAPI.invoke('chat:new')
+              navigate(ROUTES.askAi)
+            }}
+            className="rounded-lg border border-border bg-bg-card px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40"
+          >
+            {t('askAi.askMeeting')}
+          </button>
           <MeetingExportMenu
             disabled={notesActionsDisabled}
             disabledReason={notesActionsDisabledReason}

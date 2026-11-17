@@ -1,9 +1,23 @@
+import { executeWriterTool } from '../services/ask-ai-writer-tools'
+import {
+  recentConversation,
+  conversationTitleAnchors,
+  meetingSubjectClarification
+} from '../services/ask-ai-conversation'
 import { app, ipcMain } from 'electron'
-import { normalizeMeetingLanguage, type MeetingLanguageCode } from '../../shared/meeting-language'
-import { chatLanguageInstruction, localizeRecordingCount } from '../services/chat-language'
+import {
+  chatReplyRequest,
+  resolveChatReplyLanguage,
+  type ChatReplyLanguage
+} from '../services/chat-reply-language'
+import {
+  chatLanguageInstruction,
+  localizeRecordingCount,
+  localizeRecordingList
+} from '../services/chat-language'
 import { join } from 'path'
 import type { OllamaProvider } from '../services/llm'
-import type { CalendarEvent } from '../../shared/types'
+import type { CalendarEvent, ChatCountSummary } from '../../shared/types'
 import type { CalendarManager } from '../services/calendar-manager'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import {
@@ -12,6 +26,7 @@ import {
   type ChatRetrievalResult,
   detectChatIntent,
   extractQuestionTerms,
+  isDirectNoteFactQuestion,
   scoreMeetingRelevance,
   scoreTextRelevance,
   sortMeetingsByQuestion
@@ -20,6 +35,30 @@ import { normalizeRecordingSearchText } from '../services/recording-title'
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
 import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
 import { runAskAiAgent, type AgentToolDeps } from '../services/ask-ai-agent'
+import { applyAnswerCitations, type ChatSourceCard } from '../services/ask-ai-citations'
+import {
+  answerQuestion,
+  applyAskAiAnswerToSession,
+  type AskAiAnswer,
+  type AskAiSession
+} from '../services/ask-ai-answer'
+import {
+  ASK_AI_WRITER_NUM_CTX,
+  resolveAskAiWriterContext,
+  shouldRewriteAskAiAnswer,
+  streamAskAiWriter
+} from '../services/ask-ai-writer'
+import { AskAiPassages } from '../services/ask-ai-passages'
+import { useAskAiPassages } from '../services/ask-ai-policy'
+import { MeetingIndexService } from '../services/meeting-index'
+import { directEvidenceAnswer } from '../services/ask-ai-evidence'
+import { hasInventoryRequestCue } from '../services/ask-ai-inventory-intent'
+import { parseAskAiQuestion } from '../services/ask-ai-query'
+import {
+  appendWriterContexts,
+  createAppendWriterState,
+  type AppendWriterState
+} from '../services/ask-ai-append'
 
 const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts, notes, and their calendar.
 
@@ -38,6 +77,7 @@ Rules:
 - For questions about what was discussed or what happened in a matched meeting, summarize the available structured notes across decisions, action items, information, discussion, and status updates
 - For multi-meeting synthesis, group claims by meeting or theme, cite the meeting titles, and only merge themes that appear in the provided notes/transcripts
 - Use structured notes as the primary source for matched meetings; use transcript excerpts as backup when notes are missing or do not answer the question
+- Answer like a colleague who was in the meeting. Stay on the meetings in context; do not invent attendees, decisions, or dates
 - Preserve useful evidence type when it matters: decisions are decisions, action items are tasks, and transcript excerpts are lower-confidence backup
 - Do not combine notes from one meeting with a different calendar event unless the title and date clearly match
 - If a matching meeting says no transcript or notes are available, say that plainly instead of inferring details from another meeting
@@ -105,6 +145,8 @@ interface ChatHistoryMessage {
 }
 
 interface ChatConversationState {
+  appendWriterState?: AppendWriterState
+  lastReplyLanguage?: ChatReplyLanguage
   lastCalendarEvents: CalendarEvent[]
   lastRecordingIds: string[]
   lastRecordingTitles: string[]
@@ -118,6 +160,7 @@ interface FastPlanDecision {
 }
 
 interface OllamaRuntime {
+  beginInteractiveRequest?(): () => void
   waitUntilReady(): Promise<void>
   isServerRunning(): Promise<boolean>
   getBaseUrl(): string
@@ -132,6 +175,12 @@ interface ChatDonePayload {
   requestId: string
   content: string
   clarificationOptions?: ChatClarificationOption[]
+  sources?: ChatSourceCard[]
+}
+
+interface ChatSourcesPayload {
+  requestId: string
+  sources: ChatSourceCard[]
 }
 
 interface ChatErrorPayload {
@@ -146,6 +195,7 @@ interface ChatCanceledPayload {
 interface PreparedChatContext {
   directAnswer: string | null
   context: string
+  sources?: ChatSourceCard[]
   clarificationOptions?: ChatClarificationOption[]
 }
 
@@ -156,16 +206,262 @@ export function registerChatIpc(
   ollamaManager: OllamaRuntime,
   ollamaProvider: OllamaProvider,
   calendarManager: CalendarManager,
-  getMeetingLanguage: () => unknown = () => 'en'
+  getMeetingLanguage: () => unknown = () => 'en',
+  options: {
+    meetingIndex?: MeetingIndexService
+    canWarmup?: () => boolean | Promise<boolean>
+    isProcessing?: () => boolean
+    acquireGenerationPriority?: (signal?: AbortSignal) => Promise<() => void>
+    getWriterContextTokens?: () => number
+  } = {}
 ): void {
+  const meetingIndex = options.meetingIndex ?? new MeetingIndexService(recordingsBaseDir)
+  const writerContextTokens = (): number =>
+    resolveAskAiWriterContext(options.getWriterContextTokens?.())
   const recordingIndex = new ChatRecordingIndex(recordingsBaseDir, {
     watch: true,
     embeddingProvider: new OllamaEmbeddingProvider(ollamaManager.getBaseUrl()),
-    embeddingCachePath: join(app.getPath('userData'), 'cache', 'ask-ai-embeddings.json')
+    embeddingCachePath: join(app.getPath('userData'), 'cache', 'ask-ai-embeddings.json'),
+    meetingIndex
   })
+  const passageIndex = useAskAiPassages()
+    ? new AskAiPassages(
+        new OllamaEmbeddingProvider(ollamaManager.getBaseUrl()),
+        join(app.getPath('userData'), 'cache', 'ask-ai-passages.enc')
+      )
+    : null
+  const acquireGenerationPriority = async (
+    question: string,
+    signal?: AbortSignal
+  ): Promise<(() => void) | undefined> => {
+    question = chatReplyRequest(question).question
+    if (passageIndex && process.env.AUTODOC_ASK_AI_CONVERSATION !== '0') {
+      return options.acquireGenerationPriority?.(signal)
+    }
+    if (['count', 'list', 'latest', 'calendar'].includes(parseAskAiQuestion(question).act))
+      return undefined
+    const turn = classifyChatTurn(question, [], {
+      recordingIds: [],
+      recordingTitles: [],
+      calendarEventCount: 0,
+      focusedRecordingIds: [],
+      lastTurnWasClarification: false
+    })
+    if (turn.kind === 'smalltalk' || turn.kind === 'acknowledgement') return undefined
+    return options.acquireGenerationPriority?.(signal)
+  }
+  const answerWithExperiment = async (
+    params: Parameters<typeof answerQuestion>[0]
+  ): Promise<AskAiAnswer> => {
+    const originalQuestion = params.question
+    params = { ...params, question: chatReplyRequest(params.question).question }
+    if (passageIndex && process.env.AUTODOC_ASK_AI_CONVERSATION !== '0') {
+      const history = recentConversation(params.history ?? [])
+      const meetings = await meetingIndex.listMeetings()
+      const named = conversationTitleAnchors(
+        params.question,
+        params.scopedMeetingIds?.length
+          ? meetings.filter((meeting) => params.scopedMeetingIds!.includes(meeting.meetingId))
+          : meetings
+      )
+      const unanchoredInitial =
+        history.length === 0 && named.size === 0 && !params.scopedMeetingIds?.length
+      let prefetched: AskAiAnswer | null = null
+      if (unanchoredInitial) {
+        await waitForOllama(ollamaManager)
+        try {
+          prefetched = await passageIndex.retrieveConversation(
+            params.question,
+            meetings,
+            history,
+            [],
+            undefined,
+            params.signal,
+            () => !(options.isProcessing?.() ?? false)
+          )
+        } catch (error) {
+          if (params.signal?.aborted) throw error
+        }
+      }
+      const replyLanguage = resolveChatReplyLanguage(
+        originalQuestion,
+        history,
+        getMeetingLanguage(),
+        (params.session as ChatConversationState).lastReplyLanguage
+      )
+      const conversation = {
+        ...(process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1'
+          ? {
+              appendState: ((params.session as ChatConversationState).appendWriterState ??=
+                createAppendWriterState())
+            }
+          : {}),
+        history,
+        question: originalQuestion,
+        inventoryCount: (await meetingIndex.listInventory()).filter(
+          (meeting) =>
+            !params.scopedMeetingIds?.length || params.scopedMeetingIds.includes(meeting.meetingId)
+        ).length,
+        scopedMeetingIds: params.scopedMeetingIds,
+        replyLanguage,
+        focusedMeetingIds: [...(params.session.lastEvidenceRecordingIds ?? [])]
+      }
+      const retrievalQuestion = params.question
+      // Calendar context goes to the same writer, so follow-ups are not gated
+      // by calendar phrasing either. Fetches share the existing failure backoff.
+      const now = Date.now()
+      if (
+        !params.scopedMeetingIds?.length &&
+        (!conversationCalendarCache || conversationCalendarCache.expires < now)
+      ) {
+        const data = await loadCalendarContextDataWithBackoff()
+        conversationCalendarCache = {
+          expires: now + 60_000,
+          text: JSON.stringify({
+            now:
+              data.recentEvents.length || data.upcomingEvents.length
+                ? new Date(now).toISOString().slice(0, 16)
+                : new Intl.DateTimeFormat('en-CA', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                  }).format(new Date(now)),
+            scope:
+              'Fetched recent 30 days and upcoming events. Selected events below may be incomplete.',
+            refreshUnavailable: data.skippedByBackoff,
+            recent: data.recentEvents.slice(0, 4).map((event) => ({
+              title: event.title,
+              start: new Date(event.startTime).toISOString()
+            })),
+            upcoming: data.upcomingEvents.slice(0, 4).map((event) => ({
+              title: event.title,
+              start: new Date(event.startTime).toISOString()
+            })),
+            incomplete: true
+          })
+        }
+      }
+      let retrieved: AskAiAnswer | null = prefetched
+      try {
+        retrieved =
+          prefetched && retrievalQuestion === params.question
+            ? prefetched
+            : await passageIndex.retrieveConversation(
+                retrievalQuestion,
+                meetings,
+                history,
+                params.session.lastEvidenceRecordingIds ?? params.session.focusedRecordingIds,
+                params.scopedMeetingIds,
+                params.signal,
+                () => !(options.isProcessing?.() ?? false),
+                params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? []
+              )
+      } catch (error) {
+        if (params.signal?.aborted) throw error
+        logAutodocEvent({
+          area: 'chat',
+          message: 'conversation semantic retrieval unavailable',
+          context: { error: error instanceof Error ? error.message : String(error) }
+        })
+        retrieved = await passageIndex.retrieveConversation(
+          retrievalQuestion,
+          meetings,
+          history,
+          params.session.lastEvidenceRecordingIds ?? params.session.focusedRecordingIds,
+          params.scopedMeetingIds,
+          params.signal,
+          () => false,
+          params.scopedMeetingIds ?? params.session.primaryMeetingIds ?? []
+        )
+      }
+      // A low-confidence first turn retains native clarification, but the SAME
+      // streamed writer can first choose a count/calculation tool. No inventory
+      // phrases, classifier, interpreter or extra planning call gates the tools.
+      const subjectClarification =
+        unanchoredInitial && !retrieved?.retrievalConfidence?.confident
+          ? meetingSubjectClarification(replyLanguage)
+          : undefined
+      return {
+        ...(retrieved ?? {
+          intent: 'lookup',
+          content: '',
+          excerpts: [],
+          selectedMeetingIds: [],
+          selectedTitles: []
+        }),
+        primaryMeetingIds: named.size
+          ? [...named].slice(0, 2)
+          : (retrieved?.primaryMeetingIds ?? []),
+        conversation: {
+          ...conversation,
+          calendar: params.scopedMeetingIds?.length ? undefined : conversationCalendarCache?.text,
+          subjectClarification
+        }
+      }
+    }
+    const result = await answerQuestion(params)
+    if (result.recheck) return result
+    if (!passageIndex || !['lookup', 'no_match', 'compare', 'summary'].includes(result.intent))
+      return result
+    const clarifyInventory = (): AskAiAnswer => ({
+      intent: 'clarify',
+      content:
+        'Do you mean all your saved recordings, or meetings about a specific topic? Try “How many recordings do I have?” or “List my recordings”.',
+      selectedMeetingIds: [],
+      selectedTitles: []
+    })
+    if (hasInventoryRequestCue(params.question)) return clarifyInventory()
+    try {
+      const processing = options.isProcessing?.() ?? false
+      const control = processing
+        ? null
+        : await passageIndex.classifyControl(params.question, await meetingIndex.listMeetings())
+      // An uncertain inventory classification must never become a count/list
+      // invented from the top retrieved passages. Strict native aliases above
+      // already use the authoritative inventory; ambiguous routes clarify.
+      if (control === 'planner' || control === 'count' || control === 'list')
+        return clarifyInventory()
+      if (control)
+        return answerQuestion({
+          ...params,
+          question:
+            control === 'count'
+              ? 'How many recordings do I have?'
+              : control === 'list'
+                ? 'List my recordings'
+                : 'Hello'
+        })
+      const turn = classifyChatTurn(
+        params.question,
+        params.history ?? [],
+        toClassifierSession(params.session)
+      )
+      const scopedIds =
+        params.scopedMeetingIds ??
+        (turn.kind === 'reference' || turn.kind === 'scoped_followup' ? turn.meetingIds : undefined)
+      return (
+        (await passageIndex.retrieve(
+          params.question,
+          await meetingIndex.listMeetings(),
+          scopedIds,
+          params.signal,
+          () => !(options.isProcessing?.() ?? false)
+        )) ?? result
+      )
+    } catch (error) {
+      if (params.signal?.aborted) throw error
+      logAutodocEvent({
+        area: 'chat',
+        message: 'passage retrieval fallback',
+        context: { error: error instanceof Error ? error.message : String(error) }
+      })
+      return result
+    }
+  }
   const chatSessions = new Map<number, ChatConversationState>()
   const activeChatRequests = new Map<string, AbortController>()
   let calendarFailureUntil = 0
+  let conversationCalendarCache: { expires: number; text: string } | null = null
 
   const loadCalendarContextDataWithBackoff = async (): Promise<{
     recentEvents: CalendarEvent[]
@@ -209,6 +505,140 @@ export function registerChatIpc(
     rememberRecordingList: (session, ids, titles) => rememberRecordingList(session, ids, titles)
   }
 
+  const emitSources = (
+    sender: Electron.WebContents,
+    requestId: string,
+    sources?: ChatSourceCard[],
+    completed = false
+  ): void => {
+    if (process.env.AUTODOC_ASK_AI_CITED_CARDS === '1' && !completed) return
+    if (!sources || sources.length === 0) return
+    sender.send('chat:sources', { requestId, sources } satisfies ChatSourcesPayload)
+  }
+
+  const rememberWrittenConversation = (
+    result: AskAiAnswer,
+    _text: string,
+    session: AskAiSession
+  ): void => {
+    if (!result.conversation) return
+    session.primaryMeetingIds = [...(result.primaryMeetingIds ?? [])].slice(0, 2)
+    if (result.conversation.replyLanguage)
+      (session as ChatConversationState).lastReplyLanguage = result.conversation.replyLanguage
+    // Generated citation numbers are not reliable enough to choose the next
+    // turn's factual scope. Preserve the actual retrieved meeting evidence.
+    applyAskAiAnswerToSession(session, result)
+  }
+
+  const finalizeAnswer = (
+    answer: string,
+    sources?: ChatSourceCard[]
+  ): { content: string; sources?: ChatSourceCard[] } => {
+    if (!sources || sources.length === 0)
+      return process.env.AUTODOC_ASK_AI_CITED_CARDS === '1'
+        ? { content: answer, sources: [] }
+        : { content: answer }
+    const applied = applyAnswerCitations(answer, sources)
+    return {
+      content: applied.answer,
+      sources: process.env.AUTODOC_ASK_AI_CITED_CARDS === '1' ? applied.sources : sources
+    }
+  }
+
+  const maybeRewriteAnswer = async (
+    question: string,
+    result: AskAiAnswer,
+    onChunk: (delta: string) => void,
+    language: ChatReplyLanguage,
+    signal?: AbortSignal,
+    onCountResult?: (summary: ChatCountSummary) => void,
+    onPreparedSources?: (sources: ChatSourceCard[]) => void
+  ): Promise<string> => {
+    language = result.conversation?.replyLanguage ?? language
+    if (result.alreadyLocalized) return result.content
+    if (language !== 'en' && (result.intent === 'count' || result.intent === 'list')) {
+      const inventory =
+        localizeRecordingCount(result.content, language) ??
+        localizeRecordingList(result.content, language)
+      if (inventory) return inventory
+    }
+    if (!result.conversation && passageIndex && process.env.AUTODOC_ASK_AI_FACTUAL_QUOTES === '1') {
+      const directEvidence = directEvidenceAnswer(question, result)
+      if (directEvidence) return directEvidence
+      if (options.isProcessing?.()) return result.content
+    }
+    if (!shouldRewriteAskAiAnswer(result) || (!result.conversation && !result.excerpts?.length)) {
+      return localizeDirectAnswer(result.content, language, signal)
+    }
+    try {
+      if (!(await ollamaManager.isServerRunning())) {
+        if (result.conversation)
+          throw new Error('Local AI is reconnecting. Please try again shortly.')
+        return result.content
+      }
+      const rewritten = await streamAskAiWriter({
+        baseUrl: ollamaManager.getBaseUrl(),
+        model: process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaProvider.getModel(),
+        question: result.conversation
+          ? (result.conversation.question ?? question)
+          : result.recheck
+            ? `Recheck the prior answer against the evidence; correct it if wrong. Prior question: ${result.recheck.question}\nPrior answer: ${result.recheck.priorAnswer}\nUser: ${chatReplyRequest(question).question}`
+            : chatReplyRequest(question).question,
+        excerpts: result.excerpts ?? [],
+        conversation: result.conversation,
+        ...(process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS === '1' && result.conversation?.appendState
+          ? {
+              append: {
+                state: result.conversation.appendState,
+                sources: result.sources ?? [],
+                onPrepared: onPreparedSources
+              }
+            }
+          : {}),
+        ...(result.conversation
+          ? {
+              executeTool: async (call, evidence) => {
+                const toolResult = await executeWriterTool(call, {
+                  evidence,
+                  inventory: () => recordingIndex.listInventory(),
+                  query: (keyword) => meetingIndex.query(keyword),
+                  scopedMeetingIds: result.conversation?.scopedMeetingIds
+                })
+                if (
+                  call.function.name === 'count_recordings' &&
+                  typeof toolResult.count === 'number' &&
+                  typeof toolResult.filterDescription === 'string'
+                )
+                  onCountResult?.({
+                    count: toolResult.count,
+                    filterDescription: toolResult.filterDescription
+                  })
+                return toolResult
+              }
+            }
+          : {}),
+        language,
+        keepAlive: CHAT_OLLAMA_KEEP_ALIVE,
+        numCtx: writerContextTokens(),
+        onChunk,
+        signal
+      })
+      return rewritten.trim() || result.content
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted || result.conversation) throw error
+      logAutodocEvent({
+        area: 'chat',
+        message: 'ask ai writer fallback',
+        context: {
+          intent: result.intent,
+          excerptCount: result.excerpts?.length ?? 0,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      return result.content
+    }
+  }
+
   const prepareChatContext = async (
     question: string,
     history: ChatHistoryMessage[],
@@ -217,6 +647,7 @@ export function registerChatIpc(
   ): Promise<{
     directAnswer: string | null
     context: string
+    sources?: ChatSourceCard[]
     clarificationOptions?: ChatClarificationOption[]
   }> => {
     const turn = classifyChatTurn(question, history, toClassifierSession(session))
@@ -286,6 +717,35 @@ export function registerChatIpc(
     }
 
     const intent = detectChatIntent(question)
+    if (isDirectNoteFactQuestion(question)) {
+      const meetingContext = await recordingIndex.buildContext(question, [])
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
+      )
+      session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, meetingContext)
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat retrieval completed',
+        context: {
+          ...meetingContext.diagnostics,
+          calendarElapsedMs: 0,
+          calendarSkippedByDirectNoteFact: true,
+          calendarSkippedByBackoff: false,
+          calendarRecentCount: 0,
+          calendarUpcomingCount: 0
+        }
+      })
+      return {
+        directAnswer: meetingContext.directAnswer,
+        context: meetingContext.context,
+        sources: meetingContext.sources,
+        clarificationOptions: meetingContext.clarificationOptions
+      }
+    }
+
     if (intent === 'count' || intent === 'list') {
       clearConversationScope(session)
       const meetingContext = await recordingIndex.buildContext(question, [])
@@ -665,13 +1125,14 @@ export function registerChatIpc(
     return {
       directAnswer: meetingContext?.directAnswer ?? null,
       context: contextParts.join('\n\n---\n\n'),
+      sources: meetingContext?.sources,
       clarificationOptions: meetingContext?.clarificationOptions
     }
   }
 
   const localizeDirectAnswer = async (
     answer: string,
-    language: MeetingLanguageCode,
+    language: ChatReplyLanguage,
     signal?: AbortSignal
   ): Promise<string> => {
     if (language === 'en') return answer
@@ -696,23 +1157,90 @@ export function registerChatIpc(
     })
   }
 
-  ipcMain.handle('chat:send', async (_event, question: string): Promise<string> => {
-    const session = getChatSession(chatSessions, _event.sender?.id ?? 0)
-    const language = normalizeMeetingLanguage(getMeetingLanguage())
-    const { directAnswer, context } = await prepareChatContext(question, [], session)
-    if (directAnswer) return localizeDirectAnswer(directAnswer, language)
+  const calendarAdapter = {
+    fetchRecent: async (): Promise<CalendarEvent[]> => {
+      const data = await loadCalendarContextDataWithBackoff()
+      return data.recentEvents
+    },
+    fetchUpcoming: async (): Promise<CalendarEvent[]> => {
+      const data = await loadCalendarContextDataWithBackoff()
+      return data.upcomingEvents
+    }
+  }
 
-    await waitForOllama(ollamaManager)
-    return completeOllamaChat({
-      baseUrl: ollamaManager.getBaseUrl(),
-      model: ollamaProvider.getModel(),
-      messages: buildChatMessages(context, question, [], language)
-    })
+  ipcMain.handle('chat:send', async (_event, question: string): Promise<string> => {
+    const releaseInteractiveRequest = ollamaManager.beginInteractiveRequest?.()
+    let releaseGenerationPriority: (() => void) | undefined
+    try {
+      releaseGenerationPriority = await acquireGenerationPriority(question)
+      const session = getChatSession(chatSessions, _event.sender?.id ?? 0)
+      const result = await answerWithExperiment({
+        question,
+        history: [],
+        session: session as AskAiSession,
+        store: meetingIndex,
+        calendar: calendarAdapter
+      })
+      applyAskAiAnswerToSession(session as AskAiSession, result)
+      const language = resolveChatReplyLanguage(
+        question,
+        [],
+        getMeetingLanguage(),
+        session.lastReplyLanguage
+      )
+      session.lastReplyLanguage = language
+      const content = await maybeRewriteAnswer(question, result, () => undefined, language)
+      rememberWrittenConversation(result, content, session as AskAiSession)
+      return content
+    } finally {
+      releaseGenerationPriority?.()
+      releaseInteractiveRequest?.()
+    }
   })
 
   ipcMain.handle('chat:new', (event): void => {
     const session = getChatSession(chatSessions, event.sender.id)
     clearConversationScope(session)
+    session.lastReplyLanguage = undefined
+  })
+
+  ipcMain.handle('chat:warmup', async (): Promise<{ warmed: boolean; reason?: string }> => {
+    if (process.env.AUTODOC_ASK_AI_WARMUP === '0') return { warmed: false, reason: 'disabled' }
+    if (options.canWarmup && !(await options.canWarmup())) {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'Ask AI warmup skipped',
+        context: { reason: 'busy' }
+      })
+      return { warmed: false, reason: 'busy' }
+    }
+    try {
+      await waitForOllama(ollamaManager)
+      if (options.canWarmup && !(await options.canWarmup()))
+        return { warmed: false, reason: 'busy' }
+      if (passageIndex)
+        await passageIndex.prepare(await meetingIndex.listMeetings(), options.canWarmup)
+      if (options.canWarmup && !(await options.canWarmup()))
+        return { warmed: false, reason: 'busy' }
+      const res = await fetch(`${ollamaManager.getBaseUrl()}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: process.env.AUTODOC_ASK_AI_WRITER_MODEL ?? ollamaProvider.getModel(),
+          prompt: ' ',
+          stream: false,
+          keep_alive: CHAT_OLLAMA_KEEP_ALIVE,
+          options: {
+            num_predict: 1,
+            temperature: 0,
+            num_ctx: appendWriterContexts(writerContextTokens()).numCtx
+          }
+        })
+      })
+      return { warmed: res.ok }
+    } catch {
+      return { warmed: false, reason: 'unavailable' }
+    }
   })
 
   ipcMain.handle('chat:cancel', (_event, requestId: string): void => {
@@ -729,17 +1257,28 @@ export function registerChatIpc(
       event,
       requestId: string,
       question: string,
-      history: ChatHistoryMessage[] = []
+      history: ChatHistoryMessage[] = [],
+      scopedMeetingIds?: string[]
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
       const controller = new AbortController()
       activeChatRequests.set(requestId, controller)
+      const releaseInteractiveRequest = ollamaManager.beginInteractiveRequest?.()
       let normalizedHistoryLength = 0
+      let releaseGenerationPriority: (() => void) | undefined
 
       try {
-        const language = normalizeMeetingLanguage(getMeetingLanguage())
+        const scopedIds = normalizeMeetingScope(scopedMeetingIds)
+        releaseGenerationPriority = await acquireGenerationPriority(question, controller.signal)
         const normalizedHistory = normalizeChatHistory(history)
+        const language = resolveChatReplyLanguage(
+          question,
+          normalizedHistory,
+          getMeetingLanguage(),
+          session.lastReplyLanguage
+        )
+        session.lastReplyLanguage = language
         normalizedHistoryLength = normalizedHistory.length
 
         const runAgentTurn = async (): Promise<void> => {
@@ -817,25 +1356,80 @@ export function registerChatIpc(
           sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
         }
 
-        if (ASK_AI_MODE === 'agent') {
+        if (ASK_AI_MODE === 'agent' && !scopedIds?.length) {
           await runAgentTurn()
           return
         }
-
-        if (ASK_AI_MODE === 'hybrid') {
-          const route = decideAskAiRoute(question, normalizedHistory, session)
-          logAutodocEvent({
-            area: 'chat',
-            message: 'ask ai hybrid route',
-            context: { requestId, route, questionLength: question.length }
-          })
-          if (route === 'agent') {
-            await runAgentTurn()
-            return
-          }
+        if (ASK_AI_MODE === 'v1' && !scopedIds?.length) {
+          await runV1Turn()
+          return
         }
-
-        await runV1Turn()
+        const result = await answerWithExperiment({
+          question,
+          history: normalizedHistory,
+          session: session as AskAiSession,
+          store: meetingIndex,
+          calendar: calendarAdapter,
+          scopedMeetingIds: scopedIds,
+          signal: controller.signal
+        })
+        // Keep main's multilingual planner fallback when the strict legacy parser misses.
+        if (result.intent === 'no_match' && language !== 'en' && !passageIndex) {
+          await runV1Turn()
+          return
+        }
+        applyAskAiAnswerToSession(session as AskAiSession, result)
+        if (process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS !== '1')
+          emitSources(sender, requestId, result.sources)
+        let writerSources: ChatSourceCard[] | undefined
+        let streamed = false
+        const rewritten = await maybeRewriteAnswer(
+          question,
+          result,
+          (delta) => {
+            streamed = true
+            sender.send('chat:chunk', { requestId, content: delta } satisfies ChatStreamPayload)
+          },
+          language,
+          controller.signal,
+          (summary) => sender.send('chat:count-result', { requestId, summary }),
+          (sources) => {
+            writerSources = sources
+            emitSources(sender, requestId, sources)
+          }
+        )
+        controller.signal.throwIfAborted()
+        rememberWrittenConversation(result, rewritten, session as AskAiSession)
+        const finalized = finalizeAnswer(rewritten, writerSources ?? result.sources)
+        if (process.env.AUTODOC_ASK_AI_CITED_CARDS === '1')
+          emitSources(sender, requestId, finalized.sources, true)
+        if (!streamed) {
+          sender.send('chat:chunk', {
+            requestId,
+            content: finalized.content
+          } satisfies ChatStreamPayload)
+        }
+        logAutodocEvent({
+          area: 'chat',
+          message: streamed ? 'ask ai written answer' : 'ask ai extractive answer',
+          context: {
+            requestId,
+            intent: result.intent,
+            retrievalConfidence: result.retrievalConfidence,
+            questionLength: question.length,
+            sourceCount: result.sources?.length ?? 0,
+            excerptCount: result.excerpts?.length ?? 0,
+            selectedTitles: result.selectedTitles
+          }
+        })
+        sender.send('chat:done', {
+          requestId,
+          content: finalized.content,
+          ...(result.clarificationOptions
+            ? { clarificationOptions: result.clarificationOptions }
+            : {}),
+          ...(finalized.sources ? { sources: finalized.sources } : {})
+        } satisfies ChatDonePayload)
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) {
           sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
@@ -852,6 +1446,8 @@ export function registerChatIpc(
           error: error instanceof Error ? error.message : String(error)
         } satisfies ChatErrorPayload)
       } finally {
+        releaseGenerationPriority?.()
+        releaseInteractiveRequest?.()
         activeChatRequests.delete(requestId)
       }
     }
@@ -870,72 +1466,82 @@ export function registerChatIpc(
       const session = getChatSession(chatSessions, sender.id)
       const controller = new AbortController()
       activeChatRequests.set(requestId, controller)
+      const releaseInteractiveRequest = ollamaManager.beginInteractiveRequest?.()
       let normalizedHistoryLength = 0
+      let releaseGenerationPriority: (() => void) | undefined
 
       try {
-        const language = normalizeMeetingLanguage(getMeetingLanguage())
+        releaseGenerationPriority = await acquireGenerationPriority(question, controller.signal)
         const normalizedHistory = normalizeChatHistory(history)
+        const language = resolveChatReplyLanguage(
+          question,
+          normalizedHistory,
+          getMeetingLanguage(),
+          session.lastReplyLanguage
+        )
+        session.lastReplyLanguage = language
         normalizedHistoryLength = normalizedHistory.length
-        const meetingContext = await recordingIndex.buildContextForMeetingIds(
-          `Use the selected meeting to answer this question: ${question}`,
-          [meetingId],
-          session.lastCalendarEvents
-        )
-        rememberRecordingList(
-          session,
-          meetingContext.diagnostics.selectedMeetingIds,
-          meetingContext.diagnostics.selectedTitles
-        )
-        session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
-        updateClarificationState(session, meetingContext)
-        logAutodocEvent({
-          area: 'chat',
-          message: 'chat retrieval completed',
-          context: {
-            ...meetingContext.diagnostics,
-            selectedFromClarification: true,
-            calendarElapsedMs: 0,
-            calendarSkippedByBackoff: false,
-            calendarRecentCount: session.lastCalendarEvents.length,
-            calendarUpcomingCount: 0
-          }
+        const result = await answerWithExperiment({
+          question,
+          history: normalizedHistory,
+          session: session as AskAiSession,
+          store: meetingIndex,
+          calendar: calendarAdapter,
+          scopedMeetingIds: [meetingId],
+          signal: controller.signal
         })
-
-        if (meetingContext.directAnswer) {
-          const content = await localizeDirectAnswer(
-            meetingContext.directAnswer,
-            language,
-            controller.signal
-          )
-          controller.signal.throwIfAborted()
+        applyAskAiAnswerToSession(session as AskAiSession, result)
+        if (process.env.AUTODOC_ASK_AI_APPEND_FOLLOWUPS !== '1')
+          emitSources(sender, requestId, result.sources)
+        let writerSources: ChatSourceCard[] | undefined
+        let streamed = false
+        const rewritten = await maybeRewriteAnswer(
+          question,
+          result,
+          (delta) => {
+            streamed = true
+            sender.send('chat:chunk', { requestId, content: delta } satisfies ChatStreamPayload)
+          },
+          language,
+          controller.signal,
+          (summary) => sender.send('chat:count-result', { requestId, summary }),
+          (sources) => {
+            writerSources = sources
+            emitSources(sender, requestId, sources)
+          }
+        )
+        controller.signal.throwIfAborted()
+        rememberWrittenConversation(result, rewritten, session as AskAiSession)
+        const finalized = finalizeAnswer(rewritten, writerSources ?? result.sources)
+        if (process.env.AUTODOC_ASK_AI_CITED_CARDS === '1')
+          emitSources(sender, requestId, finalized.sources, true)
+        if (!streamed) {
           sender.send('chat:chunk', {
             requestId,
-            content
+            content: finalized.content
           } satisfies ChatStreamPayload)
-          sender.send('chat:done', {
-            requestId,
-            content,
-            clarificationOptions: meetingContext.clarificationOptions
-          } satisfies ChatDonePayload)
-          return
         }
-
-        await waitForOllama(ollamaManager)
-        let content = ''
-        await streamOllamaChat({
-          baseUrl: ollamaManager.getBaseUrl(),
-          model: ollamaProvider.getModel(),
-          question,
-          context: meetingContext.context,
-          history: normalizedHistory,
-          language,
-          signal: controller.signal,
-          onChunk: (chunk) => {
-            content += chunk
-            sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
+        logAutodocEvent({
+          area: 'chat',
+          message: streamed ? 'ask ai written answer' : 'ask ai extractive answer',
+          context: {
+            requestId,
+            intent: result.intent,
+            retrievalConfidence: result.retrievalConfidence,
+            questionLength: question.length,
+            selectedFromClarification: true,
+            excerptCount: result.excerpts?.length ?? 0,
+            selectedTitles: result.selectedTitles
           }
         })
-        sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
+        sender.send('chat:done', {
+          requestId,
+          content: finalized.content,
+          ...(result.clarificationOptions
+            ? { clarificationOptions: result.clarificationOptions }
+            : {}),
+          ...(finalized.sources ? { sources: finalized.sources } : {})
+        } satisfies ChatDonePayload)
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) {
           sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
@@ -953,10 +1559,24 @@ export function registerChatIpc(
           error: error instanceof Error ? error.message : String(error)
         } satisfies ChatErrorPayload)
       } finally {
+        releaseGenerationPriority?.()
+        releaseInteractiveRequest?.()
         activeChatRequests.delete(requestId)
       }
     }
   )
+}
+
+function normalizeMeetingScope(ids: unknown): string[] | undefined {
+  if (ids === undefined) return undefined
+  if (
+    !Array.isArray(ids) ||
+    ids.length < 1 ||
+    ids.length > 2 ||
+    ids.some((id) => typeof id !== 'string' || !id.trim() || id.length > 256)
+  )
+    throw Error('Invalid meeting scope')
+  return [...new Set(ids)] as string[]
 }
 
 function isAbortError(error: unknown): boolean {
@@ -1001,6 +1621,9 @@ function getChatSession(
 }
 
 function clearConversationScope(session: ChatConversationState): void {
+  delete session.appendWriterState
+  ;(session as AskAiSession).lastEvidenceRecordingIds = []
+  ;(session as AskAiSession).primaryMeetingIds = []
   session.lastCalendarEvents = []
   session.lastRecordingIds = []
   session.lastRecordingTitles = []
@@ -1021,6 +1644,7 @@ function toClassifierSession(session: ChatConversationState): ChatTurnSession {
     recordingTitles: session.lastRecordingTitles,
     calendarEventCount: session.lastCalendarEvents.length,
     focusedRecordingIds: session.focusedRecordingIds,
+    evidenceRecordingIds: (session as AskAiSession).lastEvidenceRecordingIds,
     lastTurnWasClarification: session.lastClarificationOptions.length > 0
   }
 }
@@ -1552,7 +2176,7 @@ function isRecordingContentQuestion(normalizedQuestion: string): boolean {
     /\b(which|what)\s+(meeting|meetings|call|calls|standup|standups|sync|syncs)\b.*\b(about|related|involved|focused|included)\b/.test(
       normalizedQuestion
     ) ||
-    /\b(action items?|actions?|tasks?|todos?|follow ups?|next steps?|assigned|owner|owns|responsible|due|deadline|decision|decisions|decided|status|blockers?|risks?)\b/.test(
+    /\b(action items?|actions?|tasks?|todos?|follow ups?|next steps?|assigned|owner|owns|responsible|due|deadline|decide|decision|decisions|decided|status|blockers?|risks?)\b/.test(
       normalizedQuestion
     )
   )
@@ -1783,7 +2407,7 @@ async function buildChatRetrievalPlan(params: {
         format: 'json',
         options: {
           temperature: 0,
-          num_ctx: 2048,
+          num_ctx: ASK_AI_WRITER_NUM_CTX,
           num_predict: 512
         }
       })
@@ -2002,7 +2626,7 @@ async function streamOllamaChat(params: {
   question: string
   context: string
   history: ChatHistoryMessage[]
-  language: MeetingLanguageCode
+  language: ChatReplyLanguage
   onChunk: (chunk: string) => void
   signal?: AbortSignal
 }): Promise<void> {
@@ -2094,7 +2718,7 @@ function buildChatMessages(
   context: string,
   question: string,
   history: ChatHistoryMessage[] = [],
-  language: MeetingLanguageCode = 'en'
+  language: ChatReplyLanguage = 'en'
 ): Array<{ role: string; content: string }> {
   const system = `${CHAT_SYSTEM_PROMPT}\n\n${chatLanguageInstruction(language)}`
   const available = Math.max(

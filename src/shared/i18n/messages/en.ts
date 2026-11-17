@@ -136,6 +136,12 @@ export const en = {
   'search.transcript': 'transcript',
   'search.note': 'note',
 
+  'askAi.scope': 'Meeting scope',
+  'askAi.onlyMeeting': 'Only this meeting: {title}',
+  'askAi.removeScope': 'Remove meeting scope',
+  'askAi.countReceipt': 'Counted {count}: {filter}.',
+  'askAi.searchAll': 'Search all meetings',
+  'askAi.askMeeting': 'Ask about this meeting',
   'askAi.title': 'Ask AI',
   'askAi.newChat': 'New chat',
   'askAi.emptyHint':

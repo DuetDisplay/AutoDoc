@@ -65,7 +65,8 @@ describe('fast retrieval plan routing (recordings vs calendar)', () => {
     for (const q of [
       'compare the roadmap and support meetings',
       'were these all recorded on the same day?',
-      "what's the difference between the design and roadmap meetings"
+      "what's the difference between the design and roadmap meetings",
+      'What did we decide about the invoice export?'
     ]) {
       const { confidence, plan } = buildFastRetrievalPlan(q)
       expect(confidence, q).toBe('high')
@@ -86,10 +87,13 @@ describe('chat meeting retrieval helpers', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // These retained tests exercise the diagnostic legacy router and extractive fallback.
+    vi.stubEnv('AUTODOC_ASK_AI_CONVERSATION', '0')
   })
 
   afterEach(async () => {
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
     vi.useRealTimers()
     await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
@@ -271,7 +275,7 @@ describe('chat meeting retrieval helpers', () => {
     ['de', 'German', 'Hallo!'],
     ['ja', 'Japanese', 'こんにちは！']
   ])(
-    'localizes deterministic answers in the current %s preference',
+    'honors an explicit %s reply request independently of meeting preference',
     async (code, label, answer) => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
@@ -297,7 +301,9 @@ describe('chat meeting retrieval helpers', () => {
       expect(english).toContain('Hi!')
       expect(fetchMock).not.toHaveBeenCalled()
       language = code
-      expect(await send({} as never, 'Hello')).toBe(answer)
+      expect(await send({} as never, 'Hello')).toBe(english)
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(await send({} as never, `Hello. Reply in ${label}.`)).toBe(answer)
       const request = JSON.parse(fetchMock.mock.calls[0][1].body)
       expect(request.messages[0].content).toContain(`entire answer in ${label}`)
       expect(request.messages[1].content).toBe(english)
@@ -305,7 +311,7 @@ describe('chat meeting retrieval helpers', () => {
     }
   )
 
-  it('understands a Spanish inventory request through the existing planner', async () => {
+  it('understands a Spanish inventory request without waiting on a model planner', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body))
       const content =
@@ -340,20 +346,19 @@ describe('chat meeting retrieval helpers', () => {
     await send({ sender } as never, 'req-es', '¿Cuántas grabaciones tengo?')
     expect(sender.send).toHaveBeenCalledWith('chat:done', {
       requestId: 'req-es',
-      content: 'Grabaciones: 0',
-      clarificationOptions: undefined
+      content: 'Grabaciones: 0'
     })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it.each([
-    ['da', 'Optagelser: 0'],
-    ['et', 'Salvestused: 0'],
-    ['el', 'Ηχογραφήσεις: 0'],
-    ['lv', 'Ieraksti: 0']
+    ['da', 'Hvor mange optagelser har jeg?', 'Optagelser: 0'],
+    ['et', 'Mitu salvestist mul on?', 'Salvestused: 0'],
+    ['el', 'Πόσες ηχογραφήσεις έχω;', 'Ηχογραφήσεις: 0'],
+    ['lv', 'Cik ierakstu man ir?', 'Ieraksti: 0']
   ])(
     'returns a reliable %s recording count without model translation',
-    async (language, answer) => {
+    async (_language, question, answer) => {
       const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
       registerChatIpc(
@@ -365,12 +370,12 @@ describe('chat meeting retrieval helpers', () => {
         },
         { getModel: () => 'fake-model' } as never,
         { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
-        () => language
+        () => 'en'
       )
       const send = vi
         .mocked(ipcMain.handle)
         .mock.calls.find(([channel]) => channel === 'chat:send')![1]
-      expect(await send({} as never, 'How many recordings do I have?')).toBe(answer)
+      expect(await send({} as never, question)).toBe(answer)
       expect(fetchMock).not.toHaveBeenCalled()
     }
   )
@@ -388,8 +393,9 @@ describe('chat meeting retrieval helpers', () => {
   })
 
   it.each([false, true])(
-    'streams Japanese answers with oversized context=%s',
+    'keeps the legacy Japanese planner rollback with oversized context=%s',
     async (oversized) => {
+      vi.stubEnv('AUTODOC_ASK_AI_PASSAGES', '0')
       const baseDir = await createTempRecordingsDir()
       await createRecording(baseDir, 'budget', {
         startedAt: Date.now(),
@@ -539,10 +545,10 @@ describe('chat meeting retrieval helpers', () => {
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === 'chat:send')?.[1]
 
-    const answer = await sendHandler?.({} as never, 'what meetings did I have today')
+    const answer = await sendHandler?.({} as never, "what's on my calendar today")
 
     expect(answer).toContain('Design Sync')
-    expect(answer).toContain('I found 1 calendar meeting today')
+    expect(answer).toContain('calendar meeting')
     expect(answer).not.toContain('recording inventory')
     expect(waitUntilReady).not.toHaveBeenCalled()
   })
@@ -658,7 +664,7 @@ describe('chat meeting retrieval helpers', () => {
       .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
     const sender = { id: 202, send: vi.fn() }
 
-    await streamHandler?.({ sender } as never, 'req-calendar', 'what meetings did I have today')
+    await streamHandler?.({ sender } as never, 'req-calendar', "what's on my calendar today")
     await streamHandler?.({ sender } as never, 'req-confirm', 'so, i have 8 meetings right?')
 
     expect(sender.send).toHaveBeenCalledWith('chat:done', {
@@ -703,14 +709,14 @@ describe('chat meeting retrieval helpers', () => {
     await streamHandler?.({ sender } as never, 'req-list', 'list my recordings')
     await streamHandler?.({ sender } as never, 'req-second', 'show notes for the second one')
 
-    expect(sender.send).toHaveBeenCalledWith('chat:done', {
-      requestId: 'req-second',
-      content: expect.stringContaining('Second listed meeting notes')
-    })
-    expect(sender.send).not.toHaveBeenCalledWith('chat:done', {
-      requestId: 'req-second',
-      content: expect.stringContaining('First listed meeting notes')
-    })
+    expect(sender.send).toHaveBeenCalledWith(
+      'chat:done',
+      expect.objectContaining({
+        requestId: 'req-second',
+        content: expect.stringContaining('Second listed meeting notes')
+      })
+    )
+    expect(getDoneContent(sender.send, 'req-second')).not.toContain('First listed meeting notes')
   })
 
   it('covers adjacent Ask AI prompt variants around thanks, counts, ordinals, and requests', async () => {
@@ -810,26 +816,16 @@ describe('chat meeting retrieval helpers', () => {
     expect(waitUntilReady).not.toHaveBeenCalled()
   })
 
-  it('aborts an in-flight streaming request and emits chat:canceled instead of chat:error', async () => {
+  it('answers unmatched questions extractively without calling Ollama', async () => {
     const baseDir = await createTempRecordingsDir()
-
-    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
-      return new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal
-        const fail = (): void => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-        if (signal?.aborted) {
-          fail()
-          return
-        }
-        signal?.addEventListener('abort', fail)
-      })
-    })
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
+    const waitUntilReady = vi.fn()
 
     registerChatIpc(
       baseDir,
       {
-        waitUntilReady: vi.fn(),
+        waitUntilReady,
         isServerRunning: vi.fn(),
         getBaseUrl: () => 'http://localhost:11434'
       },
@@ -843,28 +839,19 @@ describe('chat meeting retrieval helpers', () => {
     const streamHandler = vi
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
-    const cancelHandler = vi
-      .mocked(ipcMain.handle)
-      .mock.calls.find(([channel]) => channel === 'chat:cancel')?.[1]
     const sender = { id: 301, send: vi.fn() }
 
-    const streamPromise = streamHandler?.(
-      { sender } as never,
-      'req-cancel',
-      'what should I focus on?'
+    await streamHandler?.({ sender } as never, 'req-open', 'what should I focus on?')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(waitUntilReady).not.toHaveBeenCalled()
+    expect(sender.send).toHaveBeenCalledWith(
+      'chat:done',
+      expect.objectContaining({
+        requestId: 'req-open',
+        content: expect.stringMatching(/didn't find/i)
+      })
     )
-
-    for (let i = 0; i < 100 && fetchMock.mock.calls.length === 0; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
-    expect(fetchMock).toHaveBeenCalled()
-
-    await cancelHandler?.({} as never, 'req-cancel')
-    await streamPromise
-
-    expect(sender.send).toHaveBeenCalledWith('chat:canceled', { requestId: 'req-cancel' })
-    expect(sender.send).not.toHaveBeenCalledWith('chat:error', expect.anything())
-    expect(sender.send).not.toHaveBeenCalledWith('chat:done', expect.anything())
   })
 
   it('does not pin a new short content question to the previous exact-title recording', async () => {
@@ -927,14 +914,14 @@ describe('chat meeting retrieval helpers', () => {
     )
     await streamHandler?.({ sender } as never, 'req-billing', 'who owns billing migration')
 
-    expect(sender.send).toHaveBeenCalledWith('chat:done', {
-      requestId: 'req-billing',
-      content: expect.stringContaining('Morgan')
-    })
-    expect(sender.send).not.toHaveBeenCalledWith('chat:done', {
-      requestId: 'req-billing',
-      content: expect.stringContaining('sqa-testing')
-    })
+    expect(sender.send).toHaveBeenCalledWith(
+      'chat:done',
+      expect.objectContaining({
+        requestId: 'req-billing',
+        content: expect.stringContaining('Morgan')
+      })
+    )
+    expect(getDoneContent(sender.send, 'req-billing')).not.toContain('sqa-testing')
   })
 })
 

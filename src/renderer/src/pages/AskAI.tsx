@@ -8,10 +8,10 @@ import {
 } from 'react'
 import { renderNoteMarkup } from '../components/NoteMarkup'
 import { PageHeader } from '../components/PageHeader'
-import { useChatStore } from '../stores/chat'
+import { useChatStore, type MeetingChatScope, type Message } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
-import type { ChatClarificationOption } from '../../../preload/ipc'
+import type { ChatClarificationOption, ChatSourceCard } from '../../../preload/ipc'
 import { useT } from '../services/i18n'
 
 let fallbackRequestIdCounter = 0
@@ -26,17 +26,34 @@ function createChatRequestId(): string {
   return `chat-${fallbackRequestIdCounter}`
 }
 
+function formatSourceTime(startMs: number | null): string | null {
+  if (startMs == null || !Number.isFinite(startMs) || startMs < 0) return null
+  const seconds = Math.floor(startMs / 1000)
+  return `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, '0')}`
+}
+
+function openSource(source: ChatSourceCard): void {
+  const params = new URLSearchParams()
+  if (source.startMs != null) params.set('t', String(Math.floor(source.startMs)))
+  const query = params.toString()
+  window.location.hash = `#/recordings/${encodeURIComponent(source.meetingId)}${query ? `?${query}` : ''}`
+}
+
 export function AskAI(): ReactElement {
   const t = useT()
   const {
     messages,
     draftInput,
+    meetingScope,
+    setMeetingScope,
     addMessage,
     updateMessage,
     appendToMessage,
     setMessageStatus,
     removeEmptyInFlightAssistantMessages,
     setDraftInput,
+    setMessageSources,
+    setMessageCountSummary,
     clearMessages
   } = useChatStore()
   const [loading, setLoading] = useState(false)
@@ -49,6 +66,8 @@ export function AskAI(): ReactElement {
   const firstTokenTimeoutRef = useRef<number | null>(null)
   const completionTimeoutRef = useRef<number | null>(null)
   const isSendingRef = useRef(false)
+  const mountedRef = useRef(false)
+  const healthCheckVersionRef = useRef(0)
 
   const clearRequestTimeouts = useCallback((): void => {
     if (firstTokenTimeoutRef.current) {
@@ -61,9 +80,38 @@ export function AskAI(): ReactElement {
     }
   }, [])
 
-  useEffect(() => {
-    window.electronAPI.invoke('ollama:check-status').then(setOllamaReady)
+  const refreshOllamaReady = useCallback(async (): Promise<void> => {
+    if (!mountedRef.current) return
+    const version = ++healthCheckVersionRef.current
+    let ready = false
+    try {
+      ready = await window.electronAPI.invoke('ollama:check-status')
+    } catch {
+      // A failed health IPC check can recover on the next event or poll.
+    }
+    if (mountedRef.current && version === healthCheckVersionRef.current) setOllamaReady(ready)
   }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
+    void refreshOllamaReady()
+    void window.electronAPI.invoke('chat:warmup').then(refreshOllamaReady, refreshOllamaReady)
+    const unsubscribe = window.electronAPI.on('ollama:setup-progress', () => {
+      void refreshOllamaReady()
+    })
+    const interval = window.setInterval(() => void refreshOllamaReady(), 5000)
+    const onFocus = (): void => {
+      void refreshOllamaReady()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      mountedRef.current = false
+      healthCheckVersionRef.current++
+      window.clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      unsubscribe()
+    }
+  }, [refreshOllamaReady])
 
   useEffect(() => {
     return () => {
@@ -97,11 +145,13 @@ export function AskAI(): ReactElement {
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null
     inputRef.current?.focus()
+    void refreshOllamaReady()
   }
 
   const markActiveRequestTimedOut = (requestId: string, messageId: string): void => {
     if (activeRequestIdRef.current !== requestId) return
     updateMessage(messageId, t('askAi.timeout'), undefined, 'timed_out')
+    void window.electronAPI.invoke('chat:cancel', requestId)
     trackEvent('chat_response_failed', { failure_code: 'timed_out' })
     finishActiveRequest()
   }
@@ -110,6 +160,8 @@ export function AskAI(): ReactElement {
     question: string
     displayQuestion: string
     selectedMeetingId?: string
+    scopeOverride?: MeetingChatScope | null
+    historyOverride?: Message[]
   }): Promise<void> => {
     const question = params.question.trim()
     if (!question || loading || isSendingRef.current || activeRequestIdRef.current) return
@@ -120,7 +172,8 @@ export function AskAI(): ReactElement {
     const assistantMessageId = `assistant-${requestId}`
     activeRequestIdRef.current = requestId
     activeAssistantMessageIdRef.current = assistantMessageId
-    const history = messages
+    const scope = params.scopeOverride === undefined ? meetingScope : params.scopeOverride
+    const history = (params.historyOverride ?? messages)
       .filter(
         (message) =>
           message.content.trim().length > 0 &&
@@ -128,14 +181,22 @@ export function AskAI(): ReactElement {
           message.status !== 'failed'
       )
       .slice(-8)
-      .map((message) => ({ role: message.role, content: message.content }))
+      .map((message) => ({
+        role: message.role,
+        content:
+          message.content +
+          (message.countSummary
+            ? `\nNative saved-recording count: ${message.countSummary.count}. Filter used: ${message.countSummary.filterDescription}.`
+            : '')
+      }))
     addMessage({ role: 'user', content: params.displayQuestion })
     addMessage({
       id: assistantMessageId,
       role: 'assistant',
       content: '',
       status: 'pending',
-      originalQuestion: question
+      originalQuestion: question,
+      ...(scope ? { meetingScope: scope } : {})
     })
     setLoading(true)
     recordDiagnosticAction({
@@ -150,6 +211,23 @@ export function AskAI(): ReactElement {
     })
 
     const cleanupListeners = [
+      window.electronAPI.on('chat:count-result', (payload) => {
+        if (payload.requestId !== requestId || activeRequestIdRef.current !== requestId) return
+        if (firstTokenTimeoutRef.current) {
+          window.clearTimeout(firstTokenTimeoutRef.current)
+          firstTokenTimeoutRef.current = null
+        }
+        setMessageCountSummary(assistantMessageId, payload.summary)
+      }),
+      window.electronAPI.on('chat:sources', (payload) => {
+        if (payload.requestId !== requestId) return
+        if (activeRequestIdRef.current !== requestId) return
+        if (firstTokenTimeoutRef.current) {
+          window.clearTimeout(firstTokenTimeoutRef.current)
+          firstTokenTimeoutRef.current = null
+        }
+        setMessageSources(assistantMessageId, payload.sources)
+      }),
       window.electronAPI.on('chat:chunk', (payload) => {
         if (payload.requestId !== requestId) return
         if (activeRequestIdRef.current !== requestId) return
@@ -162,7 +240,13 @@ export function AskAI(): ReactElement {
       window.electronAPI.on('chat:done', (payload) => {
         if (payload.requestId !== requestId) return
         if (activeRequestIdRef.current !== requestId) return
-        updateMessage(assistantMessageId, payload.content, payload.clarificationOptions, 'complete')
+        updateMessage(
+          assistantMessageId,
+          payload.content,
+          payload.clarificationOptions,
+          'complete',
+          payload.sources
+        )
         trackEvent('chat_response_completed', {
           selected_recording: Boolean(params.selectedMeetingId),
           clarification_options_count: payload.clarificationOptions?.length ?? 0
@@ -199,7 +283,7 @@ export function AskAI(): ReactElement {
     )
 
     try {
-      if (params.selectedMeetingId) {
+      if (params.selectedMeetingId && !scope) {
         await window.electronAPI.invoke(
           'chat:select-recording-stream',
           requestId,
@@ -207,6 +291,10 @@ export function AskAI(): ReactElement {
           question,
           history
         )
+      } else if (scope) {
+        await window.electronAPI.invoke('chat:send-stream', requestId, question, history, [
+          scope.meetingId
+        ])
       } else {
         await window.electronAPI.invoke('chat:send-stream', requestId, question, history)
       }
@@ -250,6 +338,29 @@ export function AskAI(): ReactElement {
     })
   }
 
+  const handleRemoveScope = (): void => {
+    setMeetingScope(null)
+    void window.electronAPI.invoke('chat:new')
+    inputRef.current?.focus()
+  }
+
+  const handleSearchAll = async (
+    messageId: string | undefined,
+    question: string
+  ): Promise<void> => {
+    if (loading) return
+    const index = messages.findIndex((message) => message.id === messageId)
+    const history = messages.slice(0, Math.max(0, index - 1))
+    setMeetingScope(null)
+    await window.electronAPI.invoke('chat:new')
+    await sendChatRequest({
+      question,
+      displayQuestion: question,
+      scopeOverride: null,
+      historyOverride: history
+    })
+  }
+
   const handleKeyDown = (e: KeyboardEvent): void => {
     if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -272,6 +383,7 @@ export function AskAI(): ReactElement {
     clearMessages()
     setLoading(false)
     await window.electronAPI.invoke('chat:new')
+    void refreshOllamaReady()
     inputRef.current?.focus()
   }
 
@@ -283,13 +395,32 @@ export function AskAI(): ReactElement {
           <button
             type="button"
             onClick={handleNewChat}
-            disabled={messages.length === 0 && !draftInput.trim()}
+            disabled={messages.length === 0 && !draftInput.trim() && !meetingScope}
             className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-40"
           >
             {t('askAi.newChat')}
           </button>
         }
       />
+
+      {meetingScope && (
+        <div className="px-6 pt-3" role="group" aria-label={t('askAi.scope')}>
+          <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-sage/40 bg-sage/5 px-3 py-1.5 text-[12px] text-ink">
+            <span className="truncate">
+              {t('askAi.onlyMeeting', { title: meetingScope.title })}
+            </span>
+            <button
+              type="button"
+              aria-label={t('askAi.removeScope')}
+              onClick={handleRemoveScope}
+              disabled={loading}
+              className="shrink-0 rounded px-1 hover:bg-sage/10 disabled:opacity-40"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 && !loading && (
@@ -332,34 +463,78 @@ export function AskAI(): ReactElement {
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
                   }`}
                 >
-                  {msg.role === 'assistant' &&
-                  msg.content.length === 0 &&
-                  (msg.status === 'pending' || msg.status === 'streaming') ? (
-                    <div className="flex gap-1.5 py-1">
-                      <span
-                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
-                        style={{ animationDelay: '0ms' }}
-                      />
-                      <span
-                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
-                        style={{ animationDelay: '150ms' }}
-                      />
-                      <span
-                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
-                        style={{ animationDelay: '300ms' }}
-                      />
-                    </div>
-                  ) : msg.role === 'assistant' ? (
+                  {msg.role === 'assistant' ? (
                     <div className="space-y-3">
-                      <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-                        {renderNoteMarkup(
-                          msg.status === 'failed'
-                            ? t('askAi.failed')
-                            : msg.status === 'timed_out'
-                              ? t('askAi.timeout')
-                              : msg.content
-                        )}
-                      </div>
+                      {msg.content.length === 0 &&
+                      (msg.status === 'pending' || msg.status === 'streaming') ? (
+                        <div className="flex gap-1.5 py-1">
+                          <span
+                            className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                            style={{ animationDelay: '0ms' }}
+                          />
+                          <span
+                            className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                            style={{ animationDelay: '150ms' }}
+                          />
+                          <span
+                            className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                            style={{ animationDelay: '300ms' }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                          {renderNoteMarkup(
+                            msg.status === 'failed'
+                              ? t('askAi.failed')
+                              : msg.status === 'timed_out'
+                                ? t('askAi.timeout')
+                                : msg.content
+                          )}
+                        </div>
+                      )}
+                      {msg.countSummary && (
+                        <p
+                          data-ask-ai-count-summary
+                          role="note"
+                          className="rounded-lg border border-border bg-bg px-3 py-2 text-[11px] text-ink-muted"
+                        >
+                          {t('askAi.countReceipt', {
+                            count: msg.countSummary.count,
+                            filter: msg.countSummary.filterDescription
+                          })}
+                        </p>
+                      )}
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {msg.sources.map((source) => (
+                            <button
+                              key={`${source.n}-${source.meetingId}`}
+                              type="button"
+                              onClick={() => openSource(source)}
+                              className="max-w-full rounded-full border border-border bg-bg px-2.5 py-1 text-left text-[11px] text-ink hover:border-sage hover:bg-sage/5 transition-colors"
+                            >
+                              <span className="font-medium">[{source.n}]</span>{' '}
+                              <span className="text-ink-muted">{source.title}</span>
+                              {formatSourceTime(source.startMs) && (
+                                <span className="text-ink-faint">
+                                  {' '}
+                                  · {formatSourceTime(source.startMs)}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {msg.meetingScope && msg.originalQuestion && msg.status === 'complete' && (
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void handleSearchAll(msg.id, msg.originalQuestion!)}
+                          className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40"
+                        >
+                          {t('askAi.searchAll')}
+                        </button>
+                      )}
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
                         <div className="grid min-w-0 grid-cols-1 gap-2">
                           {msg.clarificationOptions.map((option) => (

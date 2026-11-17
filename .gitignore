@@ -54,6 +54,5 @@ test-results/
 
 # Local Notes V2 evaluation outputs may contain private model artifacts.
 scripts/notes-eval/output/
-
-# Local real-app verification profiles, copied runtimes, model weights and evidence.
-artifacts/notes-model-verification/
+# Local application experiment profiles, model data and evidence.
+artifacts/

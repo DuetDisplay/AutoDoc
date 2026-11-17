@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { askAiRuntimeDefaults } from './ask-ai-policy'
 import { access, mkdir, chmod, rm, copyFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
@@ -49,8 +50,18 @@ const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
 
 // QA must never adopt or terminate the production app's managed Ollama process.
-const OLLAMA_PORT = __AUTODOC_QA_BUILD__ ? 11436 : 11435
-const OLLAMA_HOST = __AUTODOC_QA_BUILD__ ? '127.0.0.1:11436' : '127.0.0.1:11435'
+const scopedTestPort = Number(process.env.AUTODOC_TEST_OLLAMA_PORT)
+const OLLAMA_PORT =
+  (process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1') &&
+  process.env.AUTODOC_TEST_USER_DATA_DIR &&
+  Number.isInteger(scopedTestPort) &&
+  scopedTestPort >= 1024 &&
+  scopedTestPort <= 65535
+    ? scopedTestPort
+    : __AUTODOC_QA_BUILD__
+      ? 11436
+      : 11435
+const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const SHOULD_PULL_ASK_AI_EMBEDDING_MODEL =
@@ -345,6 +356,7 @@ export class OllamaManager extends EventEmitter {
   private notesPulls = new Map<string, Promise<void>>()
   // SegmentationService runs one job at a time, including preparation and unload.
   private notesGenerationActive = false
+  private interactiveRequestCount = 0
   private pendingNotesCleanup: { preferredModel: string; epoch: number } | null = null
   private notesCleanupPromise: Promise<void> | null = null
   private readyPromise: Promise<void> | null = null
@@ -1280,6 +1292,7 @@ export class OllamaManager extends EventEmitter {
     const proc = spawn(binary, ['serve'], {
       env: {
         ...process.env,
+        ...askAiRuntimeDefaults(decision.accelerator),
         OLLAMA_HOST: OLLAMA_HOST,
         OLLAMA_MODELS: modelsDir,
         ...decision.env
@@ -1740,6 +1753,16 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
+  beginInteractiveRequest(): () => void {
+    this.interactiveRequestCount += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.interactiveRequestCount -= 1
+    }
+  }
+
   reapLeftoverRunners(reason = 'before-profile-snapshot', meetingId?: string): void {
     this.killManagedLlamaServers(reason, meetingId)
   }
@@ -1761,6 +1784,15 @@ export class OllamaManager extends EventEmitter {
     meetingId?: string,
     options?: { betweenChunks?: boolean }
   ): Promise<boolean> {
+    if (this.interactiveRequestCount > 0) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'runner recycling skipped during active Ask AI request',
+        meetingId,
+        context: { activeInteractiveRequests: this.interactiveRequestCount }
+      })
+      return false
+    }
     if (
       options?.betweenChunks &&
       !shouldRecycleRunnerBetweenWriterChunks(process.platform, this.getNotesAccelerator())
@@ -1851,6 +1883,18 @@ export class OllamaManager extends EventEmitter {
   }
 
   private killManagedLlamaServers(reason = 'stop', meetingId?: string): void {
+    const maintenance =
+      ['before-notes-profile', 'before-scan', 'after-notes'].includes(reason) ||
+      reason.startsWith('runner-rss-over-')
+    if (maintenance && this.interactiveRequestCount > 0) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'runner maintenance skipped during active Ask AI request',
+        meetingId,
+        context: { reason, activeInteractiveRequests: this.interactiveRequestCount }
+      })
+      return
+    }
     const runtimeDir = this.getRuntimeDir()
     const found = this.listManagedLlamaServers()
     const killed: ManagedLlamaServer[] = []

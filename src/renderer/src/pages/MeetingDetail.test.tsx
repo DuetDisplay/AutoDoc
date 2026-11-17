@@ -1,3 +1,4 @@
+import { useChatStore } from '../stores/chat'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -1667,4 +1668,34 @@ describe('MeetingDetail', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('Finishing up your video…')).toBeInTheDocument()
   })
+})
+
+it('opens a fresh scoped Ask AI conversation from the meeting detail action', async () => {
+  const api = installMockElectronApi({
+    'recording:get-detail': { title: 'Lumen workshop', date: 0, durationSeconds: 60 },
+    'transcription:get-status': 'complete',
+    'segmentation:get-status': 'complete',
+    'transcription:get-transcript': [],
+    'segmentation:get-segments': createMeetingSegments(),
+    'recording:get-media': { hasVideo: false, hasAudio: false, mediaBaseUrl: null },
+    'speakers:get': {}
+  })
+  useChatStore.getState().addMessage({ role: 'assistant', content: 'Old global conversation.' })
+  render(
+    <MemoryRouter initialEntries={['/recordings/test-123']}>
+      <Routes>
+        <Route path="/recordings/:id" element={<MeetingDetail />} />
+        <Route path="/ask-ai" element={<div>Scoped Ask AI destination</div>} />
+      </Routes>
+    </MemoryRouter>
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Ask about this meeting' }))
+  expect(await screen.findByText('Scoped Ask AI destination')).toBeInTheDocument()
+  expect(useChatStore.getState().meetingScope).toEqual({
+    meetingId: 'test-123',
+    title: 'Lumen workshop'
+  })
+  expect(useChatStore.getState().messages).toEqual([])
+  expect(api.invoke).toHaveBeenCalledWith('chat:new')
 })
