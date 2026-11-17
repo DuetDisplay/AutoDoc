@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-11-17
+
+### Added
+
+- **Ask about this meeting** on a recording opens Ask AI limited to that
+  meeting. Clear the filter to ask across all your meetings again.
+- Ask AI prepares its search index in the background and shows its progress,
+  so the first answer doesn't wait for it.
+- Ask AI is marked Beta, with a one-time notice explaining what to expect.
+
+### Changed
+
+- Ask AI answers faster and more accurately. It searches passages from your
+  notes and transcripts, and each answer links to the moments it came from;
+  click a link to open the recording at that time.
+- Ask AI follows up on the same meeting, and replies in the language of your
+  question.
+- Ask AI only appears on computers that can run it well: those using the
+  `qwen3:4b-instruct` model with GPU acceleration. Other computers don't show
+  it, and skip its downloads and indexing. Recording, transcription and notes
+  are unchanged.
+
+### Fixed
+
+- Ask AI source links no longer pile up across follow-up questions, and no two
+  links point to the same moment.
+- "Do I have recordings?" answers with your recording count, without source
+  links.
+- Short English questions, such as "can monkeys eat bananas?" or "is it done?",
+  get an English reply.
+- Speech models still download on a Mac when Hugging Face can't be reached,
+  including in mainland China, using ModelScope or hf-mirror with every file
+  checked against a pinned hash. The English Mac model and the Ollama runtime are
+  now hash-checked too, and the Ollama download resumes after an interruption.
+- AutoDoc restarts its local AI server within seconds if it stops unexpectedly,
+  instead of waiting for the next health check.
+- A Google calendar that can no longer sync now asks you to reconnect, instead of
+  silently stopping.
+- AutoDoc no longer gets stuck refusing new recordings when a quit or update
+  install doesn't finish. It recovers on its own, or exits if it was already
+  shutting down.
+- Crash reports no longer include window or meeting titles, which were sent with
+  button clicks in the recording picker and with some reports of very short
+  recordings.
+- A failed recording start no longer stops a recording that is already running.
+- A recording can't be deleted while it is still recording, saving or being
+  transcribed. If AutoDoc can't save a recording, for example on a full disk, it
+  stops recording and tells you instead of continuing without saving.
+- On Windows, a recording's audio is now encrypted as soon as transcription
+  finishes, even if you opened the recording while it was processing. Before, it
+  could stay unencrypted until AutoDoc restarted.
+
 ## [1.3.3] — 2026-10-30
 
 ### Added
