@@ -3279,6 +3279,26 @@ describe('TranscriptionService meeting-language routing', () => {
       )
     })
 
+    it('drops a language whose retry the cooldown rejected, so no later job inherits it', () => {
+      const service = createService()
+      ;(service as any).lastManualRetry.set('too-soon', Date.now())
+
+      expect(service.retry('too-soon', 'direct', 'de')).toBe(false)
+      expect((service as any).reprocessLanguages.has('too-soon')).toBe(false)
+      expect((service as any).queue).toEqual([])
+    })
+
+    it('turns a queued plain retry into a reprocess in the requested language', () => {
+      const service = createService()
+      ;(service as any).processing = true // holds the queue so the job does not start
+      service.enqueue('queued-first', 'direct')
+
+      expect(service.retry('queued-first', 'reprocess', 'de')).toBe(true)
+      expect((service as any).enqueueSource.get('queued-first')).toBe('reprocess')
+      expect((service as any).reprocessLanguages.get('queued-first')).toBe('de')
+      expect((service as any).queue).toEqual(['queued-first'])
+    })
+
     it('keeps the stored language when the reprocess fails, so later retries use it', async () => {
       const { service, transcribe, jobLanguages, metadataWrites } = macServiceRecordedIn('en')
       transcribe.mockRejectedValueOnce(new Error('speech model download failed'))

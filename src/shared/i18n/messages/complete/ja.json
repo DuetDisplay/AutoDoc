@@ -209,7 +209,7 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "オフラインです。インターネットに接続し、{language}の音声モデルをダウンロードしてください。",
   "ui.yourMeetingLanguageIsStillLanguage": "会議の言語は引き続き{language}です。",
   "meeting.reprocessNotesLanguageHint": "{language}に切り替えるには、まず文字起こしを再処理してください。",
-  "meeting.reprocessLanguageFailed": "{language}での再処理に失敗しました。会議の言語は引き続き{current}です。",
+  "meeting.reprocessLanguageFailed": "{language}での再処理に失敗しました。この会議の言語は引き続き{current}です。",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "新しいオンデバイスノートエンジンが、次のオンライン時（約2.5GB、1回限り）にインストールされます。記録は続けられます。既存のノートはそのままになります。",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "新しいオンデバイスノートエンジンをインストールしています。これにより、次の会議の内容がより明確でスキャンしやすくなります。このプロセスが終了するまで接続を維持してください（約2.5GB、1回限り）。既存のノートはそのままになります。",
   "ui.jumpToTime": "{time}にジャンプ",

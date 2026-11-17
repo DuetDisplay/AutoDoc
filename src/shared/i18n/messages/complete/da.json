@@ -244,7 +244,7 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Du er offline. Opret forbindelse til internettet for at downloade talemodellen. Sprog: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Dit mødesprog er stadig {language}.",
   "meeting.reprocessNotesLanguageHint": "Genbehandl først transskriptionen for at skifte dette møde til {language}.",
-  "meeting.reprocessLanguageFailed": "Genbehandling på {language} mislykkedes. Dit mødesprog er stadig {current}.",
+  "meeting.reprocessLanguageFailed": "Genbehandling på {language} mislykkedes. Dette mødes sprog er stadig {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Vi installerer den nye lokale notemotor, næste gang du er online (cirka 2,5 GB, én gang). Du kan fortsætte med at optage. Eksisterende noter forbliver, som de er.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Vi installerer en ny lokal notemotor, så dine næste mødenoter bliver tydeligere og nemmere at overskue. Hold forbindelsen, indtil det er færdigt (cirka 2,5 GB, én gang). Eksisterende noter forbliver, som de er.",
   "ui.jumpToTime": "Gå til {time}",

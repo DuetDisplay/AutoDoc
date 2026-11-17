@@ -333,9 +333,27 @@ describe('memory failure guidance', () => {
       })
       expect(picker()).toHaveTextContent('English')
       expect(
-        screen.getByText('Reprocessing in German failed. Your meeting language is still English.')
+        screen.getByText("Reprocessing in German failed. This meeting's language is still English.")
       ).toBeInTheDocument()
       expect(reprocessNotes()).toBeDisabled()
+    })
+
+    it('holds every notes retry while a picked language is unapplied', async () => {
+      const api = installLanguageApi()
+      api.setHandler('segmentation:get-status', 'failed')
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: 'Notes', exact: true }))
+      const tryAgain = screen.getByRole('button', { name: 'Try again', exact: true })
+      expect(tryAgain).toBeDisabled()
+      expect(
+        screen.getByText('Reprocess the transcript first to switch this meeting to German.')
+      ).toBeInTheDocument()
+      await userEvent.click(tryAgain)
+      expect(api.invoke).not.toHaveBeenCalledWith('segmentation:retry', 'test-123')
     })
 
     it('keeps the pick and reports the reason when main refuses the language change', async () => {

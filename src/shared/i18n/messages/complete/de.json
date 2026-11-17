@@ -209,7 +209,7 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Sie sind offline. Verbinden Sie sich mit dem Internet, um das Sprachmodell für {language} herunterzuladen.",
   "ui.yourMeetingLanguageIsStillLanguage": "Die Sprache Ihres Meetings ist immer noch {language}.",
   "meeting.reprocessNotesLanguageHint": "Verarbeiten Sie zuerst das Transkript neu, um dieses Meeting auf {language} umzustellen.",
-  "meeting.reprocessLanguageFailed": "Die Neuverarbeitung auf {language} ist fehlgeschlagen. Die Sprache Ihres Meetings ist immer noch {current}.",
+  "meeting.reprocessLanguageFailed": "Die Neuverarbeitung auf {language} ist fehlgeschlagen. Die Sprache dieses Meetings ist weiterhin {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Wir installieren das neue lokale Notizmodul, sobald Sie wieder online sind (einmalig etwa 2,5 GB). Sie können weiter aufnehmen. Vorhandene Notizen bleiben unverändert.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Wir installieren ein neues lokales Notizmodul für klarere und übersichtlichere Besprechungsnotizen. Bleiben Sie bis zum Abschluss mit dem Internet verbunden (einmalig etwa 2,5 GB). Vorhandene Notizen bleiben unverändert.",
   "ui.jumpToTime": "Springe zu {time}",

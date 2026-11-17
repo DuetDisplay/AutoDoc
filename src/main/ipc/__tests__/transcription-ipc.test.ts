@@ -54,8 +54,9 @@ describe('registerTranscriptionIpc', () => {
       busy?: boolean
       activeJob?: boolean
       blockReason?: string | null
+      queued?: boolean
     }) {
-      const retry = vi.fn()
+      const retry = vi.fn(() => options?.queued ?? true)
       const isActiveJob = vi.fn(() => options?.activeJob ?? false)
       const isRecordingBusy = vi.fn(() => options?.busy ?? false)
       const getMeetingLanguageBlockReason = vi.fn(async () => options?.blockReason ?? null)
@@ -101,6 +102,13 @@ describe('registerTranscriptionIpc', () => {
         'cannot be changed while the recording is saved or processed'
       )
       expect(retry).not.toHaveBeenCalled()
+    })
+
+    it('reports a language request the service dropped instead of acknowledging it', async () => {
+      const dropped = registerWithGuards({ queued: false })
+      await expect(dropped.invoke({ meetingLanguage: 'de' })).rejects.toThrow('could not be queued')
+      // A plain retry inside the cooldown stays a silent no-op, as before.
+      await expect(dropped.invoke()).resolves.toBeUndefined()
     })
 
     it('checks again right before the retry, after the availability check awaited', async () => {

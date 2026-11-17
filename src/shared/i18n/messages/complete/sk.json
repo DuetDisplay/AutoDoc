@@ -246,7 +246,7 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Ste offline. Pripojte sa na internet a stiahnite rečový model. Jazyk: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Jazyk vašich stretnutí je stále {language}.",
   "meeting.reprocessNotesLanguageHint": "Najprv znovu spracujte prepis, aby sa toto stretnutie prepnulo na {language}.",
-  "meeting.reprocessLanguageFailed": "Opätovné spracovanie v jazyku {language} zlyhalo. Jazyk vašich stretnutí je stále {current}.",
+  "meeting.reprocessLanguageFailed": "Opätovné spracovanie v jazyku {language} zlyhalo. Jazyk tohto stretnutia je stále {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Nový lokálny nástroj na poznámky nainštalujeme pri najbližšom pripojení (približne 2,5 GB, jednorazovo). Môžete ďalej nahrávať. Existujúce poznámky zostanú nezmenené.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Inštalujeme nový lokálny nástroj na poznámky, aby boli poznámky z ďalších stretnutí prehľadnejšie. Zostaňte pripojení do dokončenia (približne 2,5 GB, jednorazovo). Existujúce poznámky zostanú nezmenené.",
   "ui.jumpToTime": "Prejsť na {time}",

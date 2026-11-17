@@ -77,10 +77,12 @@ export function registerTranscriptionIpc(
         if (busy()) throw new Error(busyMessage)
       }
       onManualRetry?.(meetingId)
-      if (process.platform === 'win32' && options?.reprocess === true) {
-        transcriptionService.retry(meetingId, 'reprocess', meetingLanguage)
-      } else {
-        transcriptionService.retry(meetingId, 'direct', meetingLanguage)
+      const source =
+        process.platform === 'win32' && options?.reprocess === true ? 'reprocess' : 'direct'
+      const queued = transcriptionService.retry(meetingId, source, meetingLanguage)
+      // A plain retry may be dropped silently (cooldown); a language change must not be.
+      if (!queued && meetingLanguage) {
+        throw new Error('The meeting could not be queued for reprocessing. Try again in a moment.')
       }
     }
   )

@@ -244,7 +244,11 @@ export class TranscriptionService {
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
-    if (this.queue.includes(meetingId)) return
+    if (this.queue.includes(meetingId)) {
+      // A reprocess must replace the transcript even when a plain retry queued the meeting first.
+      if (source === 'reprocess') this.enqueueSource.set(meetingId, source)
+      return
+    }
     this.enqueueSource.set(meetingId, source)
     this.queue.push(meetingId)
     this.broadcastStatus(meetingId, 'queued')
@@ -254,20 +258,20 @@ export class TranscriptionService {
   /**
    * Re-runs transcription. With `meetingLanguage`, the job transcribes in that language and
    * saves it on the recording once the transcript succeeds (see reprocessLanguages).
+   * Returns false when the request was dropped (job already running, or a manual retry
+   * inside the cooldown), so a requested language is never kept for an unrelated later job.
    */
   retry(
     meetingId: string,
     source: EnqueueSource = 'direct',
     meetingLanguage?: MeetingLanguageCode
-  ): void {
-    // A running job already chose its language; a queued one picks this up when it starts.
-    if (meetingLanguage && this.activeJobId !== meetingId) {
-      this.reprocessLanguages.set(meetingId, meetingLanguage)
-    }
-    if (source === 'direct') {
-      if (this.activeJobId === meetingId || this.queue.includes(meetingId)) return
+  ): boolean {
+    // A running job already chose its language.
+    if (this.activeJobId === meetingId) return false
+    const alreadyQueued = this.queue.includes(meetingId)
+    if (source === 'direct' && !alreadyQueued) {
       const now = Date.now()
-      if (now - (this.lastManualRetry.get(meetingId) ?? -Infinity) < 1500) return
+      if (now - (this.lastManualRetry.get(meetingId) ?? -Infinity) < 1500) return false
       this.lastManualRetry.set(meetingId, now)
       logAutodocEvent({
         area: 'transcription',
@@ -275,7 +279,10 @@ export class TranscriptionService {
         meetingId
       })
     }
+    // A queued job picks the language up when it starts.
+    if (meetingLanguage) this.reprocessLanguages.set(meetingId, meetingLanguage)
     this.enqueue(meetingId, source)
+    return true
   }
 
   private async hasUsableTranscript(meetingId: string): Promise<boolean> {

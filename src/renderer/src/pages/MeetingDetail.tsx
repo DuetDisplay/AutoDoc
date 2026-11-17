@@ -1196,7 +1196,9 @@ export function MeetingDetail() {
   }
 
   const handleRetrySegmentation = () => {
-    if (id) window.electronAPI.invoke('segmentation:retry', id)
+    // Notes read the recording's language; an unapplied pick waits for the transcript.
+    if (!id || reprocessLanguageDraft) return
+    window.electronAPI.invoke('segmentation:retry', id)
   }
 
   const handleRetryVideo = () => {
@@ -1316,7 +1318,7 @@ export function MeetingDetail() {
   }
 
   const handleReprocessNotes = () => {
-    if (!id) return
+    if (!id || reprocessLanguageDraft) return
     segmentationEventRevisionRef.current += 1
     setSegmentationStatus('queued')
     setSegmentationErrorCode(undefined)
@@ -1335,6 +1337,12 @@ export function MeetingDetail() {
     transcriptionStatus === 'queued' ||
     transcriptionStatus === 'downloading' ||
     transcriptionStatus === 'diarizing'
+  // Shown wherever notes could be regenerated while a picked language is unapplied.
+  const reprocessNotesLanguageHint = reprocessLanguageDraft
+    ? t('meeting.reprocessNotesLanguageHint', {
+        language: meetingLanguageName(reprocessLanguageDraft.language, language)
+      })
+    : null
   const reprocessLanguageSetupLabel =
     reprocessLanguagePending && preparingReprocessLanguage === reprocessLanguageDraft?.language
       ? getWhisperSetupLabel(reprocessLanguageSetupStatus, t)
@@ -1359,6 +1367,7 @@ export function MeetingDetail() {
           ? () => void handleReprocessTranscript()
           : handleReprocessNotes
       }
+      retryDisabled={!showTranscriptionMemoryFailure && reprocessLanguageDraft !== null}
       onViewTranscript={
         !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
           ? () => setActiveTab('transcript')
@@ -1377,6 +1386,7 @@ export function MeetingDetail() {
       onRetry={
         showTranscriptionDiskFull ? () => void handleReprocessTranscript() : handleReprocessNotes
       }
+      retryDisabled={!showTranscriptionDiskFull && reprocessLanguageDraft !== null}
     />
   ) : null
   const showCpuFallbackNotice =
@@ -1779,7 +1789,7 @@ export function MeetingDetail() {
             hasMemoryFailure={segmentationMemoryFailure != null}
             progress={segmentationProgress}
             errorCode={segmentationErrorCode}
-            onRetry={handleRetrySegmentation}
+            onRetry={reprocessLanguageDraft ? undefined : handleRetrySegmentation}
           />
         </div>
       </div>
@@ -1903,7 +1913,8 @@ export function MeetingDetail() {
                       <div className="flex flex-wrap items-center gap-2 mt-3">
                         <button
                           onClick={handleReprocessNotes}
-                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+                          disabled={reprocessLanguageDraft !== null}
+                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                           {segmentationErrorCode === 'scan_or_persist'
                             ? t('meeting.regenerateNotes')
@@ -1916,6 +1927,11 @@ export function MeetingDetail() {
                           {t('meeting.viewTranscript')}
                         </button>
                       </div>
+                      {reprocessNotesLanguageHint && (
+                        <p className="mt-2 text-[11px] text-ink-muted">
+                          {reprocessNotesLanguageHint}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2252,11 +2268,7 @@ export function MeetingDetail() {
                   <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">{t('meeting.notes')}</div>
                     <div className="text-[11px] text-ink-faint">
-                      {reprocessLanguageDraft
-                        ? t('meeting.reprocessNotesLanguageHint', {
-                            language: meetingLanguageName(reprocessLanguageDraft.language, language)
-                          })
-                        : t('meeting.reprocessNotesHint')}
+                      {reprocessNotesLanguageHint ?? t('meeting.reprocessNotesHint')}
                     </div>
                   </div>
                   <button
