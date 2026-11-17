@@ -629,6 +629,12 @@ jobs:
       actions: read
 
     steps:
+      - name: Check out release notes at the validated tag
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ needs.validate-release-request.outputs.release_sha }}
+          persist-credentials: false
+
       - name: Download macOS release assets
         if: needs.build-mac-release.result == 'success'
         uses: actions/download-artifact@v8.0.1
@@ -651,6 +657,11 @@ jobs:
           MANUAL_RELEASE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: |
           assets=(release-assets/mac/* release-assets/win/*)
+          notes_args=()
+          notes_file="release-notes/${RELEASE_TAG}.md"
+          if [ -f "$notes_file" ]; then
+            notes_args=(--notes-file "$notes_file")
+          fi
 
           if gh release view "$RELEASE_TAG" -R "$GH_REPO" >/dev/null 2>&1; then
             if [ "$MANUAL_RELEASE" = "true" ]; then
@@ -662,9 +673,9 @@ jobs:
             fi
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber -R "$GH_REPO"
           elif [ "$MANUAL_RELEASE" = "true" ]; then
-            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag --title "$RELEASE_TAG" -R "$GH_REPO"
+            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag --title "$RELEASE_TAG" "${notes_args[@]}" -R "$GH_REPO"
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "$RELEASE_TAG" -R "$GH_REPO"
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "$RELEASE_TAG" "${notes_args[@]}" -R "$GH_REPO"
           fi
 
       - name: Remove obsolete blockmap assets

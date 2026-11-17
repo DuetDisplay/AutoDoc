@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
 import {
   MAC_SPEECH_MODELS,
+  downloadMacEnglishModel,
   downloadMacSpeechModels,
   getMacRouteFirstUseDownloadBytes,
+  macEnglishModelPath,
   macSpeechModelPath,
+  macSpeechModelSources,
   type MacSpeechModelDownloader
 } from '../mac-speech-models'
 
-vi.mock('electron', () => ({ app: { getPath: () => '/unused' } }))
+const { userData } = vi.hoisted(() => ({ userData: { path: '/unused' } }))
+vi.mock('electron', () => ({ app: { getPath: () => userData.path } }))
 const original = structuredClone(MAC_SPEECH_MODELS)
 let cache: string
 const contents = Buffer.from('model-fixture')
@@ -52,7 +56,7 @@ describe('Mac first-use model files', () => {
       const progress = vi.fn()
       await downloadMacSpeechModels(language, download, progress)
       expect(download).toHaveBeenCalledTimes(expectedFiles)
-      const urls = download.mock.calls.map(([url]) => url)
+      const urls = download.mock.calls.map(([sources]) => sources[0])
       const model = MAC_SPEECH_MODELS[language === 'fr' ? 'canary' : 'whisper-turbo']
       expect(urls).toContain(
         `https://huggingface.co/${model.repo}/resolve/${model.revision}/${model.files[0].name}`
@@ -70,6 +74,78 @@ describe('Mac first-use model files', () => {
   it('never downloads the English model through this path', async () => {
     await downloadMacSpeechModels('en', download, vi.fn())
     expect(download).not.toHaveBeenCalled()
+  })
+  it('offers ModelScope at its own commit, then hf-mirror, for the Chinese and English models', () => {
+    const { repo, revision } = MAC_SPEECH_MODELS['whisper-turbo']
+    expect(
+      macSpeechModelSources(MAC_SPEECH_MODELS['whisper-turbo'], 'weights.safetensors')
+    ).toEqual([
+      `https://huggingface.co/${repo}/resolve/${revision}/weights.safetensors`,
+      `https://modelscope.cn/models/${repo}/resolve/2ea465385494dbe25b7d5a2ec15f2c4fdfe3e33b/weights.safetensors`,
+      `https://hf-mirror.com/${repo}/resolve/${revision}/weights.safetensors`
+    ])
+    const english = MAC_SPEECH_MODELS.english
+    expect(macSpeechModelSources(english, 'weights.npz')[1]).toBe(
+      `https://modelscope.cn/models/${english.repo}/resolve/439c133f8a15e22a8b0745d332c54e990cffa196/weights.npz`
+    )
+  })
+  it('offers only hf-mirror for models that ModelScope does not have', () => {
+    const { repo, revision } = MAC_SPEECH_MODELS.canary
+    expect(macSpeechModelSources(MAC_SPEECH_MODELS.canary, 'model.safetensors')).toEqual([
+      `https://huggingface.co/${repo}/resolve/${revision}/model.safetensors`,
+      `https://hf-mirror.com/${repo}/resolve/${revision}/model.safetensors`
+    ])
+  })
+  it('tries every source for each file of a route', async () => {
+    await downloadMacSpeechModels('es', download, vi.fn())
+    for (const [sources] of download.mock.calls) expect(sources).toHaveLength(3)
+  })
+  describe('English model', () => {
+    beforeEach(() => {
+      userData.path = cache
+    })
+    it('downloads pinned files into the existing cache and reuses them', async () => {
+      const progress = vi.fn()
+      await downloadMacEnglishModel(download, progress)
+
+      expect(download).toHaveBeenCalledTimes(2)
+      const root = macEnglishModelPath()
+      expect(root).toBe(
+        join(
+          cache,
+          'models',
+          'mlx-whisper-cache',
+          'hub',
+          'models--mlx-community--distil-whisper-large-v3',
+          'snapshots',
+          MAC_SPEECH_MODELS.english.revision
+        )
+      )
+      expect(await readFile(join(root, 'weights.npz'))).toEqual(contents)
+      expect(progress.mock.calls.at(-1)).toEqual([100])
+
+      download.mockClear()
+      await downloadMacEnglishModel(download, vi.fn())
+      expect(download).not.toHaveBeenCalled()
+    })
+    it('marks a file the downloader verified from an earlier cache as ready', async () => {
+      const root = macEnglishModelPath()
+      await mkdir(root, { recursive: true })
+      await writeFile(join(root, 'weights.npz'), contents)
+      await writeFile(join(root, 'config.json'), contents)
+      // The real downloader hashes a file already on disk instead of fetching it.
+      const reuse = vi.fn<MacSpeechModelDownloader>(async () => {})
+
+      await downloadMacEnglishModel(reuse, vi.fn())
+      expect(reuse).toHaveBeenCalledTimes(2)
+
+      reuse.mockClear()
+      await downloadMacEnglishModel(reuse, vi.fn())
+      expect(reuse).not.toHaveBeenCalled()
+    })
+    it('does not count toward the first-use size of the route picker', async () => {
+      expect(await getMacRouteFirstUseDownloadBytes('en')).toBe(0)
+    })
   })
   it('keeps completed files for retry after an offline failure', async () => {
     download.mockImplementationOnce(async (_url, path, _sha, progress) => {

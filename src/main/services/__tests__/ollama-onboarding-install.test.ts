@@ -172,6 +172,10 @@ describe('Ollama onboarding dependency installation', () => {
 
   it('extracts the complete macOS Ollama runtime archive including llama-server', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-extract-'))
+    // Verified separately in ollama-runtime-download.test.ts; this test is about extraction.
+    vi.doMock('../resumable-download', () => ({
+      downloadVerifiedFile: vi.fn().mockResolvedValue('verified')
+    }))
 
     try {
       const { OllamaManager, execFileMock, execSyncMock } = await loadOllamaManager(
@@ -214,6 +218,7 @@ describe('Ollama onboarding dependency installation', () => {
       ).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
+      vi.doUnmock('../resumable-download')
       await rm(rootDir, { recursive: true, force: true })
     }
   })

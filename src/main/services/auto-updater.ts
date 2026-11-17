@@ -1,8 +1,9 @@
 import { autoUpdater } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { getConfiguredPublicUpdateFeedUrl } from './distribution-config'
+import { isTransientNetworkError } from './network-error-classification'
 import { isDiskFullError } from './disk-full'
 
 export interface UpdateStatus {
@@ -15,12 +16,14 @@ export interface UpdateStatus {
   installBlockedReason?: string
 }
 
+const INSTALL_STALL_TIMEOUT_MS = 60_000
 let currentStatus: UpdateStatus = { state: 'idle' }
 let errorResetToken = 0
 let prepareForInstall: (() => void) | undefined
 let onUpdateDownloaded: ((status: UpdateStatus) => void) | undefined
 let getInstallBlockReason: (() => string | undefined) | undefined
 let onInstallFailed: (() => void) | undefined
+let installStallTimer: ReturnType<typeof setTimeout> | undefined
 
 interface AutoUpdaterOptions {
   recordUpdateDownload?: (version: string) => void
@@ -81,18 +84,17 @@ function broadcast(status: UpdateStatus): void {
 }
 
 function reportUpdaterError(message: string, err: unknown): void {
+  clearTimeout(installStallTimer)
   if (currentStatus.state === 'installing') onInstallFailed?.()
   const error = normalizeUpdaterError(err)
   console.error(`${message}:`, err)
-  logAutodocFailure({
-    area: 'app',
-    message,
-    error,
-    context: {
-      channel: 'stable',
-      currentVersion: app.getVersion()
-    }
-  })
+  const context = { channel: 'stable', currentVersion: app.getVersion() }
+  // A failed check retries in 4 hours, but a failed install leaves the user without the update.
+  if (currentStatus.state !== 'installing' && isTransientNetworkError(error)) {
+    logAutodocEvent({ area: 'app', level: 'warn', message, context })
+  } else {
+    logAutodocFailure({ area: 'app', message, error, context })
+  }
   broadcast({
     state: 'error',
     error: formatUpdaterError(error),
@@ -248,6 +250,16 @@ export function installUpdate(): void {
     broadcast({ state: 'installing', version: currentStatus.version })
     prepareForInstall?.()
     autoUpdater.quitAndInstall()
+    // quitAndInstall can return without quitting or emitting an error, which would otherwise leave
+    // the app refusing new recordings until it is force quit.
+    clearTimeout(installStallTimer)
+    installStallTimer = setTimeout(() => {
+      if (currentStatus.state !== 'installing') onInstallFailed?.()
+      reportUpdaterError(
+        'Auto-updater install did not quit the app',
+        new Error('quitAndInstall returned without quitting')
+      )
+    }, INSTALL_STALL_TIMEOUT_MS)
   } catch (err) {
     reportUpdaterError('Auto-updater failed to install update', err)
   }

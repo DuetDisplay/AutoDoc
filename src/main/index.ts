@@ -38,6 +38,8 @@ import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { SafeQuitCoordinator } from './services/safe-quit'
+import { createSentryEventCap } from './services/sentry-event-cap'
+import { reportOllamaSetupFailure } from './services/ollama-setup-report'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
@@ -52,6 +54,7 @@ import {
   shouldSanitizeWindowsWriterRecords
 } from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
+import { useAskAiGenerationPriority } from './services/ask-ai-policy'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import {
   createOllamaRuntimeRecovery,
@@ -62,7 +65,8 @@ import { LocalProcessingCoordinator } from './services/local-processing-coordina
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
-import { registerChatIpc } from './ipc/chat-ipc'
+import { registerChatIpc, type OllamaRuntime } from './ipc/chat-ipc'
+import { MeetingIndexService } from './services/meeting-index'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import {
   PrefsStore,
@@ -130,6 +134,7 @@ import {
   installUpdate
 } from './services/auto-updater'
 import {
+  closeSentry,
   initSentryReporter,
   resetSentryScopes,
   setGlobalContext,
@@ -146,6 +151,7 @@ import {
   isOllamaPostWakeSchedulerActive,
   runOllamaWakeCheck
 } from './services/ollama-post-wake'
+import { createOllamaBackgroundRecovery } from './services/ollama-background-recovery'
 import { markOllamaResumed } from './services/ollama-resume'
 import {
   areBackgroundOllamaRestartsPaused,
@@ -322,6 +328,11 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 let ollamaManager: OllamaManager | null = null
 let ollamaPostWakeScheduler: ReturnType<typeof createOllamaPostWakeScheduler> | null = null
 let shutdownTranscriptionWorker: (() => void) | null = null
+let shutdownAskAiConversationHolds: () => void = () => {}
+let refreshAskAiPassageIndex: (
+  trigger: 'launch' | 'notes' | 'model',
+  model?: string
+) => void = () => {}
 let isQuitting = false
 let prepareRecordingQuit: () => Promise<void> = async () => {}
 let getUpdateInstallBlockReason: () => string | undefined = () =>
@@ -330,18 +341,28 @@ let prepareIdleUpdateInstall: () => void = () => {}
 let cancelIdleUpdateInstall: () => void = () => {}
 const safeQuit = new SafeQuitCoordinator({
   prepare: () => prepareRecordingQuit(),
+  onQuitAllowed: () => shutdownAskAiConversationHolds(),
   quit: () => app.quit(),
   onError: (error) => {
     isQuitting = false
+    cancelIdleUpdateInstall()
     logAutodocFailure({
       area: 'recording',
       message: 'Could not finish recording before quit',
       error
     })
     dialog.showErrorBox(tMain('quit.savingTitle'), tMain('quit.savingBody'))
+  },
+  onQuitStalled: () => {
+    logAutodocFailure({ area: 'app', message: 'AutoDoc did not exit after quitting; forcing exit' })
+    void flushAutodocLogWrites()
+      .then(() => closeSentry(2_000))
+      .catch(() => {})
+      .finally(() => app.exit(0))
   }
 })
 let mainSentry: MainSentryRuntimeModule | null = null
+const sentryEventCap = createSentryEventCap()
 let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
@@ -449,7 +470,7 @@ function initializeMainSentry(): void {
       integrations,
       beforeBreadcrumb: normalizeSentryBreadcrumb,
       beforeSend(event) {
-        if (!analyticsConsentEnabled) {
+        if (!analyticsConsentEnabled || !sentryEventCap.allow(event)) {
           return null
         }
         delete event.server_name
@@ -1137,6 +1158,7 @@ app.whenReady().then(async () => {
   // Set while the notes model is known not to load; the status stays failed until the
   // user retries, instead of reporting ready just because the serve answers.
   let ollamaModelLoadLatched = false
+  let ollamaHasBeenReady = false
 
   const markOllamaSetupReady = (): void => {
     if (ollamaModelLoadLatched) {
@@ -1149,6 +1171,7 @@ app.whenReady().then(async () => {
       }
       return
     }
+    ollamaHasBeenReady = true
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
@@ -1181,11 +1204,7 @@ app.whenReady().then(async () => {
     ollamaSetupState.failedStep =
       failedStep ?? (lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase)
     broadcastOllamaStatus()
-    logAutodocFailure({
-      area: 'ollama',
-      message: 'Failed to start managed Ollama server',
-      error: err
-    })
+    reportOllamaSetupFailure(err, ollamaSetupState.failedStep)
     console.error('Failed to start Ollama:', err)
   }
 
@@ -1193,7 +1212,14 @@ app.whenReady().then(async () => {
     process.platform === 'win32'
       ? new OllamaSetupCoordinator(managedOllamaManager, {
           retryDelaysMs: WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS,
-          onAttemptStart: markOllamaSetupStarting,
+          onAttemptStart: (attempt) => {
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama setup attempt started',
+              context: { attempt }
+            })
+            markOllamaSetupStarting()
+          },
           onFinalError: markOllamaSetupFailed,
           isCancellationError: isOllamaStartCancelledError
         })
@@ -1209,6 +1235,7 @@ app.whenReady().then(async () => {
   ): Promise<void> => {
     if (options.userInitiated) {
       ollamaRuntimeRecovery.clearModelLoadLatch()
+      ollamaBackgroundRecovery.resetBudget()
     }
     if (windowsOllamaSetupCoordinator) {
       return windowsOllamaSetupCoordinator.ensureRunning(options).then(() => {
@@ -1355,20 +1382,21 @@ app.whenReady().then(async () => {
       throw error
     }
   }
+  const isOllamaLifecycleEpochCurrent = (epoch: number): boolean => {
+    try {
+      managedOllamaManager.assertLifecycleEpoch(epoch)
+      return true
+    } catch {
+      return false
+    }
+  }
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     isServeStarting: () => managedOllamaManager.isServeStarting(),
     waitForStartingServe: () => managedOllamaManager.waitForStartingServe(),
     captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
-    isEpochCurrent: (epoch) => {
-      try {
-        managedOllamaManager.assertLifecycleEpoch(epoch)
-        return true
-      } catch {
-        return false
-      }
-    },
+    isEpochCurrent: isOllamaLifecycleEpochCurrent,
     isPaused: postWakePolicy.pauseEnabled ? areBackgroundOllamaRestartsPaused : undefined,
     delayMs: postWakePolicy.delayMs,
     retryDelaysMs: postWakePolicy.retryDelaysMs,
@@ -1380,6 +1408,20 @@ app.whenReady().then(async () => {
     if (isQuitting) return
     ollamaPostWakeScheduler?.scheduleAfterWake()
   }
+  const shouldDeferOllamaRestart = (): boolean =>
+    isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||
+    (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused())
+  const ollamaBackgroundRecovery = createOllamaBackgroundRecovery({
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
+    isStarting: () =>
+      managedOllamaManager.isServeStarting() ||
+      (windowsOllamaSetupCoordinator?.isSetupInFlight() ?? ollamaRecoveryPromise !== null),
+    captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
+    isEpochCurrent: isOllamaLifecycleEpochCurrent,
+    shouldDefer: () => isQuitting || ollamaModelLoadLatched || shouldDeferOllamaRestart(),
+    start: () => startOllama({ force: true })
+  })
+  managedOllamaManager.on('unexpected-exit', () => ollamaBackgroundRecovery.scheduleAfterExit())
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
     ...(process.platform === 'win32'
@@ -1403,10 +1445,15 @@ app.whenReady().then(async () => {
       managedOllamaManager.maybeRecycleBloatedRunners(meetingId),
     getNotesAccelerator: () => managedOllamaManager.getNotesAccelerator()
   }
-  const ollamaRuntime = {
+  const ollamaRuntime: Required<OllamaRuntime> = {
+    beginInteractiveRequest: () => managedOllamaManager.beginInteractiveRequest(),
     waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
-    getBaseUrl: () => managedOllamaManager.getBaseUrl()
+    getBaseUrl: () => managedOllamaManager.getBaseUrl(),
+    getAskAiModel: () => managedOllamaManager.getAskAiModel(),
+    getAskAiAvailability: () => managedOllamaManager.getAskAiAvailability(),
+    resolveAskAiAvailability: () => managedOllamaManager.resolveAskAiAvailability(),
+    on: (event, listener) => managedOllamaManager.on(event, listener)
   }
   const segmentationService = new SegmentationService(
     notesOllamaProvider,
@@ -1644,6 +1691,7 @@ app.whenReady().then(async () => {
   }
   let githubStarPromptService: GithubStarPromptService | null = null
   segmentationService.onComplete((meetingId) => {
+    refreshAskAiPassageIndex('notes')
     void githubStarPromptService?.recordCompletedMeeting(meetingId)
     const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
     void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, { allowRepeat })
@@ -2295,7 +2343,14 @@ app.whenReady().then(async () => {
     managedOllamaManager,
     ollamaProvider,
     () => ({ ...ollamaSetupState }),
-    ensureOllamaRunning,
+    (options) => {
+      // First-run setup keeps retrying freely; a server that was ready shares the restart budget.
+      if (options?.force && !options.userInitiated && ollamaHasBeenReady) {
+        ollamaBackgroundRecovery.requestFromPoll()
+      } else {
+        ensureOllamaRunning(options)
+      }
+    },
     !windowsOllamaSetupCoordinator,
     (meetingId) => {
       clearDiskFullHold(meetingId)
@@ -2304,9 +2359,7 @@ app.whenReady().then(async () => {
       markReprocessNotificationPending(meetingId)
     },
     recordingService.getRecordingsBaseDir(),
-    () =>
-      isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||
-      (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused())
+    shouldDeferOllamaRestart
   )
   let preparedMeetingLanguage = 'en'
   // A failed preparation must read as an error, not as "checking", so the
@@ -2345,14 +2398,44 @@ app.whenReady().then(async () => {
       preparedMeetingLanguage = language
     }
   )
-  registerSearchIpc(recordingService.getRecordingsBaseDir())
-  registerChatIpc(
+  const meetingIndex = new MeetingIndexService(recordingService.getRecordingsBaseDir())
+  registerSearchIpc(recordingService.getRecordingsBaseDir(), meetingIndex)
+  const chatCleanup = registerChatIpc(
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
     calendarManager,
-    () => prefsStore.getMeetingLanguage()
+    () => prefsStore.getMeetingLanguage(),
+    {
+      meetingIndex,
+      getWriterContextTokens: () => notesOllamaProvider.getGenerationContextTokens(),
+      getPendingNotesIds: () => segmentationService.getPendingMeetingIds(),
+      isProcessing: () =>
+        transcriptionService.hasActiveOrQueuedWork() ||
+        (segmentationService.hasActiveOrQueuedWork() &&
+          !segmentationService.isHeldForInteractiveAnswer()),
+      acquireGenerationPriority: async (signal) => {
+        if (
+          !useAskAiGenerationPriority() ||
+          recordingService.getState().isRecording ||
+          transcriptionService.hasActiveOrQueuedWork()
+        )
+          return undefined
+        return segmentationService.holdForInteractiveAnswer(signal)
+      },
+      canWarmup: () =>
+        !recordingService.hasActiveCapture() &&
+        !transcriptionService.hasActiveOrQueuedWork() &&
+        !segmentationService.hasActiveOrQueuedWork() &&
+        localProcessingCoordinator.getActiveKind() == null
+    }
   )
+  shutdownAskAiConversationHolds = chatCleanup
+  refreshAskAiPassageIndex = chatCleanup.indexChanged
+  managedOllamaManager.on('pull-complete', (model: string) =>
+    refreshAskAiPassageIndex('model', model)
+  )
+  app.on('will-quit', shutdownAskAiConversationHolds)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()
@@ -2400,6 +2483,8 @@ app.whenReady().then(async () => {
     })
     console.error('Encryption migration failed:', err)
   }
+
+  refreshAskAiPassageIndex('launch')
 
   registerPrefsIpc(
     prefsStore,

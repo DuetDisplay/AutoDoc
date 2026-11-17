@@ -85,34 +85,37 @@ Calendar OAuth and downloadable runtimes require self-hosting config — see
 
 ## Release announcements
 
-The **Update README Release** workflow opens or updates a documentation PR
-with a one-line teaser generated from the latest published stable GitHub
-release notes. It uses the opening summary and feature headings, removes
-product boilerplate and example lists, and limits the teaser to 16 words and
-120 characters. Review the generated wording in the PR. The full release
-notes remain available through `/releases/latest`; no separate summary or
-AI-service credentials are required.
+For each public release, add `release-notes/vX.Y.Z.md` to the release PR and
+bump the version in `package.json`. Start the notes with a short summary; the
+README teaser uses the first sentence and is limited to 16 words and fewer
+than 120 characters. The **Prepare release README** workflow generates the
+announcement on the release branch using the same script as the post-release
+sync. The announcement is reviewed with the release PR.
 
-Publishing or editing a release triggers the workflow. A successful
-**Build & Release** run also triggers it because releases published with the
-repository's `GITHUB_TOKEN` do not trigger another release-event workflow.
-It always reads the latest stable release, so editing an older release cannot
-roll the README back. Drafts, prereleases, and release notes without a summary
-or feature headings leave the existing announcement intact. When the source
-phrases are too long, it uses a short release-notes invitation rather than
-cutting a claim mid-sentence.
+The release workflow uses that file as the GitHub release body when it creates
+a release. When a release already exists, its notes are left intact. Keep the
+file and any manually created release notes in sync to avoid a follow-up README
+PR. The release publisher uses the file from the validated release commit.
 
-Review and merge the generated PR through the normal protected-branch
-process. GitHub Actions must be allowed to create pull requests in the
-repository's workflow permissions. The default token may require approval
-to start the generated PR's CI runs. An optional `RELEASE_DOCS_TOKEN` secret
-containing a fine-grained personal access token with Contents and Pull
-requests write access can create the PR without that additional CI approval.
+The preparation workflow only handles same-repository PRs that increase the
+package version and contain the corresponding notes file. It executes scripts
+from the trusted base branch and writes only `README.md` to the release branch.
+Configure `RELEASE_DOCS_TOKEN` with Contents write access for the bot commit to
+trigger normal PR checks; without it, GitHub's default token may not trigger
+those checks, and they may need to be run separately.
+
+The **Update README Release** workflow remains a fallback for releases
+published or edited outside this process. It reads the latest published stable
+release and opens a PR when its announcement differs. A newer prepared README
+announcement is retained until that release is published. Drafts and
+prereleases do not update it. Both workflows preserve the surrounding README
+and use `/releases/latest` for download and release-note links.
 
 Only the text between `latest-release:start` and `latest-release:end` in
-`README.md` is generated. Keep feature descriptions, requirements, known
-issues, the changelog date, and the website consistent with each release.
-The sync can also be run locally with a GitHub release API response:
+`README.md` is managed by the release announcement scripts. Keep feature
+descriptions, requirements, known issues, the changelog date, and the website
+consistent with each release. To run the sync locally with a release API
+response:
 
 ```bash
 node scripts/sync-readme-release.mjs --release-json /path/to/release.json

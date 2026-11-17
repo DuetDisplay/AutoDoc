@@ -145,7 +145,8 @@ describe.skipIf(!LIVE)('Ask AI FRESH usability probe (hybrid)', () => {
       {
         waitUntilReady: vi.fn().mockResolvedValue(undefined),
         isServerRunning: vi.fn().mockResolvedValue(true),
-        getBaseUrl: () => BASE_URL
+        getBaseUrl: () => BASE_URL,
+        getAskAiModel: () => MODEL
       } as never,
       { getModel: () => MODEL } as never,
       {

@@ -1,5 +1,4 @@
 import { app } from 'electron'
-import { createHash } from 'crypto'
 import {
   access,
   mkdir,
@@ -11,7 +10,6 @@ import {
   chmod,
   mkdtemp,
   writeFile,
-  rename,
   stat
 } from 'fs/promises'
 import { basename, delimiter, dirname, join, sep } from 'path'
@@ -74,12 +72,21 @@ import {
   type MeetingLanguageReasonCode
 } from '../../shared/meeting-language'
 import {
+  downloadMacEnglishModel,
   downloadMacSpeechModels,
   getMacRouteFirstUseDownloadBytes,
   MAC_SPEECH_MODELS,
+  macEnglishModelPath,
   macSpeechModelCacheDir,
-  macSpeechModelPath
+  macSpeechModelPath,
+  type MacSpeechModelDownloader
 } from './mac-speech-models'
+import {
+  downloadResumableFile,
+  downloadVerifiedFile,
+  verifyFileSha256,
+  type DownloadProgress
+} from './resumable-download'
 import { resolveMacCanaryTranscriber } from './mac-canary-transcription'
 import {
   installWindowsTranscriptionAsset,
@@ -94,6 +101,7 @@ const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'
 // Pinned release versions for reproducibility
 const WHISPER_VERSION = 'v1.8.4'
 const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_VERSION}/whisper-bin-x64.zip`
+const WHISPER_WIN_SHA256 = '74f973345cb52ef5ba3ec9e7e7af8e48cc8c71722d1528603b80588a11f82e3e'
 const FFMPEG_WIN_URL =
   'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
@@ -129,14 +137,6 @@ function isSha256Hex(value: string | undefined): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
 }
 
-function parseHttpContentRangeTotal(value: string | null): number | null {
-  if (!value) return null
-  const match = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(value.trim())
-  if (!match) return null
-  const total = Number(match[1])
-  return Number.isFinite(total) && total > 0 ? total : null
-}
-
 type WhisperUsabilityResult =
   | 'ready'
   | 'missing-assets'
@@ -144,10 +144,14 @@ type WhisperUsabilityResult =
   | 'runtime-link-failure'
   | 'failed'
 
+const WHISPER_BASE_MODEL_PATH =
+  'ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin'
 const DEFAULT_MODEL = IS_WIN
   ? {
       filename: 'ggml-base.en.bin',
-      downloadUrl: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin'
+      downloadUrl: `https://huggingface.co/${WHISPER_BASE_MODEL_PATH}`,
+      sha256: 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002',
+      fallbackUrls: [`https://hf-mirror.com/${WHISPER_BASE_MODEL_PATH}`]
     }
   : {
       filename: 'ggml-large-v3.bin',
@@ -157,6 +161,8 @@ const DEFAULT_MODEL = IS_WIN
 export interface WhisperModelInfo {
   filename: string
   downloadUrl: string
+  sha256?: string
+  fallbackUrls?: readonly string[]
 }
 
 export type TranscriptionBackendId = WindowsTranscriptionBackendId | 'mlx-whisper'
@@ -172,12 +178,7 @@ export interface WindowsEngineRuntime {
   scriptPath: string | null
 }
 
-export interface DownloadProgress {
-  file: string
-  percent: number
-  bytesDownloaded: number
-  bytesTotal: number
-}
+export type { DownloadProgress }
 
 interface MacWhisperRuntimeAsset {
   filename: string
@@ -410,7 +411,7 @@ export class WhisperManager extends EventEmitter {
   }
 
   getMlxWhisperModelRef(): string {
-    return process.env.AUTODOC_MLX_WHISPER_MODEL ?? MLX_WHISPER_MODEL
+    return process.env.AUTODOC_MLX_WHISPER_MODEL ?? macEnglishModelPath()
   }
 
   getMlxWhisperScriptPath(): string {
@@ -461,6 +462,9 @@ export class WhisperManager extends EventEmitter {
       HF_HOME: this.getMlxWhisperCacheDir(),
       HF_HUB_CACHE: join(this.getMlxWhisperCacheDir(), 'hub'),
       TRANSFORMERS_CACHE: join(this.getMlxWhisperCacheDir(), 'transformers'),
+      ...(process.env.AUTODOC_MLX_WHISPER_MODEL
+        ? {}
+        : { HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }),
       PYTHONDONTWRITEBYTECODE: '1'
     }
   }
@@ -935,7 +939,7 @@ export class WhisperManager extends EventEmitter {
   }
 
   private getMlxWhisperCacheDir(): string {
-    return join(app.getPath('userData'), 'models', 'mlx-whisper-cache')
+    return macSpeechModelCacheDir('english')
   }
 
   private getFasterWhisperRuntimeDir(profile = this.getSelectedWindowsProfile()): string {
@@ -1350,20 +1354,10 @@ export class WhisperManager extends EventEmitter {
           backendLabel: canary ? 'Canary' : 'Whisper turbo'
         }
         this.emit('setup-status', this.getSetupStatus())
-        await downloadMacSpeechModels(
-          language,
-          async (url, path, sha256, progress) => {
-            await this.downloadWithRetry(async () => {
-              await this.downloadFile(url, path, 'speech model', progress, undefined, {
-                expectedSha256: sha256
-              })
-            }, 'model')
-          },
-          (percent) => {
-            this.setupStatus = { ...this.setupStatus, percent }
-            this.emit('setup-status', this.getSetupStatus())
-          }
-        )
+        await downloadMacSpeechModels(language, this.downloadMacModelFile, (percent) => {
+          this.setupStatus = { ...this.setupStatus, percent }
+          this.emit('setup-status', this.getSetupStatus())
+        })
       } else {
         throw new Error(
           'This meeting language needs an Apple Silicon Mac or a supported Windows PC.'
@@ -1551,6 +1545,11 @@ export class WhisperManager extends EventEmitter {
           await this.ensureMlxWhisperReady()
           return
         } catch (err) {
+          // A failed download needs a retry, not another engine: whisper.cpp needs the network too.
+          const reason = classifyMacLanguageSetupError(err)
+          if (reason === 'setup-download-failed' || reason === 'setup-verification-failed') {
+            throw err
+          }
           logAutodocFailure({
             area: 'whisper',
             message: 'MLX Whisper setup failed; falling back to whisper.cpp',
@@ -1914,6 +1913,28 @@ export class WhisperManager extends EventEmitter {
     this.emit('setup-status', this.getSetupStatus())
   }
 
+  private readonly downloadMacModelFile: MacSpeechModelDownloader = async (
+    [url, ...fallbackUrls],
+    path,
+    sha256,
+    progress
+  ) => {
+    await this.downloadWithRetry(async () => {
+      await this.downloadFile(url, path, 'speech model', progress, undefined, {
+        expectedSha256: sha256,
+        fallbackUrls
+      })
+    }, 'model')
+  }
+
+  private async ensureMacEnglishModel(): Promise<void> {
+    if (process.env.AUTODOC_MLX_WHISPER_MODEL) return
+    await downloadMacEnglishModel(this.downloadMacModelFile, (percent) => {
+      this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent })
+      this.emit('setup-status', this.getSetupStatus())
+    })
+  }
+
   private async ensureMlxWhisperReady(): Promise<void> {
     await this.ensureFfmpegForSelectedRuntime()
     await mkdir(this.getMlxWhisperCacheDir(), { recursive: true })
@@ -1940,12 +1961,15 @@ export class WhisperManager extends EventEmitter {
       throw new Error('Bundled MLX Whisper bridge script is missing from this app package.')
     }
 
+    await this.ensureMacEnglishModel()
+
     this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
     this.emit('setup-status', this.getSetupStatus())
 
     let isUsable = await this.isMlxWhisperUsableWithRetry()
     if (!isUsable) {
       await this.recoverFromMlxProbeValidationFailure()
+      await this.ensureMacEnglishModel()
       isUsable = await this.isMlxWhisperUsableWithRetry()
     }
 
@@ -2082,7 +2106,7 @@ export class WhisperManager extends EventEmitter {
             { expectedSha256: part.sha256 }
           )
           if (!partSha256) {
-            await this.verifyFileSha256(partPath, part.sha256, part.filename)
+            await verifyFileSha256(partPath, part.sha256, part.filename)
           }
           completedBytes += part.bytes
         }
@@ -2119,8 +2143,7 @@ export class WhisperManager extends EventEmitter {
       }
 
       const actualSha256 =
-        verifiedArchiveSha256 ??
-        (await this.verifyFileSha256(archivePath, asset.sha256, asset.filename))
+        verifiedArchiveSha256 ?? (await verifyFileSha256(archivePath, asset.sha256, asset.filename))
       const archiveStats = await stat(archivePath)
       if (this.inFirstRunSetup) {
         this.firstRunDownloadedBytes += archiveStats.size
@@ -2259,36 +2282,6 @@ export class WhisperManager extends EventEmitter {
     }
 
     return missingFiles
-  }
-
-  private async verifyFileSha256(
-    filePath: string,
-    expectedSha256: string,
-    label: string
-  ): Promise<string> {
-    if (!/^[a-f0-9]{64}$/i.test(expectedSha256)) {
-      throw new Error(`Missing or invalid SHA256 for ${label}.`)
-    }
-
-    const actualSha256 = await this.hashFileSha256(filePath)
-    if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
-      await rm(filePath, { force: true })
-      throw new Error(
-        `Downloaded ${label} failed SHA256 verification: expected ${expectedSha256}, received ${actualSha256}.`
-      )
-    }
-    return actualSha256
-  }
-
-  private hashFileSha256(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const hash = createHash('sha256')
-      const stream = createReadStream(filePath)
-
-      stream.on('data', (chunk) => hash.update(chunk))
-      stream.on('error', reject)
-      stream.on('end', () => resolve(hash.digest('hex')))
-    })
   }
 
   private async recoverFromProbeValidationFailure(): Promise<void> {
@@ -2449,10 +2442,17 @@ export class WhisperManager extends EventEmitter {
     const modelsDir = this.getModelsDir()
     const zipPath = join(modelsDir, 'whisper.zip')
 
-    await this.downloadFile(WHISPER_WIN_URL, zipPath, 'whisper-cli', (p) => {
-      this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: p })
-      this.emit('setup-status', this.getSetupStatus())
-    })
+    await this.downloadFile(
+      WHISPER_WIN_URL,
+      zipPath,
+      'whisper-cli',
+      (p) => {
+        this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: p })
+        this.emit('setup-status', this.getSetupStatus())
+      },
+      undefined,
+      { expectedSha256: WHISPER_WIN_SHA256 }
+    )
 
     const extractDir = join(modelsDir, '_whisper_extract')
     await mkdir(extractDir, { recursive: true })
@@ -2614,7 +2614,7 @@ export class WhisperManager extends EventEmitter {
       this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: p })
       this.emit('setup-status', this.getSetupStatus())
     })
-    const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+    const actualSha256 = await verifyFileSha256(archivePath, asset.sha256, asset.filename)
     const archiveStats = await stat(archivePath)
 
     logAutodocEvent({
@@ -3376,23 +3376,17 @@ export class WhisperManager extends EventEmitter {
 
   private async downloadModel(): Promise<void> {
     const model = this.getModelInfo()
-    await this.downloadFile(model.downloadUrl, this.getModelPath(), model.filename, (p) => {
-      this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: p })
-      this.emit('setup-status', this.getSetupStatus())
-    })
-  }
-
-  private async closeFileStream(fileStream: ReturnType<typeof createWriteStream>): Promise<void> {
-    if (fileStream.writableFinished || fileStream.destroyed) {
-      return
-    }
-
-    const finished = new Promise<void>((resolve, reject) => {
-      fileStream.once('finish', resolve)
-      fileStream.once('error', reject)
-    })
-    fileStream.end()
-    await finished
+    await this.downloadFile(
+      model.downloadUrl,
+      this.getModelPath(),
+      model.filename,
+      (p) => {
+        this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: p })
+        this.emit('setup-status', this.getSetupStatus())
+      },
+      undefined,
+      { expectedSha256: model.sha256, fallbackUrls: model.fallbackUrls }
+    )
   }
 
   private async downloadFile(
@@ -3401,172 +3395,32 @@ export class WhisperManager extends EventEmitter {
     label: string,
     onProgress?: (percent: number) => void,
     init?: RequestInit,
-    options?: { expectedSha256?: string }
+    options?: { expectedSha256?: string; fallbackUrls?: readonly string[] }
   ): Promise<string | null> {
-    const expectedSha256 = options?.expectedSha256
-    if (isSha256Hex(expectedSha256) && (await this.fileExists(destPath))) {
-      try {
-        return await this.verifyFileSha256(destPath, expectedSha256, label)
-      } catch {
-        // Mismatch deletes destPath; fetch a replacement once below.
-      }
-    }
-
-    const canResume = isSha256Hex(expectedSha256)
-    await this.downloadResumableFile(url, destPath, label, onProgress, init, { resume: canResume })
-
-    if (!canResume) {
-      return null
-    }
-
-    try {
-      return await this.verifyFileSha256(destPath, expectedSha256, label)
-    } catch {
-      await rm(`${destPath}.tmp`, { force: true })
-      await this.downloadResumableFile(url, destPath, label, onProgress, init, { resume: true })
-      return await this.verifyFileSha256(destPath, expectedSha256, label)
-    }
-  }
-
-  private async downloadResumableFile(
-    url: string,
-    destPath: string,
-    label: string,
-    onProgress?: (percent: number) => void,
-    init?: RequestInit,
-    options?: { resume?: boolean }
-  ): Promise<void> {
     // Only downloads that belong to a language setup can be superseded.
     const setupSignal = this.activeSetupLanguage ? this.activeSetupAbort?.signal : undefined
-    if (!setupSignal) {
-      return this.downloadResumableFileOnce(url, destPath, label, onProgress, init, options)
+    const signal =
+      setupSignal && init?.signal ? AbortSignal.any([init.signal, setupSignal]) : setupSignal
+    const downloadOptions = {
+      onProgress,
+      onBytes: (progress: DownloadProgress) => this.emit('download-progress', progress),
+      init: signal ? { ...init, signal } : init
     }
-    const signal = init?.signal ? AbortSignal.any([init.signal, setupSignal]) : setupSignal
+    const expectedSha256 = options?.expectedSha256
     try {
-      return await this.downloadResumableFileOnce(
-        url,
-        destPath,
-        label,
-        onProgress,
-        { ...init, signal },
-        options
-      )
-    } catch (err) {
-      if (setupSignal.aborted) throw new MeetingLanguageSetupSuperseded()
-      throw err
-    }
-  }
-
-  private async downloadResumableFileOnce(
-    url: string,
-    destPath: string,
-    label: string,
-    onProgress?: (percent: number) => void,
-    init?: RequestInit,
-    options?: { resume?: boolean }
-  ): Promise<void> {
-    const tempPath = `${destPath}.tmp`
-    const resume = options?.resume === true
-    let existingBytes = 0
-    if (resume) {
-      try {
-        const info = await stat(tempPath)
-        if (info.size > 0) {
-          existingBytes = info.size
-        }
-      } catch {
-        existingBytes = 0
-      }
-    } else {
-      await rm(tempPath, { force: true })
-    }
-
-    const headers = new Headers(init?.headers)
-    if (existingBytes > 0) {
-      headers.set('Range', `bytes=${existingBytes}-`)
-    }
-
-    let response = await fetch(url, { redirect: 'follow', ...init, headers })
-
-    if (existingBytes > 0 && response.status === 416) {
-      await rm(tempPath, { force: true })
-      existingBytes = 0
-      headers.delete('Range')
-      response = await fetch(url, { redirect: 'follow', ...init, headers })
-    }
-
-    if (existingBytes > 0 && response.status !== 206) {
-      await rm(tempPath, { force: true })
-      existingBytes = 0
-    }
-
-    if (!response.ok) {
-      throw new Error(`Failed to download ${label}: ${response.status} ${response.statusText}`)
-    }
-
-    const contentLength = Number(response.headers.get('content-length') ?? 0)
-    const rangeTotal = parseHttpContentRangeTotal(response.headers.get('content-range'))
-    const totalBytes =
-      rangeTotal ??
-      (existingBytes > 0 && contentLength > 0 ? existingBytes + contentLength : contentLength)
-    let downloadedBytes = 0
-    let lastReportedPercent: number | undefined
-    const reportProgress = (percent: number): void => {
-      if (percent === lastReportedPercent) return
-      lastReportedPercent = percent
-      onProgress?.(percent)
-    }
-
-    const fileStream = createWriteStream(tempPath, { flags: existingBytes > 0 ? 'a' : 'w' })
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error(`No response body for ${label}`)
-
-    try {
-      // Unknown-size downloads stay indeterminate; callers signal completion by phase.
-      if (totalBytes <= 0) reportProgress(0)
-      while (true) {
-        if (this.activeSetupLanguage && this.activeSetupAbort?.signal.aborted) {
-          // Keep the partial file: a verified download resumes if this language is picked again.
-          void reader.cancel().catch(() => {})
-          throw new MeetingLanguageSetupSuperseded()
-        }
-        const { done, value } = await reader.read()
-        if (done) break
-        if (!fileStream.write(value)) {
-          await once(fileStream, 'drain')
-        }
-        downloadedBytes += value.length
-        const completedBytes = existingBytes + downloadedBytes
-        const percent = totalBytes > 0 ? Math.round((completedBytes / totalBytes) * 100) : 0
-        reportProgress(percent)
-        this.emit('download-progress', {
-          file: label,
-          percent,
-          bytesDownloaded: completedBytes,
-          bytesTotal: totalBytes
-        } as DownloadProgress)
-      }
-
-      if (totalBytes > 0) reportProgress(100)
-      fileStream.end()
-      await new Promise<void>((resolve, reject) => {
-        fileStream.on('finish', resolve)
-        fileStream.on('error', reject)
-      })
-
-      if (contentLength > 0 && downloadedBytes !== contentLength) {
-        throw new Error(
-          `Downloaded ${label} was incomplete: expected ${contentLength} bytes, received ${downloadedBytes}.`
+      if (isSha256Hex(expectedSha256)) {
+        return await downloadVerifiedFile(
+          [url, ...(options?.fallbackUrls ?? [])],
+          destPath,
+          expectedSha256,
+          label,
+          downloadOptions
         )
       }
-
-      await rm(destPath, { force: true })
-      await rename(tempPath, destPath)
+      await downloadResumableFile(url, destPath, label, downloadOptions)
+      return null
     } catch (err) {
-      await this.closeFileStream(fileStream)
-      if (!resume) {
-        await rm(tempPath, { force: true })
-      }
+      if (setupSignal?.aborted) throw new MeetingLanguageSetupSuperseded()
       throw err
     }
   }

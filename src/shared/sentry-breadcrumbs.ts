@@ -71,7 +71,8 @@ export function normalizeSentryBreadcrumb<T extends BreadcrumbLike>(breadcrumb: 
     return null
   }
 
-  if (category === 'ui.click') {
+  // Sentry's DOM selectors can include title attributes, which can hold meeting titles.
+  if (category === 'ui.click' || category === 'ui.input') {
     return null
   }
 

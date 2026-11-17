@@ -22,7 +22,7 @@ AutoDoc is an open-source, local-first meeting notes app for macOS and Windows. 
 
 <!-- latest-release:start -->
 
-**New in v1.3.3:** Dark Mode and UI localization in 27 languages, plus bug and security fixes. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
+**New in v1.3.4:** a faster Ask AI beta with links to meeting moments, plus recording and privacy fixes. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
 
 <!-- latest-release:end -->
 
@@ -114,6 +114,22 @@ Transcription on Mac is built on [MLX](https://github.com/ml-explore/mlx) and re
 
 **Lower-spec computers.** 8 GB Macs and 8 GB Windows PCs (including ones with a GPU) are English-only and use the smaller `llama3.2:3b` notes model with sequential audio processing and notes after transcription, so expect a longer wait after the meeting. Windows CPU-only machines with fewer than 8 logical processors or under 16 GB of RAM get the same English-only, lower-impact profile. A GPU does not replace RAM headroom. Settings shows which languages are available on your computer, and the [meeting language list](https://getautodoc.com/faq#languages) covers language-specific requirements.
 
+**Ask AI (beta)** appears only on computers that use the `qwen3:4b-instruct` model with GPU acceleration: Apple Silicon, or on Windows a GPU that Ollama can use through CUDA or Vulkan. Lower-spec computers don't show Ask AI and skip its downloads.
+
+### Downloading in mainland China
+
+Hugging Face is blocked in mainland China. On a Mac, AutoDoc falls back to [ModelScope](https://modelscope.cn) and [hf-mirror](https://hf-mirror.com) automatically, and checks every file against a pinned SHA-256 hash. There is nothing to configure.
+
+Some downloads have no alternate source yet, and can be slow or fail if GitHub is hard to reach:
+
+- **Ollama runtime (macOS and Windows)** and **Windows speech models** come from GitHub. Interrupted downloads resume when you retry.
+- **The AI notes model** comes from the Ollama registry.
+
+If you have a proxy, these settings can help. Set them where AutoDoc can see them: apps opened from Finder don't inherit shell exports, so on macOS use `launchctl setenv NAME value`, and on Windows use `setx NAME value`. Then restart AutoDoc.
+
+- `HTTPS_PROXY` routes Ollama's own downloads, including the notes model, through your proxy.
+- `AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL` points Windows speech downloads at your own copy of the `windows-transcription-v3` [release assets](https://github.com/DuetDisplay/AutoDoc/releases).
+
 ## Build from source
 
 AutoDoc is an Electron + electron-vite app. To build it yourself:
@@ -152,7 +168,8 @@ AutoDoc is a single Electron app. The **main process** owns recording, the trans
 |---|---|---|
 | **English transcription** | MLX Whisper `distil-large-v3` | Parakeet TDT 0.6B v3, DirectML GPU or CPU-optimized |
 | **Other languages** | Canary or Whisper large-v3-turbo | Canary or Whisper large-v3-turbo |
-| **Notes and Ask AI answers** | `qwen3:4b-instruct` by default; `llama3.2:3b` on lower-spec machines | `qwen3:4b-instruct` by default; `llama3.2:3b` on lower-spec machines |
+| **Notes** | `qwen3:4b-instruct` by default; `llama3.2:3b` on lower-spec machines | `qwen3:4b-instruct` by default; `llama3.2:3b` on lower-spec machines |
+| **Ask AI answers** | `qwen3:4b-instruct` | `qwen3:4b-instruct` |
 | **Ask AI search embeddings** | `qwen3-embedding:0.6b` | `qwen3-embedding:0.6b` |
 
 <details>

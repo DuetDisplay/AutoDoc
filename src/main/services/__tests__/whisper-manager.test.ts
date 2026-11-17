@@ -256,7 +256,7 @@ describe('WhisperManager', () => {
       const internals = manager as unknown as {
         activeSetupLanguage: string
         activeSetupAbort: AbortController
-        downloadResumableFile: (url: string, dest: string, label: string) => Promise<void>
+        downloadFile: (url: string, dest: string, label: string) => Promise<void>
       }
       internals.activeSetupLanguage = 'fr'
       internals.activeSetupAbort = new AbortController()
@@ -264,7 +264,7 @@ describe('WhisperManager', () => {
         (await import('os')).tmpdir(),
         `autodoc-abort-test-${process.pid}-${Date.now()}.bin`
       )
-      const download = internals.downloadResumableFile('https://example.test/model', dest, 'model')
+      const download = internals.downloadFile('https://example.test/model', dest, 'model')
       const rejected = expect(download).rejects.toThrow('Meeting language changed during setup')
       await vi.waitFor(() => expect(fetch).toHaveBeenCalled())
       internals.activeSetupAbort.abort()

@@ -1,3 +1,4 @@
+import { askAiCountFilterCopy } from '../../../renderer/src/services/ask-ai-count-copy'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import ts from 'typescript'
@@ -71,6 +72,39 @@ describe('complete UI localization', () => {
       visit(source)
     }
     expect(failures).toEqual([])
+  })
+
+  it('localizes current and saved native count filters without changing writer history', () => {
+    const filterDescription =
+      'attached saved recordings on or after 2026-09-01, on or before 2026-09-30, with all title terms "Atlas", with participant terms "Mira", whose notes or transcript contain all keyword terms "budget"'
+    const summary = {
+      count: 2,
+      filterDescription,
+      scoped: true,
+      filter: {
+        from: '2026-09-01',
+        through: '2026-09-30',
+        title: 'Atlas',
+        participant: 'Mira',
+        keyword: 'budget'
+      }
+    }
+    const original = JSON.stringify(summary)
+    for (const language of UI_LANGUAGE_CODES) {
+      const t = (key: keyof typeof en, params?: Record<string, string | number>) =>
+        translate(language, key, params)
+      const displayed = askAiCountFilterCopy(summary, t, language)
+      expect(displayed).toBe(askAiCountFilterCopy({ count: 2, filterDescription }, t, language))
+      if (language === 'en') expect(displayed).toBe(filterDescription)
+      else {
+        expect(displayed).not.toContain('saved recordings')
+        expect(displayed).not.toContain('on or after')
+        expect(displayed).toContain('Atlas')
+        expect(displayed).toContain('Mira')
+        expect(displayed).toContain('budget')
+      }
+    }
+    expect(JSON.stringify(summary)).toBe(original)
   })
 
   it('uses the correct Russian plural category beyond a singular-versus-plural split', () => {

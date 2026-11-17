@@ -1,125 +1,23 @@
 import { ipcMain } from 'electron'
-import { readdir, readFile, stat } from 'fs/promises'
-import { join } from 'path'
-import type { Transcript } from '../../shared/types'
-import { decryptJSON, isEncrypted } from '../services/crypto'
-import { meetingSegmentsFromDisk } from '../services/writer-catalog'
-import { readMetadata } from '../services/calendar-matcher'
-import {
-  collectNotesV2SearchEntries,
-  matchNotesV2SearchEntries
-} from '../services/notes-search-text'
-import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
-import { getMainUiLanguage } from '../services/ui-locale'
+import { MeetingIndexService } from '../services/meeting-index'
 
 export interface SearchResult {
   meetingId: string
   title: string
   date: number
-  matches: { type: 'transcript' | 'segment'; text: string; category?: string }[]
+  matches: { type: 'transcript' | 'segment'; text: string; category?: string; startMs?: number }[]
 }
 
-export function registerSearchIpc(recordingsBaseDir: string): void {
+export function registerSearchIpc(
+  recordingsBaseDir: string,
+  meetingIndex: MeetingIndexService = new MeetingIndexService(recordingsBaseDir)
+): void {
   ipcMain.handle('search:query', async (_event, query: string): Promise<SearchResult[]> => {
-    const language = getMainUiLanguage()
     if (!query.trim()) return []
+    return meetingIndex.query(query)
+  })
 
-    const terms = query.toLowerCase().split(/\s+/)
-    let dirs: string[]
-    try {
-      dirs = await readdir(recordingsBaseDir)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    }
-
-    const results: SearchResult[] = []
-
-    for (const meetingId of dirs) {
-      const meetingDir = join(recordingsBaseDir, meetingId)
-      const dirStat = await stat(meetingDir).catch(() => null)
-      if (!dirStat?.isDirectory()) continue
-
-      const matches: SearchResult['matches'] = []
-
-      // Search transcripts
-      try {
-        const tPath = join(meetingDir, 'transcript.json')
-        const transcripts: Transcript[] = (await isEncrypted(tPath))
-          ? await decryptJSON<Transcript[]>(tPath)
-          : JSON.parse(await readFile(tPath, 'utf-8'))
-        for (const seg of transcripts) {
-          const lower = seg.text.toLowerCase()
-          if (terms.every((t) => lower.includes(t))) {
-            matches.push({ type: 'transcript', text: seg.text })
-          }
-        }
-      } catch {
-        /* no transcript */
-      }
-
-      // Prefer V2 notes when present so Search matches the document on the Notes tab.
-      let usedV2Notes = false
-      try {
-        const nPath = join(meetingDir, 'notes.json')
-        const notes = (await isEncrypted(nPath))
-          ? await decryptJSON<unknown>(nPath)
-          : JSON.parse(await readFile(nPath, 'utf-8'))
-        const entries = collectNotesV2SearchEntries(notes)
-        if (entries.length > 0) {
-          usedV2Notes = true
-          matches.push(...matchNotesV2SearchEntries(entries, terms))
-        }
-      } catch {
-        /* no V2 notes */
-      }
-
-      if (!usedV2Notes) {
-        try {
-          const sPath = join(meetingDir, 'segments.json')
-          const segments = meetingSegmentsFromDisk(
-            (await isEncrypted(sPath))
-              ? await decryptJSON<unknown>(sPath)
-              : JSON.parse(await readFile(sPath, 'utf-8'))
-          )
-          for (const [category, items] of Object.entries(segments)) {
-            for (const item of items) {
-              const combined = `${item.title} ${item.content}`.toLowerCase()
-              if (terms.every((t) => combined.includes(t))) {
-                matches.push({ type: 'segment', text: `${item.title}: ${item.content}`, category })
-              }
-            }
-          }
-        } catch {
-          /* no segments */
-        }
-      }
-
-      if (matches.length > 0) {
-        const metadata = await readMetadata(meetingDir)
-        const micStat = await stat(join(meetingDir, 'mic.webm')).catch(() => null)
-        const legacyStat = await stat(join(meetingDir, 'audio.webm')).catch(() => null)
-
-        const createdAt = metadata
-          ? new Date(metadata.startedAt)
-          : (micStat?.birthtime ?? legacyStat?.birthtime ?? dirStat.birthtime)
-
-        const title = buildRecordingTitle(
-          metadata,
-          createdAt.getTime(),
-          getRecordingDisplayCalendarTitle(metadata, null),
-          language
-        )
-
-        results.push({
-          meetingId,
-          title,
-          date: createdAt.getTime(),
-          matches: matches.slice(0, 5) // Cap at 5 matches per meeting
-        })
-      }
-    }
-
-    return results.sort((a, b) => b.date - a.date)
+  ipcMain.handle('search:invalidate', (_event, meetingId?: string): void => {
+    meetingIndex.invalidate(meetingId)
   })
 }

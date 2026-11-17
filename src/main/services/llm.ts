@@ -64,11 +64,13 @@ export interface LLMProvider {
   checkConnection(): Promise<boolean>
   abortActiveRequests?(reason?: string): void
   getModel?(): string
+  /** Existing selected notes-writer window; no model-information request. */
+  getGenerationContextTokens?(): number
   setModel?(model: string): void
   setLowMemoryMode?(enabled: boolean): void
   /** Cap the writer context so the model plus KV cache fits a small-VRAM GPU. */
   setVramConstrainedContext?(enabled: boolean, profile?: 'windows-vulkan' | 'windows-cpu'): void
-  releaseResources?(meetingId?: string): Promise<void>
+  releaseResources?(meetingId?: string): Promise<boolean | void>
   /** Decode speed of the most recent Ollama call, if it reported metrics. */
   getLastEvalTokPerSec?(): number | null
   /** Writer-wide decode tok/s, weighted by eval duration. Prefer this for scan policy. */
@@ -120,6 +122,11 @@ export const WINDOWS_MAX_OUTPUT_TOKENS = 2048
 /** Tight tuples stay well under this; 2048 let one chunk burn minutes on CPU. */
 export const WINDOWS_TIGHT_MAX_OUTPUT_TOKENS = 768
 const LOW_MEMORY_FREE_GIB_THRESHOLD = 8
+// Keep headroom for loading model/embedding buffers and do not oscillate at
+// the old 8 GiB boundary after each interrupted attempt. Lower context only;
+// this never increases a hardware profile's model or memory requirement.
+const LOW_MEMORY_CONTEXT_ENTER_FREE_GIB = 10
+const LOW_MEMORY_CONTEXT_EXIT_FREE_GIB = 12
 const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
@@ -1764,6 +1771,11 @@ export class OllamaProvider implements LLMProvider {
         throw new Error('Ollama generate returned no response body')
       }
       return await this.readGenerateStream(res.body, controller, requestStartedAt)
+    } catch (error) {
+      if (controller.signal.aborted && controller.signal.reason === 'SEGMENTATION_PREEMPTED') {
+        throw new Error('SEGMENTATION_PREEMPTED')
+      }
+      throw error
     } finally {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
@@ -1782,7 +1794,9 @@ export class OllamaProvider implements LLMProvider {
       // hosts when callers pass false (e.g. Windows notes path in segmentation).
       const memory = this.getHostMemorySnapshot()
       const shouldUseLowMemory =
-        (memory.freeGiB != null && memory.freeGiB < LOW_MEMORY_FREE_GIB_THRESHOLD) ||
+        (memory.freeGiB != null && memory.freeGiB < (
+          this.contextProfile === 'low-memory' ? LOW_MEMORY_CONTEXT_EXIT_FREE_GIB : LOW_MEMORY_CONTEXT_ENTER_FREE_GIB
+        )) ||
         (memory.totalGiB != null && memory.totalGiB < LOW_MEMORY_TOTAL_GIB_THRESHOLD)
 
       if (shouldUseLowMemory) {
@@ -1828,6 +1842,10 @@ export class OllamaProvider implements LLMProvider {
     return this.model
   }
 
+  getGenerationContextTokens(): number {
+    return this.contextTokens
+  }
+
   async checkConnection(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, {
@@ -1846,7 +1864,7 @@ export class OllamaProvider implements LLMProvider {
     this.activeControllers.clear()
   }
 
-  async releaseResources(meetingId?: string): Promise<void> {
+  async releaseResources(meetingId?: string): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
@@ -1868,6 +1886,7 @@ export class OllamaProvider implements LLMProvider {
         },
         level: res.ok ? 'info' : 'warn'
       })
+      return res.ok
     } catch (error) {
       logAutodocEvent({
         area: 'segmentation',
@@ -1879,6 +1898,7 @@ export class OllamaProvider implements LLMProvider {
         },
         level: 'warn'
       })
+      return false
     }
   }
 
@@ -1895,7 +1915,7 @@ export class OllamaProvider implements LLMProvider {
 
     const memory = this.getHostMemorySnapshot()
     const shouldStartLowMemory =
-      (memory.freeGiB != null && memory.freeGiB < LOW_MEMORY_FREE_GIB_THRESHOLD) ||
+      (memory.freeGiB != null && memory.freeGiB < LOW_MEMORY_CONTEXT_ENTER_FREE_GIB) ||
       (memory.totalGiB != null && memory.totalGiB < LOW_MEMORY_TOTAL_GIB_THRESHOLD)
 
     if (shouldStartLowMemory) {
@@ -2852,6 +2872,11 @@ export class OllamaProvider implements LLMProvider {
           if (!(e instanceof SyntaxError)) throw e
         }
       }
+    } catch (error) {
+      if (controller.signal.aborted && controller.signal.reason === 'SEGMENTATION_PREEMPTED') {
+        throw new Error('SEGMENTATION_PREEMPTED')
+      }
+      throw error
     } finally {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)

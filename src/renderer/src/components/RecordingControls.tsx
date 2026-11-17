@@ -283,6 +283,7 @@ export function RecordingControls({
     <div className="relative">
       <button
         ref={triggerRef}
+        data-sentry-label="Record"
         aria-haspopup="dialog"
         aria-expanded={showPicker}
         onClick={handleRecordClick}

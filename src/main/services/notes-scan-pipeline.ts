@@ -7,6 +7,7 @@ import {
   splitLegacyItems,
   toCatalogItem
 } from '../../../scripts/notes-writer-probe/arm-e.ts'
+import { throwIfNotesPreempted } from './notes-preemption'
 import {
   armFRetrySeed,
   joinNotesDocument,
@@ -484,6 +485,7 @@ export async function runNotesScanPipeline(
             if (verified?.text.trim()) content = { ...content, overview: verified }
           }
         } catch (error) {
+          throwIfNotesPreempted(error)
           overviewFailed = true
           overviewFailureReasons = [
             `overview pass threw: ${error instanceof Error ? error.message : String(error)}`
@@ -743,6 +745,7 @@ export async function runNotesScanPipeline(
         keyTakeaways: overview.keyTakeaways
       })
     } catch (error) {
+      throwIfNotesPreempted(error)
       overviewFailed = true
       overviewFailureReasons = [
         `overview pass threw: ${error instanceof Error ? error.message : String(error)}`

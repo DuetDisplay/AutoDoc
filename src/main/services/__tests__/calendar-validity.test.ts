@@ -3,10 +3,12 @@ import { CalendarManager } from '../calendar-manager'
 import {
   CalendarTransientError,
   ReconnectRequiredCalendarAuthError,
+  isTransientCalendarError,
   isReconnectRequiredGoogleAuthError,
   isReconnectRequiredMicrosoftAuthError
 } from '../calendar-error-classification'
 import { GoogleCalendarProvider } from '../calendar'
+import { MicrosoftCalendarProvider } from '../microsoft-calendar'
 import type { CalendarProvider } from '../calendar-types'
 
 type Deferred<T> = {
@@ -365,6 +367,11 @@ describe('isReconnectRequiredGoogleAuthError', () => {
     [
       'refresh invalid_grant',
       new Error('Google token refresh failed: 400 {"error":"invalid_grant"}')
+    ],
+    ['the auth library refreshing without our client secret', new Error('invalid_request')],
+    [
+      'refresh invalid_request',
+      new Error('Google token refresh failed: 400 {"error":"invalid_request"}')
     ]
   ])('is true for %s', (_label, error) => {
     expect(isReconnectRequiredGoogleAuthError(error)).toBe(true)
@@ -522,5 +529,143 @@ describe('GoogleCalendarProvider reconnect handling', () => {
       )
       expect(captureMessage).not.toHaveBeenCalled()
     })
+
+    it.each([
+      [
+        'the auth worker rejects the refresh',
+        () =>
+          vi.fn().mockResolvedValue({
+            ok: false,
+            status: 400,
+            text: async () => '{"error":"internal_failure"}'
+          })
+      ],
+      ['the refresh throws', () => vi.fn().mockRejectedValue(new Error('boom'))]
+    ])('stops with one report when %s', async (_label, createFetch) => {
+      vi.stubGlobal('fetch', createFetch())
+      const manager = createManager(await stubExpiredProvider())
+
+      await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+      expect(eventsList).not.toHaveBeenCalled()
+      expect(logAutodocFailure).toHaveBeenCalledTimes(1)
+      expect(logAutodocFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Failed to fetch upcoming calendar events for account' })
+      )
+      expect((manager as any).accounts[0]).toEqual(
+        expect.not.objectContaining({ syncIssue: 'reconnect-required' })
+      )
+    })
+
+    it('asks to reconnect instead of retrying when Google answers invalid_request', async () => {
+      const { loadTokensForAccount } = await import('../token-store')
+      vi.mocked(loadTokensForAccount).mockReturnValue({
+        ...expiredTokens,
+        expiry_date: Date.now() + 60 * 60_000
+      })
+      eventsList.mockRejectedValue(new Error('invalid_request'))
+      const manager = createManager(new GoogleCalendarProvider())
+
+      await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+      await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+      expect(eventsList).toHaveBeenCalledTimes(1)
+      expect(logAutodocFailure).not.toHaveBeenCalled()
+      expect((manager as any).accounts[0]).toEqual(
+        expect.objectContaining({ syncIssue: 'reconnect-required' })
+      )
+    })
+
+    it('does not report anything when this build has no calendar sign-in set up', async () => {
+      delete process.env.AUTODOC_OFFICIAL_BUILD
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      const manager = createManager(await stubExpiredProvider())
+
+      await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(eventsList).not.toHaveBeenCalled()
+      expect(logAutodocFailure).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('MicrosoftCalendarProvider token refresh', () => {
+  const expiredTokens = {
+    access_token: 'access',
+    refresh_token: 'refresh',
+    expiry_date: Date.now() - 1000
+  }
+
+  async function createManager(): Promise<CalendarManager> {
+    const { loadTokensForAccount } = await import('../token-store')
+    vi.mocked(loadTokensForAccount).mockReturnValue(expiredTokens)
+    const manager = new CalendarManager()
+    ;(manager as any).accounts = [
+      { id: 'microsoft-account-1', provider: 'microsoft', email: 'a@b.c', connectedAt: Date.now() }
+    ]
+    ;(manager as unknown as TestCalendarManagerAccess).providers = new Map([
+      ['microsoft', new MicrosoftCalendarProvider() as CalendarProvider]
+    ])
+    return manager
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    delete process.env.AUTODOC_AUTH_WORKER_URL
+    process.env.AUTODOC_OFFICIAL_BUILD = '1'
+  })
+
+  it.each([
+    [
+      'the auth worker rejects the refresh',
+      () =>
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          text: async () => '{"error":"invalid_client"}'
+        })
+    ],
+    ['the refresh throws', () => vi.fn().mockRejectedValue(new Error('boom'))]
+  ])('stops with one report when %s', async (_label, createFetch) => {
+    const fetchMock = createFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const manager = await createManager()
+
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(logAutodocFailure).toHaveBeenCalledTimes(1)
+    expect(logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Failed to fetch upcoming calendar events for account' })
+    )
+  })
+
+  it('does not report anything when this build has no calendar sign-in set up', async () => {
+    delete process.env.AUTODOC_OFFICIAL_BUILD
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const manager = await createManager()
+
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(logAutodocFailure).not.toHaveBeenCalled()
+  })
+})
+
+describe('isTransientCalendarError', () => {
+  it.each([
+    'request to https://www.googleapis.com/calendar/v3 failed, reason: socket hang up',
+    'Client network socket disconnected before secure TLS connection was established',
+    'connect ECONNREFUSED 142.250.72.10:443',
+    'terminated'
+  ])('treats "%s" as temporary', (message) => {
+    expect(isTransientCalendarError(new Error(message))).toBe(true)
+  })
+
+  it('does not treat a sign-in failure as temporary', () => {
+    expect(isTransientCalendarError(new Error('invalid_grant'))).toBe(false)
   })
 })

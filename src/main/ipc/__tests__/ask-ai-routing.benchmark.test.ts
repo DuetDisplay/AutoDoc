@@ -586,7 +586,12 @@ describe('Ask AI routing benchmark (AD-83)', () => {
 
     registerChatIpc(
       baseDir,
-      { waitUntilReady, isServerRunning: vi.fn(), getBaseUrl: () => 'http://localhost:11434' },
+      {
+        waitUntilReady,
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434',
+        getAskAiModel: () => 'fake-model'
+      },
       { getModel: () => 'fake-model' } as never,
       {
         fetchAllRecentEvents: vi.fn().mockResolvedValue([]),

@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Предпочитаете тёмное оформление? Включите тёмный режим.",
   "announcement.done": "Готово",
   "announcement.meetingLanguageBody": "Расшифровки и заметки теперь доступны на {count} языках!",
-  "announcement.meetingLanguageDescription": "Выберите язык, на котором говорят на ваших встречах. Новые расшифровки и заметки будут на этом языке."
+  "announcement.meetingLanguageDescription": "Выберите язык, на котором говорят на ваших встречах. Новые расшифровки и заметки будут на этом языке.",
+  "askAi.indexingPreparingAnnouncement": "Подготовка встреч для функции «Спросить ИИ».",
+  "askAi.indexingPausedAnnouncement": "Подготовка для «Спросить ИИ» приостановлена, пока записывается встреча или создаются заметки."
 }

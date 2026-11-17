@@ -359,6 +359,18 @@ describe('PrefsStore', () => {
     expect(handler('prefs:get-meeting-language')()).toBe('fr')
   })
 
+  it('shows the Ask AI beta notice until it is dismissed, for new and existing users', () => {
+    registerPrefsIpc(store)
+    const handler = (channel: string) =>
+      vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(([name]) => name === channel)![1] as () => unknown
+
+    expect(handler('prefs:get-ask-ai-beta-notice-pending')()).toBe(true)
+    handler('prefs:dismiss-ask-ai-beta-notice')()
+    expect(handler('prefs:get-ask-ai-beta-notice-pending')()).toBe(false)
+  })
+
   it('rejects meeting languages the small notes model cannot write', async () => {
     registerPrefsIpc(store, undefined, undefined, undefined, () =>
       meetingLanguageAvailability(true)

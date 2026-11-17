@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Foretrækker du et mørkere udseende? Slå mørk tilstand til.",
   "announcement.done": "Færdig",
   "announcement.meetingLanguageBody": "Transskriptioner og noter understøtter nu {count} sprog!",
-  "announcement.meetingLanguageDescription": "Vælg det sprog, der tales på dine møder. Nye transskriptioner og noter vil være på dette sprog."
+  "announcement.meetingLanguageDescription": "Vælg det sprog, der tales på dine møder. Nye transskriptioner og noter vil være på dette sprog.",
+  "askAi.indexingPreparingAnnouncement": "Dine møder gøres klar til Spørg AI.",
+  "askAi.indexingPausedAnnouncement": "Klargøring til Spørg AI er sat på pause, mens et møde optages, eller noter bliver lavet."
 }

@@ -59,6 +59,8 @@ function isExpectedRecordingStartFailure(error: unknown): boolean {
     name === 'NotAllowedError' ||
     name === 'PermissionDeniedError' ||
     name === 'SecurityError' ||
+    // The main process already reported its own start failures.
+    message.includes("remote method 'recording:start'") ||
     message.includes('already recording') ||
     message.includes('capture already active') ||
     message.includes('screen capture stream is not live') ||
@@ -149,6 +151,12 @@ export function captureRecordingRecoveryFailure(
     scope.setTag('recording_phase', 'recovery')
     scope.setTag('source_type', context.sourceType)
     scope.setTag('recovery_failure_kind', context.failureKind)
+    // Each build's bundle would otherwise split this into its own issue.
+    scope.setFingerprint([
+      'recording-recovery',
+      context.failureKind,
+      context.degradationPath ?? 'none'
+    ])
     scope.setExtras({
       meetingId: context.meetingId,
       recordingSourceType: context.sourceType,

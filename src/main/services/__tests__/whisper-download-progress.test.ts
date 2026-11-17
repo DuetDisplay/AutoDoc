@@ -5,6 +5,11 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 vi.mock('electron', () => ({ app: { getPath: () => '/unused', isPackaged: false } }))
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn(), logAutodocFailure: vi.fn() }))
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) }
+})
+import { createReadStream } from 'fs'
 import { WhisperManager } from '../whisper-manager'
 
 let root: string
@@ -153,7 +158,8 @@ function bytesResponse(
           offset += 1
           return { done: false, value }
         }
-      })
+      }),
+      cancel: async () => {}
     }
   } as unknown as Response
 }
@@ -297,6 +303,62 @@ it('restarts without Range after a 416 response', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(2)
 })
 
+it('keeps the partial file when a resume request gets an error response', async () => {
+  const full = Buffer.from('abcdefgh')
+  const dest = join(root, 'server-error.bin')
+  const expectedSha256 = createHash('sha256').update(full).digest('hex')
+  await writeFile(`${dest}.tmp`, full.subarray(0, 3))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: 'Service Unavailable',
+      headers: new Headers(),
+      body: null
+    } as unknown as Response)
+  )
+
+  await expect(
+    (new WhisperManager() as unknown as ResumeDownloader).downloadFile(
+      'https://test.invalid/503',
+      dest,
+      '503',
+      undefined,
+      undefined,
+      { expectedSha256 }
+    )
+  ).rejects.toThrow(/503/)
+
+  expect(await readFile(`${dest}.tmp`)).toEqual(full.subarray(0, 3))
+})
+
+it('discards the partial instead of appending when a 206 starts at the wrong offset', async () => {
+  const full = Buffer.from('abcdefgh')
+  const dest = join(root, 'wrong-offset.bin')
+  const expectedSha256 = createHash('sha256').update(full).digest('hex')
+  await writeFile(`${dest}.tmp`, full.subarray(0, 3))
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(bytesResponse(full.subarray(5), 206, { 'content-range': 'bytes 5-7/8' }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await expect(
+    (new WhisperManager() as unknown as ResumeDownloader).downloadFile(
+      'https://test.invalid/offset',
+      dest,
+      'offset',
+      undefined,
+      undefined,
+      { expectedSha256 }
+    )
+  ).rejects.toThrow(/offset/)
+
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  await expect(access(`${dest}.tmp`)).rejects.toThrow()
+  await expect(access(dest)).rejects.toThrow()
+})
+
 it('ignores an existing .tmp on no-hash downloads and deletes it on failure', async () => {
   const dest = join(root, 'no-hash.bin')
   await writeFile(`${dest}.tmp`, Buffer.from('stale-partial'))
@@ -378,7 +440,7 @@ it('hashes a downloaded Windows archive once on the success path', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(bytesResponse(payload)))
   const manager = new WhisperManager()
   vi.spyOn(manager, 'getModelsDir').mockReturnValue(root)
-  const hashSpy = vi.spyOn(manager as any, 'hashFileSha256')
+  vi.mocked(createReadStream).mockClear()
   vi.spyOn(manager as any, 'extractWindowsTranscriptionAsset').mockResolvedValue(undefined)
   // Not installed yet, so the install proceeds; the extracted files are then complete.
   vi.spyOn(manager as any, 'getMissingExpectedFiles')
@@ -394,7 +456,7 @@ it('hashes a downloaded Windows archive once on the success path', async () => {
     expectedFiles: ['python.exe']
   })
 
-  expect(hashSpy).toHaveBeenCalledTimes(1)
+  expect(createReadStream).toHaveBeenCalledTimes(1)
 })
 
 it('hashes an already-present Windows archive once when skipping the download', async () => {
@@ -406,7 +468,7 @@ it('hashes an already-present Windows archive once when skipping the download', 
   vi.stubGlobal('fetch', fetchMock)
   const manager = new WhisperManager()
   vi.spyOn(manager, 'getModelsDir').mockReturnValue(root)
-  const hashSpy = vi.spyOn(manager as any, 'hashFileSha256')
+  vi.mocked(createReadStream).mockClear()
   vi.spyOn(manager as any, 'extractWindowsTranscriptionAsset').mockResolvedValue(undefined)
   // Not installed yet, so the install proceeds; the extracted files are then complete.
   vi.spyOn(manager as any, 'getMissingExpectedFiles')
@@ -423,5 +485,5 @@ it('hashes an already-present Windows archive once when skipping the download', 
   })
 
   expect(fetchMock).not.toHaveBeenCalled()
-  expect(hashSpy).toHaveBeenCalledTimes(1)
+  expect(createReadStream).toHaveBeenCalledTimes(1)
 })

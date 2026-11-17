@@ -1,8 +1,9 @@
 import { app } from 'electron'
+import { askAiAvailabilityOverride, isAskAiAvailable } from './ask-ai-availability'
+import { askAiRuntimeDefaults } from './ask-ai-policy'
 import { access, mkdir, chmod, rm, copyFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { createWriteStream } from 'fs'
 import { spawn, execFile, execFileSync, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { totalmem } from 'os'
@@ -21,11 +22,13 @@ import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
+import { isTransientNetworkError } from './network-error-classification'
 import { withSentryFingerprint } from './sentry-fingerprint'
 import {
   createOllamaModelLoadFailedError,
   isOllamaModelLoadFailureText
 } from './ollama-model-load-failure'
+import { downloadVerifiedFile } from './resumable-download'
 import {
   createDefaultOllamaModelsDirDeps,
   resolveOllamaModelsDir,
@@ -46,11 +49,24 @@ import {
 import { detectWindowsHardwareProfile } from './windows-transcription-runtime'
 
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
+// Published digests for this version; update them together with the version above.
+const OLLAMA_DARWIN_SHA256 = '9f95b794325857d412c1a795db78fbb35aee3567a0b81868917606cdb2d693cb'
+const OLLAMA_WINDOWS_SHA256 = 'c869517b0852372d694c2978564a73b5aa70eaafe96d73aab1783971f7c2f9d2'
 const IS_WIN = process.platform === 'win32'
 
 // QA must never adopt or terminate the production app's managed Ollama process.
-const OLLAMA_PORT = __AUTODOC_QA_BUILD__ ? 11436 : 11435
-const OLLAMA_HOST = __AUTODOC_QA_BUILD__ ? '127.0.0.1:11436' : '127.0.0.1:11435'
+const scopedTestPort = Number(process.env.AUTODOC_TEST_OLLAMA_PORT)
+const OLLAMA_PORT =
+  (process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1') &&
+  process.env.AUTODOC_TEST_USER_DATA_DIR &&
+  Number.isInteger(scopedTestPort) &&
+  scopedTestPort >= 1024 &&
+  scopedTestPort <= 65535
+    ? scopedTestPort
+    : __AUTODOC_QA_BUILD__
+      ? 11436
+      : 11435
+const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const SHOULD_PULL_ASK_AI_EMBEDDING_MODEL =
@@ -286,11 +302,13 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
 // runner costs one model reload (~5-10s) and restores full speed, which pays for
 // itself within the next chunk once decode has degraded.
 export const EARLY_EXIT_AFTER_READY_MS = 60_000
+const EXIT_REPORT_WAIT_MS = 1_500
 
 // A freshly started Ollama 0.30 serve prints "Listening on" and then spends
 // ~10 s (longer on slow GPUs or right after wake) discovering GPUs. /api/tags
 // does not answer meanwhile, so a healthy server looks dead. Give a serve the
 // app started itself time to finish before replacing it.
+const SERVE_ADOPTION_PROBE_TIMEOUT_MS = 10_000
 export const STARTING_SERVE_GRACE_MS = 60_000
 export const STARTING_SERVE_WAIT_MS = 30_000
 export const STARTING_SERVE_POLL_MS = 2_000
@@ -332,12 +350,29 @@ export function parseWindowsNetstatListeningPids(output: string): number[] {
   return pids
 }
 
+/** A connection dropped during a model download is ordinary and is retried, so it isn't reported. */
+function logModelPullFailure(
+  message: string,
+  error: unknown,
+  context: Record<string, unknown>
+): void {
+  if (isTransientNetworkError(error)) {
+    logAutodocEvent({ area: 'ollama', level: 'warn', message, context })
+  } else {
+    logAutodocFailure({ area: 'ollama', message, error, context })
+  }
+}
+
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
   // Serve processes the app deliberately killed. On Windows `taskkill /f /t` always makes
   // the process exit with code 1, so the exit handler uses this to tell those apart from crashes.
   private intentionalKillReasons = new WeakMap<ChildProcess, OllamaKillReason>()
   private model: string
+  private askAiModel: string
+  // Chosen by the hardware profile in selectPreferredModel only; unlike preferredModel,
+  // per-job notes overrides and downgrades never touch it.
+  private profileModel: string
   private preferredModel: string
   private resolveModel: PreferredModelResolver | null
   private retainLowSpecModel: () => boolean | Promise<boolean>
@@ -345,6 +380,7 @@ export class OllamaManager extends EventEmitter {
   private notesPulls = new Map<string, Promise<void>>()
   // SegmentationService runs one job at a time, including preparation and unload.
   private notesGenerationActive = false
+  private interactiveRequestCount = 0
   private pendingNotesCleanup: { preferredModel: string; epoch: number } | null = null
   private notesCleanupPromise: Promise<void> | null = null
   private readyPromise: Promise<void> | null = null
@@ -352,6 +388,9 @@ export class OllamaManager extends EventEmitter {
   private recoveryPromise: Promise<void> | null = null
   private resolvedModelsDir: { originalDir: string; promise: Promise<string> } | null = null
   private modelLoadFailureCount = 0
+  private reportedQuietExit = false
+  /** Start retries exit the same way each time, so each kind of exit is reported once. */
+  private readonly reportedStartExits = new Set<string>()
   private startEpoch = 0
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
@@ -361,6 +400,9 @@ export class OllamaManager extends EventEmitter {
   private testServerRunning = false
   private didReapAdoptedRunners = false
   private acceleratorDecision: OllamaAcceleratorDecision | null = null
+  // Whether Ask AI is offered on this machine. Decided once per launch, null until then.
+  private askAiAvailability: boolean | null = null
+  private askAiAvailabilityResolution: Promise<boolean> | null = null
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -368,6 +410,8 @@ export class OllamaManager extends EventEmitter {
       typeof modelOrOptions === 'string' ? { model: modelOrOptions } : (modelOrOptions ?? {})
     this.model = options.model ?? DEFAULT_OLLAMA_MODEL
     this.preferredModel = this.model
+    this.profileModel = this.model
+    this.askAiModel = this.model
     this.resolveModel = options.resolveModel ?? null
     this.retainLowSpecModel = options.retainLowSpecModel ?? (() => false)
   }
@@ -449,6 +493,57 @@ export class OllamaManager extends EventEmitter {
     return this.model
   }
 
+  /** Profile/startup selection, independent of per-job notes overrides. */
+  getAskAiModel(): string {
+    return this.askAiModel
+  }
+
+  /** True when Ask AI is offered, false when hidden, null while the decision is unknown. */
+  getAskAiAvailability(): boolean | null {
+    return askAiAvailabilityOverride() ?? this.askAiAvailability
+  }
+
+  /**
+   * Resolves the launch-stable Ask AI decision from the profile model and the Ollama
+   * accelerator. Neither needs the serve to be running, so this can run at launch. A failed
+   * detection resolves to hidden, like the CPU fallback. Emits 'ask-ai-availability' on change.
+   */
+  resolveAskAiAvailability(): Promise<boolean> {
+    const override = askAiAvailabilityOverride()
+    if (override !== null) return Promise.resolve(override)
+    this.askAiAvailabilityResolution ??= this.detectAskAiAvailability()
+    return this.askAiAvailabilityResolution
+  }
+
+  private async detectAskAiAvailability(): Promise<boolean> {
+    let available = false
+    try {
+      const profileModel = (await this.resolveModel?.()) || this.profileModel
+      const decision = await this.resolveAcceleratorDecision()
+      available = isAskAiAvailable({ profileModel, accelerator: decision.accelerator })
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ask ai availability resolved',
+        context: { available, profileModel, accelerator: decision.accelerator }
+      })
+    } catch (error) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ask ai availability detection failed; hiding ask ai',
+        level: 'warn',
+        context: { error: error instanceof Error ? error.message : String(error) }
+      })
+    }
+    this.setAskAiAvailability(available)
+    return available
+  }
+
+  private setAskAiAvailability(available: boolean): void {
+    if (this.askAiAvailability === available) return
+    this.askAiAvailability = available
+    this.emit('ask-ai-availability', available)
+  }
+
   getNotesAccelerator(): OllamaAccelerator {
     if (this.acceleratorDecision) {
       return this.acceleratorDecision.accelerator
@@ -483,6 +578,8 @@ export class OllamaManager extends EventEmitter {
       message: 'ollama accelerator latched to cpu',
       context: { reason }
     })
+    // Ask AI is not offered on CPU; the runner that died was its only GPU path.
+    if (this.askAiAvailability === true) this.setAskAiAvailability(false)
   }
 
   recoverUnhealthyRuntime(): Promise<void> {
@@ -512,7 +609,12 @@ export class OllamaManager extends EventEmitter {
       this.assertStartEpoch(epoch)
       if (started) return
     }
-    if (this.acceleratorDecision?.accelerator === 'vulkan') {
+    // An already-dead serve may have been killed from outside, which says nothing about the GPU.
+    if (
+      this.acceleratorDecision?.accelerator === 'vulkan' &&
+      this.process &&
+      this.isCurrentLiveChild(this.process)
+    ) {
       this.latchCpuAccelerator('vulkan runner died; latched CPU for process lifetime')
     }
 
@@ -640,7 +742,19 @@ export class OllamaManager extends EventEmitter {
     if (!preferredModel) return
 
     this.preferredModel = preferredModel
+    this.profileModel = preferredModel
+    this.askAiModel = preferredModel
     this.setModel(preferredModel)
+  }
+
+  /**
+   * Ask AI moves to the profile model once it is installed, whichever caller (startup or a
+   * later notes job) installed it. Any other model leaves Ask AI where it is.
+   */
+  private adoptAskAiModel(installedModel: string): boolean {
+    if (installedModel !== this.profileModel || this.askAiModel === installedModel) return false
+    this.askAiModel = installedModel
+    return true
   }
 
   private getModelsDir(): string {
@@ -756,7 +870,7 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async isServerRunning(): Promise<boolean> {
+  async isServerRunning(timeoutMs = 2_000): Promise<boolean> {
     if (
       IS_WIN &&
       IS_TEST_RUNTIME &&
@@ -768,7 +882,7 @@ export class OllamaManager extends EventEmitter {
 
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
-        signal: AbortSignal.timeout(2000)
+        signal: AbortSignal.timeout(timeoutMs)
       })
       return res.ok
     } catch {
@@ -840,7 +954,7 @@ export class OllamaManager extends EventEmitter {
 
   private async prepareNotesModels(epoch: number): Promise<void> {
     if (IS_WIN) {
-      await this.ensureNotesModelReady(this.preferredModel, epoch)
+      await this.prepareNotesModel(this.preferredModel, epoch, true)
       return
     }
 
@@ -850,12 +964,14 @@ export class OllamaManager extends EventEmitter {
     this.assertStartEpoch(epoch)
     const plan = resolveNotesModelMigration({ preferredModel: preferred, installedModels })
     this.setModel(plan.activeModel)
+    this.askAiModel = plan.activeModel
     this.emit('notes-model-plan', plan)
 
     if (plan.pullBeforeReady) {
       await this.pullModel(plan.pullModel, epoch)
       this.assertStartEpoch(epoch)
       this.setModel(plan.pullModel)
+      this.askAiModel = plan.pullModel
       await this.deleteLeftoverModels(plan, epoch)
       this.assertStartEpoch(epoch)
       return
@@ -889,7 +1005,11 @@ export class OllamaManager extends EventEmitter {
     return promise
   }
 
-  private async prepareNotesModel(preferred: string, epoch: number): Promise<ReadyNotesModel> {
+  private async prepareNotesModel(
+    preferred: string,
+    epoch: number,
+    startup = false
+  ): Promise<ReadyNotesModel> {
     // An idle cleanup may already have submitted a delete. Finish it before
     // approving any model for a newly started job.
     await this.notesCleanupPromise
@@ -901,6 +1021,7 @@ export class OllamaManager extends EventEmitter {
       installedModels
     })
     if (this.preferredModel === preferred) this.setModel(plan.activeModel)
+    if (startup) this.askAiModel = plan.activeModel
     this.emit('notes-model-plan', plan)
     logAutodocEvent({
       area: 'ollama',
@@ -912,6 +1033,7 @@ export class OllamaManager extends EventEmitter {
       await this.pullNotesModel(plan.pullModel, epoch)
       this.assertStartEpoch(epoch)
       if (this.preferredModel === preferred) this.setModel(plan.pullModel)
+      if (startup) this.askAiModel = plan.pullModel
     }
     // Verify the *active* model even when a pull stream ended successfully.
     if (!(await this.hasModel(plan.activeModel))) {
@@ -922,6 +1044,8 @@ export class OllamaManager extends EventEmitter {
     if (plan.usingLegacyFallback) {
       void this.pullWindowsPreferredInBackground(plan, epoch)
     } else {
+      // The profile model is installed, so Ask AI can leave any legacy model before cleanup.
+      if (preferred === this.profileModel) this.adoptAskAiModel(plan.activeModel)
       await this.scheduleNotesCleanup(preferred, epoch)
     }
     this.assertStartEpoch(epoch)
@@ -1020,17 +1144,16 @@ export class OllamaManager extends EventEmitter {
       await this.pullModel(plan.pullModel, epoch)
       this.assertStartEpoch(epoch)
       this.setModel(plan.pullModel)
+      this.askAiModel = plan.pullModel
       const installedModels = await this.listInstalledModels()
       this.assertStartEpoch(epoch)
       const next = resolveNotesModelMigration({ preferredModel: plan.pullModel, installedModels })
       await this.deleteLeftoverModels(next, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'background preferred notes model pull failed',
-        error,
-        context: { pullModel: plan.pullModel, activeModel: this.model }
+      logModelPullFailure('background preferred notes model pull failed', error, {
+        pullModel: plan.pullModel,
+        activeModel: this.model
       })
     }
   }
@@ -1047,14 +1170,14 @@ export class OllamaManager extends EventEmitter {
         throw new Error(`Ollama notes model setup failed: '${plan.pullModel}' is not installed`)
       this.assertStartEpoch(epoch)
       if (this.preferredModel === plan.pullModel) this.setModel(plan.pullModel)
-      await this.scheduleNotesCleanup(plan.pullModel, epoch)
+      // Ask AI no longer pins the legacy model, so rerun cleanup for the current notes model.
+      const adopted = this.adoptAskAiModel(plan.pullModel)
+      await this.scheduleNotesCleanup(adopted ? this.preferredModel : plan.pullModel, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'background preferred notes model pull failed',
-        error,
-        context: { pullModel: plan.pullModel, activeModel: this.model }
+      logModelPullFailure('background preferred notes model pull failed', error, {
+        pullModel: plan.pullModel,
+        activeModel: this.model
       })
     }
   }
@@ -1065,6 +1188,8 @@ export class OllamaManager extends EventEmitter {
     preferredModel?: string
   ): Promise<void> {
     for (const model of plan.leftoverModels) {
+      // A notes job may use another model while Ask AI still uses startup legacy.
+      if (isModelInstalled([this.askAiModel], model)) continue
       const installedModels = await this.listInstalledModels()
       this.assertStartEpoch(epoch)
       if (IS_WIN && preferredModel !== this.preferredModel) return
@@ -1072,6 +1197,7 @@ export class OllamaManager extends EventEmitter {
         this.pendingNotesCleanup ??= { preferredModel, epoch }
         return
       }
+      if (isModelInstalled([this.askAiModel], model)) continue
       if (isModelInstalled(installedModels, model)) {
         await this.deleteModel(model)
         this.assertStartEpoch(epoch)
@@ -1182,13 +1308,20 @@ export class OllamaManager extends EventEmitter {
       let running: boolean | null = null
       let ownsPort: boolean | null = null
       let waitedForStart = false
-      if (!options.forceRespawn && isReadyServeProcess) {
-        running = await this.isServerRunning()
+      // resetReady() clears setup bookkeeping, not the live child. Confirm a busy
+      // owned serve before replacing it, regardless of that cached marker.
+      if (!options.forceRespawn) {
+        running = await this.isServerRunning(SERVE_ADOPTION_PROBE_TIMEOUT_MS)
         this.assertStartEpoch(epoch)
         ownsPort =
-          !IS_WIN ||
-          (tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid))
-        if (running && ownsPort) {
+          tracked.pid != null &&
+          (IS_WIN
+            ? this.getListeningPidsOnOllamaPort().includes(tracked.pid)
+            : await this.ownsTrackedPortOnMac(tracked.pid))
+        this.assertStartEpoch(epoch)
+        if (running && ownsPort && this.isCurrentLiveChild(tracked)) {
+          this.readyServeProcess = tracked
+          this.readyAtMs ??= Date.now()
           this.reapManagedLlamaServersOnce('adopt-existing-server')
           return
         }
@@ -1214,7 +1347,9 @@ export class OllamaManager extends EventEmitter {
           waitedForStart
         }
       })
-      const killed = await this.killProcessAndWait(tracked, 'replace-unadopted-server')
+      const killed =
+        !this.isCurrentLiveChild(tracked) ||
+        (await this.killProcessAndWait(tracked, 'replace-unadopted-server'))
       this.assertStartEpoch(epoch)
       if (!killed) {
         throw new Error(
@@ -1280,11 +1415,13 @@ export class OllamaManager extends EventEmitter {
     const proc = spawn(binary, ['serve'], {
       env: {
         ...process.env,
+        ...askAiRuntimeDefaults(decision.accelerator),
         OLLAMA_HOST: OLLAMA_HOST,
         OLLAMA_MODELS: modelsDir,
         ...decision.env
       },
-      stdio: ['ignore', 'pipe', 'pipe']
+      // Request logs must not fill an unread stdout pipe and stall serve.
+      stdio: ['ignore', 'ignore', 'pipe']
     })
 
     this.process = proc
@@ -1340,10 +1477,11 @@ export class OllamaManager extends EventEmitter {
         if (settled) return
         settled = true
         clearInterval(pollInterval)
-        logAutodocFailure({
+        // The rejection below reaches the one report for this failed setup.
+        logAutodocEvent({
           area: 'ollama',
+          level: 'warn',
           message: 'ollama server failed to start within timeout',
-          error: new Error('Ollama server failed to start within 30 seconds'),
           context: { timeoutMs: 30_000, binaryPath: binary, pid: proc.pid ?? null }
         })
         void this.killProcessAndWait(proc, 'start-timeout').then((killed) => {
@@ -1371,6 +1509,7 @@ export class OllamaManager extends EventEmitter {
       const markReady = (): void => {
         if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
         finish(() => {
+          this.reportedStartExits.clear()
           this.readyServeProcess = proc
           this.readyAtMs = Date.now()
           this.scheduleServeStableCheck(proc)
@@ -1383,6 +1522,7 @@ export class OllamaManager extends EventEmitter {
               binaryPath: binary
             }
           })
+          this.emit('server-ready')
           resolve()
         })
       }
@@ -1474,40 +1614,64 @@ export class OllamaManager extends EventEmitter {
           msSinceReady,
           ...(modelLoadFailed ? { modelLoadFailure: true } : {})
         }
-        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
         // Group exits by code in one Sentry issue, apart from ffmpeg and model-extract failures.
         const exitFingerprint = [
           'ollama-server-exited',
           code !== null ? String(code) : `signal-${signal}`
         ]
-        if (intentionalKillReason != null) {
-          // The app killed this serve itself (Windows taskkill always exits with code 1), so it
-          // is not a crash and must not reach the AUTODOC-8 failure stream.
-          logAutodocEvent({
-            area: 'ollama',
-            message: 'ollama server process stopped by app',
-            context: { ...exitContext, reason: intentionalKillReason }
-          })
-        } else if (code !== null && code !== 0) {
-          logAutodocFailure({
-            area: 'ollama',
-            message: 'ollama server process exited',
-            error: new Error(`Ollama exited with code ${code}`),
-            context: {
-              ...exitContext,
-              stderrTail: sanitizedStderrTail || null
-            },
-            fingerprint: exitFingerprint
-          })
-        } else {
-          logAutodocEvent({
-            area: 'ollama',
-            message: 'ollama server process exited',
-            level: 'warn',
-            context: exitContext
-          })
+        const isUnexpectedExit =
+          wasReadyProc && intentionalKillReason == null && !this.stopped && !modelLoadFailed
+        const exitedDuringStart = !settled
+        const startExitKey = exitFingerprint.join(':')
+        const reportExit = (): void => {
+          if (reportTimer === null) return
+          clearTimeout(reportTimer)
+          reportTimer = null
+          if (intentionalKillReason != null) {
+            // The app killed this serve itself (Windows taskkill always exits with code 1), so it
+            // is not a crash and must not reach the AUTODOC-8 failure stream.
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama server process stopped by app',
+              context: { ...exitContext, reason: intentionalKillReason }
+            })
+          } else if (
+            !(exitedDuringStart && this.reportedStartExits.has(startExitKey)) &&
+            ((code !== null && code !== 0) || (isUnexpectedExit && !this.reportedQuietExit))
+          ) {
+            if (code === null || code === 0) this.reportedQuietExit = true
+            if (exitedDuringStart) this.reportedStartExits.add(startExitKey)
+            logAutodocFailure({
+              area: 'ollama',
+              message: 'ollama server process exited',
+              error: new Error(
+                code !== null ? `Ollama exited with code ${code}` : `Ollama exited on ${signal}`
+              ),
+              context: {
+                ...exitContext,
+                stderrTail: sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim() || null
+              },
+              fingerprint: exitFingerprint
+            })
+          } else {
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama server process exited',
+              level: 'warn',
+              context: exitContext
+            })
+          }
         }
+        // The final stderr lines can arrive after 'exit'. A surviving runner can hold the stream
+        // open, so 'close' may never come; recovery below does not wait for this report.
+        let reportTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+          reportExit,
+          EXIT_REPORT_WAIT_MS
+        )
+        reportTimer.unref?.()
+        proc.once('close', reportExit)
+        if (isUnexpectedExit) this.emit('unexpected-exit')
         if (!settled) {
           finish(() => {
             const message = `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
@@ -1555,7 +1719,7 @@ export class OllamaManager extends EventEmitter {
     this.testServerRunning = false
   }
 
-  /** Clear cached ready state so the next startAndPull() actually restarts. */
+  /** Clear cached setup state so startAndPull() revalidates the runtime and models. */
   resetReady(): void {
     this.readyPromise = null
     this.readyServeProcess = null
@@ -1591,8 +1755,34 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
+  private async ownsTrackedPortOnMac(pid: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      execFile(
+        'lsof',
+        ['-ti', `tcp:${OLLAMA_PORT}`, '-sTCP:LISTEN'],
+        { encoding: 'utf-8', timeout: 5000 },
+        (error, output) => {
+          // Exit 1 with no output means no listener. On inspection failure retain
+          // the base macOS policy: trust our live tracked child if it answers.
+          if (error && error.code !== 1) return resolve(true)
+          resolve(output.trim().split(/\s+/).map(Number).includes(pid))
+        }
+      )
+    })
+  }
+
   private getListeningPidsOnOllamaPort(): number[] {
     try {
+      if (!IS_WIN) {
+        return execSync(`lsof -ti tcp:${OLLAMA_PORT} -sTCP:LISTEN`, {
+          encoding: 'utf-8',
+          timeout: 5000
+        })
+          .trim()
+          .split(/\s+/)
+          .map(Number)
+          .filter((pid) => Number.isInteger(pid) && pid > 0)
+      }
       const output = execSync(`netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`, {
         encoding: 'utf-8',
         timeout: 5000
@@ -1666,7 +1856,69 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
+  private async trackedRunnerDescendants(proc: ChildProcess, orphaned = false): Promise<number[]> {
+    if (IS_WIN || proc.pid == null || (!orphaned && !this.isCurrentLiveChild(proc))) return []
+    return new Promise((resolve) => {
+      execFile(
+        'ps',
+        ['-axo', 'pid=,ppid=,rss=,command='],
+        { encoding: 'utf-8', timeout: 5000 },
+        (error, output) => {
+          if (error) return resolve([])
+          const rows = output.split(/\r?\n/).flatMap((line) => {
+            const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/)
+            return match
+              ? [
+                  {
+                    pid: Number(match[1]),
+                    parent: Number(match[2]),
+                    listing: `${match[1]} ${match[3]} ${match[4]}`
+                  }
+                ]
+              : []
+          })
+          const descendants = new Set(
+            orphaned
+              ? rows
+                  .filter(
+                    (row) =>
+                      commandIncludesRuntime(row.listing, this.getRuntimeDir()) &&
+                      /[\\/]ollama\s+serve\b/.test(row.listing)
+                  )
+                  .map((row) => row.pid)
+              : [proc.pid!]
+          )
+          // A concurrent restart may already have installed the next tracked
+          // child. Preserve its descendants even if ps missed its serve row.
+          if (orphaned && this.process && this.isCurrentLiveChild(this.process))
+            descendants.add(this.process.pid!)
+          let previousSize = 0
+          while (previousSize !== descendants.size) {
+            previousSize = descendants.size
+            for (const row of rows) if (descendants.has(row.parent)) descendants.add(row.pid)
+          }
+          resolve(
+            parseManagedLlamaServers(
+              rows
+                .filter(
+                  (row) =>
+                    row.pid !== proc.pid &&
+                    (orphaned ? !descendants.has(row.pid) : descendants.has(row.pid))
+                )
+                .map((row) => row.listing)
+                .join('\n'),
+              this.getRuntimeDir()
+            ).map((runner) => runner.pid)
+          )
+        }
+      )
+    })
+  }
+
   private async killProcessAndWait(proc: ChildProcess, reason: OllamaKillReason): Promise<boolean> {
+    // Snapshot ancestry before killing the serve: macOS reparents surviving runners.
+    // Windows already kills the owned process tree through taskkill /t.
+    const runnerPids = IS_WIN ? [] : await this.trackedRunnerDescendants(proc)
     // Record before killing so the exit handler can read it regardless of event ordering.
     this.markIntentionalKill(proc, reason)
     if (proc.pid != null) {
@@ -1674,15 +1926,34 @@ export class OllamaManager extends EventEmitter {
     } else if (!IS_WIN) {
       proc.kill('SIGTERM')
     }
-    if (await this.waitForProcessExit(proc)) {
-      return true
+    // These belong to this tracked serve, independently of the startup reap latch.
+    for (const pid of runnerPids) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        /* already exited with the serve */
+      }
     }
-    if (proc.pid != null) {
-      await this.killProcessByPid(proc.pid)
-    } else if (!IS_WIN) {
-      proc.kill('SIGTERM')
+    let exited = await this.waitForProcessExit(proc)
+    if (!exited) {
+      if (proc.pid != null) {
+        await this.killProcessByPid(proc.pid)
+      } else if (!IS_WIN) {
+        proc.kill('SIGTERM')
+      }
+      exited = await this.waitForProcessExit(proc)
     }
-    return this.waitForProcessExit(proc)
+    // A runner can fork while the first snapshot is pending. Once the old
+    // serve has exited, reap only this runtime's now-unowned runners.
+    if (exited)
+      for (const pid of await this.trackedRunnerDescendants(proc, true)) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* already exited */
+        }
+      }
+    return exited
   }
 
   /**
@@ -1712,12 +1983,14 @@ export class OllamaManager extends EventEmitter {
           }
         }
       } else {
-        const pids = execSync(`lsof -ti :${OLLAMA_PORT}`, {
+        // Only the listener: a bare `:port` also matches clients, including this app's own
+        // keep-alive connection, and SIGKILLing ourselves mid-quit skipped the runner reap.
+        const pids = execSync(`lsof -ti tcp:${OLLAMA_PORT} -sTCP:LISTEN`, {
           encoding: 'utf-8',
           timeout: 5000
         }).trim()
         for (const pid of pids.split(/\n/)) {
-          if (pid) {
+          if (pid && Number(pid) !== process.pid) {
             try {
               process.kill(Number(pid), 'SIGKILL')
               killedPids.push(Number(pid))
@@ -1737,6 +2010,16 @@ export class OllamaManager extends EventEmitter {
         message: 'killed orphaned ollama process on port',
         context: { port: OLLAMA_PORT, pids: killedPids }
       })
+    }
+  }
+
+  beginInteractiveRequest(): () => void {
+    this.interactiveRequestCount += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.interactiveRequestCount -= 1
     }
   }
 
@@ -1761,6 +2044,15 @@ export class OllamaManager extends EventEmitter {
     meetingId?: string,
     options?: { betweenChunks?: boolean }
   ): Promise<boolean> {
+    if (this.interactiveRequestCount > 0) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'runner recycling skipped during active Ask AI request',
+        meetingId,
+        context: { activeInteractiveRequests: this.interactiveRequestCount }
+      })
+      return false
+    }
     if (
       options?.betweenChunks &&
       !shouldRecycleRunnerBetweenWriterChunks(process.platform, this.getNotesAccelerator())
@@ -1851,6 +2143,18 @@ export class OllamaManager extends EventEmitter {
   }
 
   private killManagedLlamaServers(reason = 'stop', meetingId?: string): void {
+    const maintenance =
+      ['before-notes-profile', 'before-scan', 'after-notes'].includes(reason) ||
+      reason.startsWith('runner-rss-over-')
+    if (maintenance && this.interactiveRequestCount > 0) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'runner maintenance skipped during active Ask AI request',
+        meetingId,
+        context: { reason, activeInteractiveRequests: this.interactiveRequestCount }
+      })
+      return
+    }
     const runtimeDir = this.getRuntimeDir()
     const found = this.listManagedLlamaServers()
     const killed: ManagedLlamaServer[] = []
@@ -1897,11 +2201,9 @@ export class OllamaManager extends EventEmitter {
         context: { model, alreadyInstalled, elapsedMs: Date.now() - startedAt }
       })
     } catch (error) {
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'ollama model pull failed',
-        error,
-        context: { model, elapsedMs: Date.now() - startedAt }
+      logModelPullFailure('ollama model pull failed', error, {
+        model,
+        elapsedMs: Date.now() - startedAt
       })
       throw error
     }
@@ -1977,6 +2279,9 @@ export class OllamaManager extends EventEmitter {
 
   private async pullOptionalEmbeddingModel(epoch: number): Promise<void> {
     if (!SHOULD_PULL_ASK_AI_EMBEDDING_MODEL) return
+    // Only Ask AI uses this model, so a machine that hides Ask AI should not download it.
+    if (!(await this.resolveAskAiAvailability())) return
+    this.assertStartEpoch(epoch)
     const model = process.env.AUTODOC_ASK_AI_EMBEDDING_MODEL ?? DEFAULT_OLLAMA_EMBEDDING_MODEL
     try {
       await this.pullModel(model, epoch)
@@ -2003,7 +2308,7 @@ export class OllamaManager extends EventEmitter {
     const url = `https://github.com/ollama/ollama/releases/download/${OLLAMA_DOWNLOAD_VERSION}/ollama-windows-amd64.zip`
     const zipPath = join(runtimeDir, 'ollama.zip')
 
-    await this.downloadToFile(url, zipPath)
+    await this.downloadToFile(url, zipPath, OLLAMA_WINDOWS_SHA256)
 
     // Extract using PowerShell's Expand-Archive
     await new Promise<void>((resolve, reject) => {
@@ -2033,7 +2338,7 @@ export class OllamaManager extends EventEmitter {
     const archivePath = join(runtimeDir, archiveName)
     const url = `https://github.com/ollama/ollama/releases/download/${OLLAMA_DOWNLOAD_VERSION}/${archiveName}`
 
-    await this.downloadToFile(url, archivePath)
+    await this.downloadToFile(url, archivePath, OLLAMA_DARWIN_SHA256)
 
     await new Promise<void>((resolve, reject) => {
       execFile('tar', ['xzf', archivePath, '-C', runtimeDir], (err) => {
@@ -2047,39 +2352,12 @@ export class OllamaManager extends EventEmitter {
     await rm(archivePath, { force: true })
   }
 
-  private async downloadToFile(url: string, destPath: string): Promise<void> {
-    const response = await fetch(url, { redirect: 'follow' })
-    if (!response.ok) {
-      throw new Error(`Failed to download Ollama: ${response.status} ${response.statusText}`)
-    }
-
-    const totalBytes = Number(response.headers.get('content-length') ?? 0)
-    let downloadedBytes = 0
-
-    const fileStream = createWriteStream(destPath)
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error('No response body for Ollama download')
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        fileStream.write(value)
-        downloadedBytes += value.length
-        this.emit('download-progress', {
-          file: 'ollama',
-          percent: totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0,
-          bytesDownloaded: downloadedBytes,
-          bytesTotal: totalBytes
-        })
+  private async downloadToFile(url: string, destPath: string, sha256: string): Promise<void> {
+    await downloadVerifiedFile([url], destPath, sha256, 'Ollama', {
+      onBytes: ({ percent, bytesDownloaded, bytesTotal }) => {
+        this.emit('download-progress', { file: 'ollama', percent, bytesDownloaded, bytesTotal })
       }
-    } finally {
-      fileStream.end()
-      await new Promise<void>((resolve, reject) => {
-        fileStream.on('finish', resolve)
-        fileStream.on('error', reject)
-      })
-    }
+    })
   }
 
   private async fileExists(targetPath: string): Promise<boolean> {

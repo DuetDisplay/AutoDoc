@@ -88,6 +88,20 @@ describe('sentry reporter', () => {
     expect(setFingerprint).toHaveBeenCalledWith(['explicit'])
   })
 
+  it.each([
+    ['a file write', new Error('ENOSPC: no space left on device, write')],
+    ['ffmpeg', new Error('ffmpeg exited with code 1: No space left on device')],
+    [
+      'an error with its own grouping',
+      Object.assign(new Error('ENOSPC: no space left on device, open'), {
+        sentryFingerprint: ['ffmpeg-exit', 'merge', '1']
+      })
+    ]
+  ])('groups a full disk from %s into one issue', (_label, error) => {
+    const setFingerprint = captureWithFingerprintScope(error, { area: 'recording' })
+    expect(setFingerprint).toHaveBeenCalledWith(['disk-full'])
+  })
+
   it('leaves default grouping alone when no fingerprint is available', () => {
     const setFingerprint = captureWithFingerprintScope(new Error('plain'), { area: 'app' })
     expect(setFingerprint).not.toHaveBeenCalled()

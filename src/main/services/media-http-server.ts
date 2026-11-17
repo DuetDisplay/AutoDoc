@@ -1,5 +1,5 @@
 import http from 'http'
-import { createReadStream } from 'fs'
+import { createReadStream, type ReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { basename, join, resolve, sep } from 'path'
 import { tmpdir } from 'os'
@@ -215,7 +215,7 @@ async function handleMediaRequest(
       if (!res.headersSent) res.statusCode = 500
       res.destroy()
     })
-    rs.pipe(res)
+    pipeUntilResponseCloses(rs, res)
     return
   }
 
@@ -245,6 +245,16 @@ async function handleMediaRequest(
     if (!res.headersSent) res.statusCode = 500
     res.destroy()
   })
+  pipeUntilResponseCloses(rs, res)
+}
+
+/**
+ * `pipe` leaves the source open when the destination closes early, which the player does
+ * whenever it seeks or the page closes. On Windows that open file blocks the rename that
+ * encrypts the recording after transcription (AD-199), so close the file with the response.
+ */
+function pipeUntilResponseCloses(rs: ReadStream, res: http.ServerResponse): void {
+  res.once('close', () => rs.destroy())
   rs.pipe(res)
 }
 

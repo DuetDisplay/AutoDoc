@@ -21,6 +21,12 @@ describe('classifyMacLanguageSetupError', () => {
       'setup-download-failed'
     ],
     [new Error('fetch failed'), 'setup-download-failed'],
+    [new TypeError('terminated'), 'setup-download-failed'],
+    [
+      new Error('Downloaded model was incomplete: expected 8 bytes, received 3.'),
+      'setup-download-failed'
+    ],
+    [new Error('Meeting language changed during setup'), 'setup-failed'],
     [new Error('something nobody planned for'), 'setup-failed'],
     ['plain string failure', 'setup-failed']
   ])('maps %s to %s', (error, code) => {

@@ -12,14 +12,16 @@ import {
 } from './token-store'
 import type { CalendarEvent, CalendarAccount } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
-import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent } from './autodoc-log'
 import {
+  CALENDAR_CONNECTION_CANCELLED_MESSAGE,
+  NO_AUTH_WORKER_MESSAGE,
   CalendarTransientError,
   ReconnectRequiredCalendarAuthError,
   isReconnectRequiredGoogleAuthError,
   isTransientCalendarError
 } from './calendar-error-classification'
-import { requireConfiguredAuthWorkerUrl } from './distribution-config'
+import { getConfiguredAuthWorkerUrl, requireConfiguredAuthWorkerUrl } from './distribution-config'
 import { parseGoogleEventTime } from './calendar-time'
 
 const OAUTH_PORT = 42813
@@ -197,7 +199,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       const timeout = setTimeout(() => {
         rejectAndClose(new Error('Calendar connection timed out'))
       }, OAUTH_CALLBACK_TIMEOUT_MS)
-      const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
+      const cancel = (): void => rejectAndClose(new Error(CALENDAR_CONNECTION_CANCELLED_MESSAGE))
       this.pendingConnect = { cancel, closed }
 
       const closeServer = (): Promise<void> => {
@@ -353,8 +355,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (!creds.refresh_token) return
     if (creds.expiry_date && creds.expiry_date > Date.now() + 5 * 60_000) return
 
+    const authWorkerUrl = getConfiguredAuthWorkerUrl()
+    if (!authWorkerUrl) throw new CalendarTransientError(NO_AUTH_WORKER_MESSAGE)
+
     try {
-      const authWorkerUrl = requireConfiguredAuthWorkerUrl()
       const response = await fetch(`${authWorkerUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -379,17 +383,9 @@ export class GoogleCalendarProvider implements CalendarProvider {
             { cause: error }
           )
         }
-        console.error('Google token refresh failed:', responseText)
-        logAutodocFailure({
-          area: 'calendar',
-          message: 'Google token refresh failed',
-          error,
-          context: {
-            provider: 'google',
-            status: response.status
-          }
-        })
-        return
+        // Don't carry on with the expired token: the auth library would try its own refresh, which
+        // needs our client secret and fails with invalid_request.
+        throw error
       }
 
       const newTokens = (await response.json()) as { access_token: string; expires_in: number }
@@ -416,15 +412,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
           }
         )
       }
-      console.error('Google token refresh error:', err)
-      logAutodocFailure({
-        area: 'calendar',
-        message: 'Google token refresh errored',
-        error: err,
-        context: {
-          provider: 'google'
-        }
-      })
+      throw err
     }
   }
 

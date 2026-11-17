@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Lieber ein dunkleres Design? Aktivieren Sie den Dunkelmodus.",
   "announcement.done": "Fertig",
   "announcement.meetingLanguageBody": "Transkripte und Notizen unterstützen jetzt {count} Sprachen!",
-  "announcement.meetingLanguageDescription": "Wählen Sie die Sprache, die in Ihren Besprechungen gesprochen wird. Neue Transkripte und Notizen werden in dieser Sprache erstellt."
+  "announcement.meetingLanguageDescription": "Wählen Sie die Sprache, die in Ihren Besprechungen gesprochen wird. Neue Transkripte und Notizen werden in dieser Sprache erstellt.",
+  "askAi.indexingPreparingAnnouncement": "Ihre Besprechungen werden für „KI fragen“ vorbereitet.",
+  "askAi.indexingPausedAnnouncement": "Die Vorbereitung für „KI fragen“ pausiert, während eine Besprechung aufgenommen wird oder Notizen erstellt werden."
 }

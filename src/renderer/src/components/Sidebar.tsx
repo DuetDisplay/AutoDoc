@@ -8,8 +8,10 @@ import type {
   WhisperSetupStatus
 } from '../../../shared/types'
 import { trackEvent } from '../services/analytics'
+import { useAskAiAvailable } from '../stores/ask-ai-availability'
 import { useT } from '../services/i18n'
 import { AppearanceSwitch } from './AppearanceSwitch'
+import { BetaBadge } from './BetaBadge'
 import { getOllamaSetupLabel, getWhisperSetupLabel } from '../services/setup-status-labels'
 
 const SUPPORT_SURFACE = 'sidebar' as const
@@ -27,11 +29,12 @@ function WaveformIcon({ className }: { className?: string }) {
 
 export function Sidebar() {
   const t = useT()
+  const askAiAvailable = useAskAiAvailable()
   const navItems = [
     { to: ROUTES.upcoming, label: t('nav.upcoming') },
     { to: ROUTES.recordings, label: t('nav.recordings') },
     { to: ROUTES.search, label: t('nav.search') },
-    { to: ROUTES.askAi, label: t('nav.askAi') }
+    ...(askAiAvailable === true ? [{ to: ROUTES.askAi, label: t('nav.askAi') }] : [])
   ]
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
@@ -228,6 +231,7 @@ export function Sidebar() {
             <NavLink
               key={to}
               to={to}
+              data-sentry-label={`Navigate to ${to}`}
               className={({ isActive }) =>
                 `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${
                   isActive
@@ -237,6 +241,7 @@ export function Sidebar() {
               }
             >
               {label}
+              {to === ROUTES.askAi && <BetaBadge className="ml-1.5" />}
             </NavLink>
           ))}
         </nav>
@@ -304,6 +309,7 @@ export function Sidebar() {
 
           <NavLink
             to={ROUTES.settings}
+            data-sentry-label={`Navigate to ${ROUTES.settings}`}
             onClick={() => trackEvent('navigation_clicked', { page: 'settings' })}
             className={({ isActive }) =>
               `px-2.5 py-2 rounded-lg text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] transition-colors ${

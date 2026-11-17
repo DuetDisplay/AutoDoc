@@ -43,6 +43,7 @@ declare module '@sentry/electron/renderer' {
   export interface RendererSentryScope {
     setTag(key: string, value: string): void
     setExtras(extras: Record<string, unknown>): void
+    setFingerprint(fingerprint: string[]): void
   }
 
   export interface RendererSentryBreadcrumb {
