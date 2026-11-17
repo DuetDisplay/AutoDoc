@@ -300,7 +300,8 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.0...v1.3.1
