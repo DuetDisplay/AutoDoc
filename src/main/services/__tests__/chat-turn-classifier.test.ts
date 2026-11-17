@@ -30,6 +30,37 @@ const emptySession = (): ChatTurnSession => ({
   lastTurnWasClarification: false
 })
 
+describe('evidence rechecks', () => {
+  const cited = { ...LISTED, focusedRecordingIds: ['harbor'], evidenceRecordingIds: ['harbor'] }
+  it.each([
+    'Are you sure? Show me the evidence.',
+    'Are you sure about that?',
+    'Show me the sources',
+    'Verify that',
+    '本当ですか？'
+  ])('keeps %s on cited sources', (q) => {
+    expect(classifyChatTurn(q, PRIOR_LIST_HISTORY, cited)).toEqual({
+      kind: 'scoped_followup',
+      meetingIds: ['harbor']
+    })
+  })
+  it.each([
+    'Show me evidence for Atlas',
+    'Are you sure about Atlas?',
+    'Show me the sources from yesterday'
+  ])('does not make a fresh topic/window sticky: %s', (q) => {
+    expect(classifyChatTurn(q, PRIOR_LIST_HISTORY, cited)).not.toEqual({
+      kind: 'scoped_followup',
+      meetingIds: ['harbor']
+    })
+  })
+  it('does not use an inventory list as cited content', () => {
+    expect(
+      classifyChatTurn('Are you sure?', PRIOR_LIST_HISTORY, { ...cited, evidenceRecordingIds: [] })
+    ).not.toEqual({ kind: 'scoped_followup', meetingIds: ['harbor'] })
+  })
+})
+
 describe('classifyChatTurn — acknowledgements', () => {
   it('treats gratitude as an acknowledgement', () => {
     for (const q of ['thanks!', 'ok cool', 'much appreciated', 'cheers', 'no worries, ty', 'thx']) {
@@ -231,5 +262,42 @@ describe('classifyChatTurn — fresh retrieval', () => {
       'new_retrieval'
     )
     expect(classifyChatTurn('list my recordings', [], emptySession()).kind).toBe('new_retrieval')
+  })
+})
+
+it('keeps a numerical false premise scoped to the referenced meeting', () => {
+  expect(
+    classifyChatTurn('Was its budget $47,250?', PRIOR_LIST_HISTORY, {
+      ...emptySession(),
+      focusedRecordingIds: ['harbor']
+    })
+  ).toEqual({ kind: 'scoped_followup', meetingIds: ['harbor'] })
+})
+
+it('keeps that launch attached to the most recently focused meeting', () => {
+  expect(
+    classifyChatTurn('When is that launch?', PRIOR_LIST_HISTORY, {
+      ...LISTED,
+      focusedRecordingIds: ['harbor']
+    })
+  ).toEqual({ kind: 'scoped_followup', meetingIds: ['harbor'] })
+})
+
+describe('native generic follow-ups', () => {
+  const scope = { ...LISTED, focusedRecordingIds: ['atlas'], evidenceRecordingIds: ['atlas'] }
+  it.each([
+    'Quand est prévu le lancement ?',
+    'Quel est son budget ?',
+    '¿Cuándo es el lanzamiento?'
+  ])('retains the cited meeting for %s', (question) => {
+    expect(classifyChatTurn(question, PRIOR_LIST_HISTORY, scope)).toMatchObject({
+      kind: 'scoped_followup',
+      meetingIds: ['atlas']
+    })
+  })
+  it('does not retain scope when the user names a different meeting', () => {
+    expect(
+      classifyChatTurn('Quand est prévu le lancement Harbor ?', PRIOR_LIST_HISTORY, scope).kind
+    ).toBe('new_retrieval')
   })
 })

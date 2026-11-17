@@ -45,6 +45,60 @@ import { runNotesScanPipeline } from '../notes-scan-pipeline'
 
 const originalPlatform = process.platform
 
+it('keeps a stable memory-safe Windows context across transient free-memory fluctuations', () => {
+  setPlatform('win32')
+  const provider = new OllamaProvider('http://localhost:11434', 'qwen3:4b-instruct')
+  let freeGiB = 9.5
+  ;(provider as any).getHostMemorySnapshot = () => ({ freeGiB, totalGiB: 32 })
+  try {
+    provider.setLowMemoryMode(false)
+    expect(provider.getGenerationContextTokens()).toBe(4096)
+    freeGiB = 11
+    provider.setLowMemoryMode(false)
+    expect(provider.getGenerationContextTokens()).toBe(4096)
+    freeGiB = 12
+    provider.setLowMemoryMode(false)
+    expect(provider.getGenerationContextTokens()).toBe(8192)
+    freeGiB = 11
+    provider.setLowMemoryMode(false)
+    expect(provider.getGenerationContextTokens()).toBe(8192)
+    freeGiB = 9
+    provider.setLowMemoryMode(false)
+    expect(provider.getGenerationContextTokens()).toBe(4096)
+  } finally { setPlatform(originalPlatform) }
+})
+
+it.each(['summarize', 'completePrompt'] as const)(
+  'does not restart the runtime when intentional %s preemption arrives as a body AbortError',
+  async (method) => {
+    setPlatform('win32')
+    const recover = vi.fn(async () => { throw new Error('unexpected runtime recovery') })
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => new Response(
+      new ReadableStream({ start(controller) {
+        init?.signal?.addEventListener('abort', () => controller.error(
+          new DOMException('The operation was aborted.', 'AbortError')
+        ), { once: true })
+      } })
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = new OllamaProvider('http://localhost:11434', 'qwen3:4b-instruct', { recoverRuntimeOnce: recover })
+    try {
+      const request = method === 'summarize'
+        ? provider.summarize('preemption', '[00:00] [Mira] The approved budget is $47,250.')
+        : provider.completePrompt('Check this claim.', { num_ctx: 4096, num_predict: 24, temperature: 0, seed: 42 })
+      const outcome = request.then(() => null, (error: unknown) => error)
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+      provider.abortActiveRequests('SEGMENTATION_PREEMPTED')
+      expect((await outcome as Error).message).toBe('SEGMENTATION_PREEMPTED')
+      expect(recover).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledOnce()
+    } finally {
+      vi.unstubAllGlobals()
+      setPlatform(originalPlatform)
+    }
+  }
+)
+
 it.each([
   ['win32', 1],
   ['darwin', 3]

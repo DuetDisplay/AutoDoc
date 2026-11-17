@@ -8,6 +8,11 @@ import {
 } from '../notes-overview'
 
 describe('generateNotesOverview', () => {
+  it('propagates intentional preemption instead of retrying an optional overview', async () => {
+    await expect(generateNotesOverview('## Launch\n- Approved launch on Friday', async () => {
+      throw new Error('SEGMENTATION_PREEMPTED')
+    }, [{ startMs: 0, endMs: 10 }])).rejects.toThrow('SEGMENTATION_PREEMPTED')
+  })
   it('parses overview and takeaways from a JSON response', async () => {
     const result = await generateNotesOverview(
       '## Analytics\n- Collect login events from all users\n',

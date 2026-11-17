@@ -21,6 +21,8 @@ import {
   encryptFileInPlace
 } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { withSentryFingerprint } from './sentry-fingerprint'
+import { isMeetingDirMissing } from './meeting-dir'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
 import { memoryFailureFromError, type MemoryFailure } from '../../shared/memory-failure'
@@ -212,6 +214,11 @@ export class TranscriptionService {
 
   onComplete(callback: (meetingId: string) => void): void {
     this.onCompleteCallback = callback
+  }
+
+  /** True while the job may hold the meeting's files open. A finished job has released them. */
+  isActiveJob(meetingId: string): boolean {
+    return this.activeJobId === meetingId && this.activeStatus !== 'complete'
   }
 
   hasActiveOrQueuedWork(): boolean {
@@ -2769,7 +2776,10 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`${ready.workerEngine} worker failed: ${message.slice(-500)}`)
+      throw withSentryFingerprint(
+        new Error(`${ready.workerEngine} worker failed: ${message.slice(-500)}`),
+        ['transcription-worker-failed', ready.workerEngine]
+      )
     } finally {
       if (progressTimer) clearInterval(progressTimer)
     }
@@ -2972,7 +2982,10 @@ export class TranscriptionService {
         }
       }
       const engine = this.whisperManager.getWorkerEngine()
-      throw new Error(`${engine} worker failed: ${message.slice(-500)}`)
+      throw withSentryFingerprint(new Error(`${engine} worker failed: ${message.slice(-500)}`), [
+        'transcription-worker-failed',
+        engine
+      ])
     } finally {
       if (progressTimer) clearInterval(progressTimer)
     }
@@ -3404,23 +3417,38 @@ export class TranscriptionService {
           : null
       if (code !== 'ENOENT') throw err
     }
-    logAutodocFailure({
-      area: 'transcription',
-      message: 'Transcription failed',
-      error,
-      meetingId,
-      context: {
-        ...context,
-        retries,
-        errorCode,
-        filesCapturedAt: 'job-start',
-        backend: this.windowsAttempt?.backend ?? this.jobTranscriptionEngine().backend,
-        modelName: this.windowsAttempt?.modelName ?? this.jobTranscriptionEngine().modelName,
-        ...this.jobIdentity.get(meetingId),
-        processingProfile:
-          this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
-      }
-    })
+    // Deleting a recording mid-job fails the job's final write. That is not a transcription failure.
+    const meetingDeleted = await isMeetingDirMissing(join(this.recordingsBaseDir, meetingId))
+    // The app already asks the user to download the model, and a disposed worker means shutdown.
+    const isExpectedFailure =
+      errorCode === 'speech-model-missing' || errorMsg.includes('worker client disposed')
+    if (!meetingDeleted && isExpectedFailure) {
+      logAutodocEvent({
+        area: 'transcription',
+        level: 'warn',
+        message: 'Transcription failed',
+        meetingId,
+        context: { errorCode, retries }
+      })
+    }
+    if (!meetingDeleted && !isExpectedFailure)
+      logAutodocFailure({
+        area: 'transcription',
+        message: 'Transcription failed',
+        error,
+        meetingId,
+        context: {
+          ...context,
+          retries,
+          errorCode,
+          filesCapturedAt: 'job-start',
+          backend: this.windowsAttempt?.backend ?? this.jobTranscriptionEngine().backend,
+          modelName: this.windowsAttempt?.modelName ?? this.jobTranscriptionEngine().modelName,
+          ...this.jobIdentity.get(meetingId),
+          processingProfile:
+            this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
+        }
+      })
     if (process.platform === 'win32' && (await this.hasUsableTranscript(meetingId))) {
       this.broadcastStatus(meetingId, 'complete', undefined, errorCode, { reprocessFailed: true })
       return

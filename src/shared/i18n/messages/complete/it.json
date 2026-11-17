@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Preferisci un aspetto più scuro? Attiva la modalità scura.",
   "announcement.done": "Fine",
   "announcement.meetingLanguageBody": "Le trascrizioni e le note ora sono disponibili in {count} lingue!",
-  "announcement.meetingLanguageDescription": "Scegli la lingua parlata nelle tue riunioni. Le nuove trascrizioni e note useranno questa lingua."
+  "announcement.meetingLanguageDescription": "Scegli la lingua parlata nelle tue riunioni. Le nuove trascrizioni e note useranno questa lingua.",
+  "askAi.indexingPreparingAnnouncement": "Preparazione delle riunioni per Chiedi all’IA.",
+  "askAi.indexingPausedAnnouncement": "La preparazione per Chiedi all’IA è in pausa mentre si registra una riunione o si preparano le note."
 }

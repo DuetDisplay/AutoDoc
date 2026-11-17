@@ -44,7 +44,7 @@ export function resolveUiLanguage(value: unknown): UiLanguageCode {
   return normalizeUiLanguage(value ?? DEFAULT_UI_LANGUAGE)
 }
 
-export type PluralMessage = 'meetings' | 'attendees' | 'matches' | 'acrossMeetings'
+export type PluralMessage = 'meetings' | 'attendees' | 'matches' | 'acrossMeetings' | 'passages'
 
 export function translatePlural(
   language: UiLanguageCode,

@@ -6,7 +6,17 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/dist-qa', '**/out', 'vendor/**'] },
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/dist-qa',
+      '**/out',
+      'vendor/**',
+      // Local app profiles/evidence. Keep authored application and test source under lint.
+      'artifacts/**'
+    ]
+  },
   tseslint.configs.recommended,
   {
     rules: {
@@ -29,7 +39,8 @@ export default defineConfig(
     }
   },
   {
-    files: ['**/*.{ts,tsx}'],
+    // React hook/refresh rules apply to the renderer, not Node policy helpers.
+    files: ['src/renderer/**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': eslintPluginReactHooks,
       'react-refresh': eslintPluginReactRefresh

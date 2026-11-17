@@ -1,8 +1,11 @@
+import { useChatStore } from '../stores/chat'
+import { useToastStore } from '../stores/toast'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MeetingDetail } from './MeetingDetail'
+import { resetAskAiAvailabilityForTests } from '../stores/ask-ai-availability'
 import {
   createMeetingSegments,
   createTranscript,
@@ -84,6 +87,107 @@ async function renderMeetingDetail() {
   })
   return result!
 }
+
+describe('deleting a recording', () => {
+  async function openSettings() {
+    await renderMeetingDetail()
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings', exact: true }))
+  }
+
+  async function confirmDelete() {
+    await userEvent.click(screen.getByRole('button', { name: 'Delete', exact: true }))
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm Delete', exact: true }))
+  }
+
+  const blockedReason =
+    'Stop the recording and wait for saving and transcription to finish before deleting it.'
+
+  it('disables Delete and explains why while the recording is busy', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:get-detail', {
+      title: 'Test Meeting',
+      sourceName: 'Zoom',
+      date: Date.now(),
+      durationSeconds: 300,
+      deleteBlocked: true
+    })
+    await openSettings()
+
+    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+    expect(screen.getByText(blockedReason)).toBeInTheDocument()
+  })
+
+  it.each(['downloading', 'transcribing', 'diarizing'] as const)(
+    'disables Delete while transcription is %s, then enables it when it ends',
+    async (status) => {
+      const api = window.electronAPI as unknown as MockElectronAPI
+      api.setHandler('transcription:get-status', status)
+      await openSettings()
+
+      expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+      expect(screen.getByText(blockedReason)).toBeInTheDocument()
+
+      await act(async () =>
+        api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+      )
+
+      expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+    }
+  )
+
+  it('leaves Delete available for a recording that is only queued', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'queued')
+    await openSettings()
+
+    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+  })
+
+  it('enables Delete again if a refused delete was waiting on transcription', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:delete', { status: 'busy' })
+    await openSettings()
+    await confirmDelete()
+    expect(await screen.findByText(blockedReason)).toBeInTheDocument()
+
+    await act(async () =>
+      api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+    )
+  })
+
+  it('stays on the page and explains when main refuses a stale Delete', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:delete', { status: 'busy' })
+    await openSettings()
+
+    await confirmDelete()
+
+    expect(await screen.findByText(blockedReason)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+  })
+
+  it('shows a message and stays on the page when Delete fails unexpectedly', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('recording:delete', () => {
+      throw new Error('EPERM')
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await openSettings()
+
+    await confirmDelete()
+
+    await waitFor(() =>
+      expect(useToastStore.getState().activeToast).toMatchObject({
+        messageKey: 'meeting.deleteFailed'
+      })
+    )
+    expect(screen.getByText('Delete recording')).toBeInTheDocument()
+  })
+})
 
 describe('memory failure guidance', () => {
   it('retains previous results on Windows and distinguishes explicit Reprocess', async () => {
@@ -1667,4 +1771,56 @@ describe('MeetingDetail', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('Finishing up your video…')).toBeInTheDocument()
   })
+})
+
+it('opens a fresh scoped Ask AI conversation from the meeting detail action', async () => {
+  const api = installMockElectronApi({
+    'recording:get-detail': { title: 'Lumen workshop', date: 0, durationSeconds: 60 },
+    'transcription:get-status': 'complete',
+    'segmentation:get-status': 'complete',
+    'transcription:get-transcript': [],
+    'segmentation:get-segments': createMeetingSegments(),
+    'recording:get-media': { hasVideo: false, hasAudio: false, mediaBaseUrl: null },
+    'speakers:get': {}
+  })
+  useChatStore.getState().addMessage({ role: 'assistant', content: 'Old global conversation.' })
+  render(
+    <MemoryRouter initialEntries={['/recordings/test-123']}>
+      <Routes>
+        <Route path="/recordings/:id" element={<MeetingDetail />} />
+        <Route path="/ask-ai" element={<div>Scoped Ask AI destination</div>} />
+      </Routes>
+    </MemoryRouter>
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Ask about this meeting' }))
+  expect(await screen.findByText('Scoped Ask AI destination')).toBeInTheDocument()
+  expect(useChatStore.getState().meetingScope).toEqual({
+    meetingId: 'test-123',
+    title: 'Lumen workshop'
+  })
+  expect(useChatStore.getState().messages).toEqual([])
+  expect(api.invoke).toHaveBeenCalledWith('chat:new')
+})
+
+it('hides the Ask AI action where Ask AI is unavailable', async () => {
+  resetAskAiAvailabilityForTests(false)
+  installMockElectronApi({
+    'recording:get-detail': { title: 'Lumen workshop', date: 0, durationSeconds: 60 },
+    'transcription:get-status': 'complete',
+    'segmentation:get-status': 'complete',
+    'transcription:get-transcript': [],
+    'segmentation:get-segments': createMeetingSegments(),
+    'recording:get-media': { hasVideo: false, hasAudio: false, mediaBaseUrl: null },
+    'speakers:get': {}
+  })
+  render(
+    <MemoryRouter initialEntries={['/recordings/test-123']}>
+      <Routes>
+        <Route path="/recordings/:id" element={<MeetingDetail />} />
+      </Routes>
+    </MemoryRouter>
+  )
+  expect(await screen.findByRole('button', { name: 'Transcript' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Ask about this meeting' })).not.toBeInTheDocument()
 })

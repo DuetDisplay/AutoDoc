@@ -29,9 +29,13 @@ function deferred() {
   return { promise, resolve }
 }
 
-function fixture(models: string[], retainSmall = false) {
+function fixture(models: string[], retainSmall = false, profileModel?: string) {
   const installed = new Set(models)
-  const manager = new OllamaManager({ model: SMALL, retainLowSpecModel: () => retainSmall })
+  const manager = new OllamaManager({
+    model: SMALL,
+    retainLowSpecModel: () => retainSmall,
+    ...(profileModel ? { resolveModel: async () => profileModel } : {})
+  })
   vi.spyOn(manager, 'start').mockResolvedValue(undefined)
   vi.spyOn(manager, 'isServerRunning').mockResolvedValue(true)
   vi.spyOn(manager, 'listInstalledModels').mockImplementation(async () => [...installed])
@@ -197,4 +201,91 @@ describe('notes model readiness', () => {
     await rejected
     expect(remove).not.toHaveBeenCalled()
   })
+})
+
+
+it('keeps the profile-selected Ask AI model when a real Windows manager prepares another notes model', async () => {
+  const { manager } = fixture([SMALL,QWEN],true,QWEN)
+  await manager.startAndPull()
+  expect(manager.getAskAiModel()).toBe(QWEN)
+  expect((await manager.ensureNotesModelReady(SMALL)).activeModel).toBe(SMALL)
+  expect(manager.getModel()).toBe(SMALL)
+  expect(manager.getAskAiModel()).toBe(QWEN)
+})
+it('keeps startup legacy through a notes downgrade, then changes Ask AI to Qwen when its pull completes', async () => {
+  const { manager, installed, pull, remove } = fixture([LEGACY,SMALL],true,QWEN)
+  const gate=deferred()
+  pull.mockImplementation(async model=>{await gate.promise;installed.add(model!)})
+  await manager.startAndPull()
+  expect(manager.getAskAiModel()).toBe(LEGACY)
+  manager.beginNotesGeneration()
+  await manager.ensureNotesModelReady(SMALL)
+  expect(manager.getModel()).toBe(SMALL)
+  expect(manager.getAskAiModel()).toBe(LEGACY)
+  await manager.endNotesGeneration()
+  expect(remove).not.toHaveBeenCalledWith(LEGACY)
+  gate.resolve()
+  await vi.waitFor(()=>expect(manager.getAskAiModel()).toBe(QWEN))
+  expect(manager.getModel()).toBe(SMALL)
+})
+
+it('moves Ask AI to the profile model when a later notes job finishes a pull that startup failed, then deletes legacy', async () => {
+  const { manager, installed, pull, remove } = fixture([LEGACY], false, QWEN)
+  pull.mockRejectedValueOnce(new Error('offline'))
+  await manager.startAndPull()
+  await vi.waitFor(() => expect(pull).toHaveBeenCalledTimes(1))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(manager.getAskAiModel()).toBe(LEGACY)
+  expect(installed.has(QWEN)).toBe(false)
+
+  expect((await manager.ensureNotesModelReady(QWEN)).activeModel).toBe(LEGACY)
+  await vi.waitFor(() => expect(installed.has(LEGACY)).toBe(false))
+  expect(pull).toHaveBeenCalledTimes(2)
+  expect(manager.getAskAiModel()).toBe(QWEN)
+  expect(installed.has(QWEN)).toBe(true)
+  expect(remove).toHaveBeenCalledWith(LEGACY)
+})
+
+it('keeps legacy for Ask AI until the profile pull completes and waits for the active job before deleting it', async () => {
+  const { manager, installed, pull, remove } = fixture([LEGACY], false, QWEN)
+  pull.mockRejectedValueOnce(new Error('offline'))
+  await manager.startAndPull()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const gate = deferred()
+  pull.mockImplementation(async (model) => {
+    await gate.promise
+    installed.add(model!)
+  })
+  manager.beginNotesGeneration()
+  await manager.ensureNotesModelReady(QWEN)
+  expect(manager.getAskAiModel()).toBe(LEGACY)
+  gate.resolve()
+  await vi.waitFor(() => expect(manager.getAskAiModel()).toBe(QWEN))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(remove).not.toHaveBeenCalled()
+  await manager.endNotesGeneration()
+  expect(installed.has(LEGACY)).toBe(false)
+  expect(installed.has(manager.getAskAiModel())).toBe(true)
+})
+
+it('does not treat a per-job override as the Ask AI model', async () => {
+  const { manager, installed, remove } = fixture([QWEN], false, QWEN)
+  await manager.startAndPull()
+  expect(manager.getAskAiModel()).toBe(QWEN)
+  expect((await manager.ensureNotesModelReady(SMALL)).activeModel).toBe(SMALL)
+  expect(installed.has(SMALL)).toBe(true)
+  expect(manager.getModel()).toBe(SMALL)
+  expect(manager.getAskAiModel()).toBe(QWEN)
+  expect(remove).not.toHaveBeenCalledWith(QWEN)
+  expect(installed.has(QWEN)).toBe(true)
+})
+
+it('keeps a low-spec profile model for Ask AI when a notes job overrides to Qwen', async () => {
+  const { manager, installed, remove } = fixture([SMALL], false, SMALL)
+  await manager.startAndPull()
+  expect((await manager.ensureNotesModelReady(QWEN)).activeModel).toBe(QWEN)
+  expect(manager.getAskAiModel()).toBe(SMALL)
+  // Cleanup for the Qwen job would otherwise delete the small model Ask AI still uses.
+  expect(remove).not.toHaveBeenCalledWith(SMALL)
+  expect(installed.has(SMALL)).toBe(true)
 })

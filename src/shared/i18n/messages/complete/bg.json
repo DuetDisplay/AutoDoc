@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Предпочитате по-тъмен изглед? Включете тъмния режим.",
   "announcement.done": "Готово",
   "announcement.meetingLanguageBody": "Транскрипциите и бележките вече поддържат {count} езика!",
-  "announcement.meetingLanguageDescription": "Изберете езика, на който се говори в срещите ви. Новите транскрипции и бележки ще бъдат на този език."
+  "announcement.meetingLanguageDescription": "Изберете езика, на който се говори в срещите ви. Новите транскрипции и бележки ще бъдат на този език.",
+  "askAi.indexingPreparingAnnouncement": "Подготовка на срещите ви за „Попитай ИИ“.",
+  "askAi.indexingPausedAnnouncement": "Подготовката за „Попитай ИИ“ е спряна, докато се записва среща или се създават бележки."
 }

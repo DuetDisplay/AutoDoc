@@ -18,6 +18,8 @@ import {
   formatNotesV2SearchBody,
   type NotesV2SearchEntry
 } from './notes-search-text'
+import { numberSourceCards, type ChatSourceCard } from './ask-ai-citations'
+import type { MeetingIndexService } from './meeting-index'
 import {
   buildRecordingTitle,
   buildRecordingTitleAliases,
@@ -234,6 +236,8 @@ interface MeetingEvidenceChunk {
   assignee: string | null
   deadline: string | null
   searchText: string
+  startMs: number | null
+  endMs: number | null
 }
 
 export interface ChatRetrievalDiagnostics {
@@ -267,6 +271,7 @@ export interface ChatRetrievalDiagnostics {
 export interface ChatRetrievalResult {
   directAnswer: string | null
   context: string
+  sources?: ChatSourceCard[]
   clarificationOptions?: ChatClarificationOption[]
   diagnostics: ChatRetrievalDiagnostics
 }
@@ -282,12 +287,15 @@ interface ChatRecordingIndexOptions {
   watch?: boolean
   embeddingProvider?: ChatEmbeddingProvider | null
   embeddingCachePath?: string | null
+  meetingIndex?: MeetingIndexService | null
 }
 
 export interface ChatEmbeddingProvider {
   readonly model: string
+  readonly cacheIdentity?: string
+  readonly availabilityReason?: 'unknown' | 'available' | 'missing' | 'disabled' | 'unreachable'
   isAvailable(): Promise<boolean>
-  embed(texts: string[]): Promise<number[][]>
+  embed(texts: string[], signal?: AbortSignal): Promise<number[][]>
 }
 
 interface SemanticRetrievalDiagnostics {
@@ -307,6 +315,7 @@ export class ChatRecordingIndex {
   private embeddingCacheLoaded = false
   private embeddingCachePath: string | null
   private embeddingProvider: ChatEmbeddingProvider | null
+  private meetingIndex: MeetingIndexService | null
   private semanticDiagnostics = createEmptySemanticDiagnostics()
   private watcher: FSWatcher | null = null
   private watchDebounce: NodeJS.Timeout | null = null
@@ -317,6 +326,7 @@ export class ChatRecordingIndex {
   ) {
     this.embeddingProvider = options.embeddingProvider ?? null
     this.embeddingCachePath = options.embeddingCachePath ?? null
+    this.meetingIndex = options.meetingIndex ?? null
     if (options.watch) this.startWatcher()
   }
 
@@ -326,6 +336,7 @@ export class ChatRecordingIndex {
     this.materializedInventoryCache.clear()
     this.embeddingCache.clear()
     this.embeddingCacheLoaded = false
+    this.meetingIndex?.invalidate()
   }
 
   dispose(): void {
@@ -557,7 +568,7 @@ export class ChatRecordingIndex {
         .slice(0, Math.min(MAX_CHAT_FULL_CONTEXT_MEETINGS, MAX_RELEVANCE_CANDIDATES))
         .map(({ meeting }) => meeting)
       if (compoundSelected.length > 0) {
-        const context = await this.formatMeetingContext({
+        const { context, sources } = await this.formatMeetingContext({
           inventory,
           selected: compoundSelected,
           question,
@@ -570,6 +581,7 @@ export class ChatRecordingIndex {
           inventory,
           directAnswer: null,
           context,
+          sources,
           matched: compoundSelected,
           selected: compoundSelected,
           matchMode: 'ranked',
@@ -670,6 +682,27 @@ export class ChatRecordingIndex {
       }
     }
 
+    if (isDirectNoteFactQuestion(question) && selected.length > 0) {
+      const noteFact = await this.formatDirectNoteFactAnswer(selected, question, summaryStats)
+      if (noteFact) {
+        return this.result({
+          intent,
+          inventory,
+          directAnswer: noteFact.answer,
+          context: '',
+          sources: noteFact.sources,
+          matched,
+          selected,
+          matchMode: 'ranked',
+          inventoryElapsedMs,
+          selectionElapsedMs,
+          summaryElapsedMs: Date.now() - summaryStartedAt,
+          cacheHits: summaryStats.cacheHits,
+          cacheMisses: summaryStats.cacheMisses
+        })
+      }
+    }
+
     if (isMultiMeetingSynthesisQuestion(question) && selected.length > 1) {
       const directAnswer = await this.formatMultiMeetingSynthesisAnswer(
         selected,
@@ -695,7 +728,7 @@ export class ChatRecordingIndex {
       }
     }
 
-    const context = await this.formatMeetingContext({
+    const { context, sources } = await this.formatMeetingContext({
       inventory,
       selected,
       question,
@@ -709,6 +742,7 @@ export class ChatRecordingIndex {
       inventory,
       directAnswer: null,
       context,
+      sources,
       matched,
       selected,
       matchMode: 'ranked',
@@ -787,7 +821,28 @@ export class ChatRecordingIndex {
       })
     }
 
-    const context = await this.formatMeetingContext({
+    if (isDirectNoteFactQuestion(question) && selected.length > 0) {
+      const noteFact = await this.formatDirectNoteFactAnswer(selected, question, summaryStats)
+      if (noteFact) {
+        return this.result({
+          intent: 'broad',
+          inventory,
+          directAnswer: noteFact.answer,
+          context: '',
+          sources: noteFact.sources,
+          matched: selected,
+          selected,
+          matchMode: 'ranked',
+          inventoryElapsedMs,
+          selectionElapsedMs,
+          summaryElapsedMs: Date.now() - summaryStartedAt,
+          cacheHits: summaryStats.cacheHits,
+          cacheMisses: summaryStats.cacheMisses
+        })
+      }
+    }
+
+    const { context, sources } = await this.formatMeetingContext({
       inventory,
       selected,
       question,
@@ -801,6 +856,7 @@ export class ChatRecordingIndex {
       inventory,
       directAnswer: null,
       context,
+      sources,
       matched: selected,
       selected,
       matchMode: 'ranked',
@@ -848,7 +904,7 @@ export class ChatRecordingIndex {
       })
     }
 
-    const context = await this.formatMeetingContext({
+    const { context, sources } = await this.formatMeetingContext({
       inventory,
       selected,
       question: `${question} Answer only from recordings matched to the previous calendar meeting list.`,
@@ -863,6 +919,7 @@ export class ChatRecordingIndex {
       inventory,
       directAnswer: null,
       context,
+      sources,
       matched: selected,
       selected,
       matchMode: 'ranked',
@@ -972,7 +1029,32 @@ export class ChatRecordingIndex {
       })
     }
 
-    const context = await this.formatMeetingContext({
+    if (isDirectNoteFactQuestion(params.question) && params.selected.length > 0) {
+      const noteFact = await this.formatDirectNoteFactAnswer(
+        params.selected,
+        params.question,
+        summaryStats
+      )
+      if (noteFact) {
+        return this.result({
+          intent: 'exact',
+          inventory: params.inventory,
+          directAnswer: noteFact.answer,
+          context: '',
+          sources: noteFact.sources,
+          matched: params.selected,
+          selected: params.selected,
+          matchMode: 'exact-title',
+          inventoryElapsedMs: params.inventoryElapsedMs,
+          selectionElapsedMs: params.selectionElapsedMs,
+          summaryElapsedMs: Date.now() - summaryStartedAt,
+          cacheHits: summaryStats.cacheHits,
+          cacheMisses: summaryStats.cacheMisses
+        })
+      }
+    }
+
+    const { context, sources } = await this.formatMeetingContext({
       inventory: params.inventory,
       selected: params.selected,
       question: params.question,
@@ -986,6 +1068,7 @@ export class ChatRecordingIndex {
       inventory: params.inventory,
       directAnswer: null,
       context,
+      sources,
       matched: params.selected,
       selected: params.selected,
       matchMode: 'exact-title',
@@ -1098,7 +1181,9 @@ export class ChatRecordingIndex {
     const actionItemQuestion =
       isActionItemQuestion(question) || isStructuredActionFactQuestion(question)
     const skipSemantic =
-      actionItemQuestion || (hasExplicitMeetingTypeCue(question) && poolSource.length <= 8)
+      actionItemQuestion ||
+      isDirectNoteFactQuestion(question) ||
+      (hasExplicitMeetingTypeCue(question) && poolSource.length <= 8)
     const fullyRanked = await this.rankMeetingsWithSummaries(poolSource, question, summaryStats, {
       semantic: !skipSemantic
     })
@@ -1414,15 +1499,19 @@ export class ChatRecordingIndex {
     includeFullNotes: boolean
     summaryStats: { cacheHits: number; cacheMisses: number }
     scopeDescription?: string
-  }): Promise<string> {
+  }): Promise<{ context: string; sources: ChatSourceCard[] }> {
     if (params.selected.length === 0) {
       const scope = params.scopeDescription ? ` Scope: ${params.scopeDescription}.` : ''
-      return `Recording inventory: ${params.inventory.length} total recordings.${scope}\nNo matching meeting data available.`
+      return {
+        context: `Recording inventory: ${params.inventory.length} total recordings.${scope}\nNo matching meeting data available.`,
+        sources: []
+      }
     }
 
     const contextParts = [
       `Recording inventory: ${params.inventory.length} total recordings. ${params.selected.length} recording${params.selected.length === 1 ? '' : 's'} selected for this answer.${params.scopeDescription ? ` Scope: ${params.scopeDescription}.` : ''}`
     ]
+    const sourceDrafts: Array<Omit<ChatSourceCard, 'n'>> = []
 
     for (const meeting of params.selected) {
       const dateStr = new Date(meeting.date).toLocaleDateString('en-US', {
@@ -1452,11 +1541,22 @@ export class ChatRecordingIndex {
       if (summary.body) {
         meetingContext +=
           '\nUse the structured notes first. Use the transcript excerpt only as fallback or supporting detail.\n'
-        const evidence = formatRelevantNoteEvidence(summary, params.question)
-        if (evidence) {
-          meetingContext += `\nMost relevant structured notes for the question:\n${evidence}\n`
+        const relevant = selectRelevantEvidence(summary, params.question)
+        if (relevant.length > 0) {
+          meetingContext += `\nMost relevant structured notes for the question:\n${relevant
+            .map((chunk) => `- [${chunk.category}] ${formatEvidenceChunkForContext(chunk)}`)
+            .join('\n')}\n`
+          for (const chunk of relevant) {
+            sourceDrafts.push({
+              meetingId: meeting.id,
+              title: meeting.title,
+              quote: chunk.content,
+              startMs: chunk.startMs,
+              category: String(chunk.category)
+            })
+          }
         }
-        if (params.includeFullNotes || !evidence) {
+        if (params.includeFullNotes || relevant.length === 0) {
           meetingContext += `\n${limitMeetingBody(summary.body)}`
         }
       } else {
@@ -1465,7 +1565,8 @@ export class ChatRecordingIndex {
       contextParts.push(meetingContext)
     }
 
-    return contextParts.join('\n\n---\n\n')
+    const sources = numberSourceCards(sourceDrafts)
+    return { context: contextParts.join('\n\n---\n\n'), sources }
   }
 
   private async formatExactSummaryAnswer(params: {
@@ -1621,6 +1722,81 @@ export class ChatRecordingIndex {
     return `I found this in the structured meeting notes:\n\n${lines.join('\n')}`
   }
 
+  private async formatDirectNoteFactAnswer(
+    selected: MeetingInventoryEntry[],
+    question: string,
+    summaryStats: { cacheHits: number; cacheMisses: number }
+  ): Promise<{ answer: string; sources: ChatSourceCard[] } | null> {
+    const profile = buildRetrievalProfile(question)
+    const lastTalk = isLastTalkQuestion(question)
+    const hits: Array<{
+      meeting: MeetingInventoryEntry
+      chunk: MeetingEvidenceChunk
+      score: number
+    }> = []
+
+    for (const meeting of selected) {
+      const beforeHits = this.getCacheHitCount()
+      const summary = await this.loadMeetingSummary(meeting, 'search')
+      if (this.getCacheHitCount() > beforeHits) {
+        summaryStats.cacheHits += 1
+      } else {
+        summaryStats.cacheMisses += 1
+      }
+
+      for (const chunk of selectRelevantEvidence(summary, question)) {
+        hits.push({
+          meeting,
+          chunk,
+          score: scoreEvidenceChunkForRetrieval(chunk, question, profile)
+        })
+      }
+    }
+
+    if (hits.length === 0) return null
+
+    hits.sort((left, right) => {
+      if (lastTalk && left.meeting.date !== right.meeting.date) {
+        return right.meeting.date - left.meeting.date
+      }
+      if (left.score !== right.score) return right.score - left.score
+      return right.meeting.date - left.meeting.date
+    })
+
+    const primaryId = hits[0].meeting.id
+    const chosen = lastTalk
+      ? hits.filter((hit) => hit.meeting.id === primaryId).slice(0, 4)
+      : hits.slice(0, 4)
+
+    const byMeeting = new Map<string, typeof chosen>()
+    for (const hit of chosen) {
+      const list = byMeeting.get(hit.meeting.id) ?? []
+      list.push(hit)
+      byMeeting.set(hit.meeting.id, list)
+    }
+
+    const sections = [...byMeeting.values()].map((meetingHits) => {
+      const meeting = meetingHits[0].meeting
+      const lines = meetingHits.map((hit) => `- ${formatEvidenceChunkForContext(hit.chunk)}`)
+      return lastTalk
+        ? `The last time this came up was ${meeting.title} (${formatMeetingStamp(meeting)}).\n\n${lines.join('\n')}`
+        : `From ${meeting.title} (${formatMeetingStamp(meeting)}):\n${lines.join('\n')}`
+    })
+
+    return {
+      answer: sections.join('\n\n'),
+      sources: numberSourceCards(
+        chosen.map((hit) => ({
+          meetingId: hit.meeting.id,
+          title: hit.meeting.title,
+          quote: hit.chunk.content,
+          startMs: hit.chunk.startMs,
+          category: String(hit.chunk.category)
+        }))
+      )
+    }
+  }
+
   private async formatMultiMeetingSynthesisAnswer(
     selected: MeetingInventoryEntry[],
     question: string,
@@ -1679,9 +1855,52 @@ export class ChatRecordingIndex {
       return cached.summary
     }
 
-    const summary = await loadMeetingSummaryFromDisk(meeting.dir, mode)
+    const summary = this.meetingIndex
+      ? ((await this.loadMeetingSummaryFromIndex(meeting, mode)) ??
+        (await loadMeetingSummaryFromDisk(meeting.dir, mode)))
+      : await loadMeetingSummaryFromDisk(meeting.dir, mode)
     this.summaryCache.set(key, { signature, summary })
     return summary
+  }
+
+  private async loadMeetingSummaryFromIndex(
+    meeting: MeetingInventoryEntry,
+    mode: SummaryMode
+  ): Promise<MeetingSummary | null> {
+    if (!this.meetingIndex) return null
+    const indexed = await this.meetingIndex.getMeeting(meeting.id)
+    if (!indexed || indexed.noteEntries.length === 0) return null
+    const transcriptEvidence =
+      mode === 'full'
+        ? indexed.transcriptChunks.map((chunk) => ({
+            id: chunk.id,
+            source: 'transcript' as const,
+            category: 'transcript' as const,
+            title: `Transcript ${formatTranscriptTimestamp(chunk.startMs)}`,
+            content: chunk.text,
+            topic: null,
+            assignee: null,
+            deadline: null,
+            searchText: chunk.text,
+            startMs: chunk.startMs,
+            endMs: chunk.endMs
+          }))
+        : []
+    const transcriptText = transcriptEvidence.map((chunk) => chunk.content).join(' ')
+    const searchText = indexed.noteEntries
+      .map((entry) =>
+        [entry.topic, entry.title, entry.content, entry.owner, entry.deadline, entry.category]
+          .filter(Boolean)
+          .join(' ')
+      )
+      .join(' ')
+    const transcriptExcerpt = formatTranscriptFallbackExcerpt(transcriptText, searchText)
+    return summaryFromV2Entries(
+      indexed.noteEntries,
+      transcriptExcerpt,
+      transcriptText,
+      transcriptEvidence
+    )
   }
 
   private async getSummarySignature(meetingDir: string, mode: SummaryMode): Promise<string> {
@@ -1701,6 +1920,7 @@ export class ChatRecordingIndex {
     inventory: MeetingInventoryEntry[]
     directAnswer: string | null
     context: string
+    sources?: ChatSourceCard[]
     matched: MeetingInventoryEntry[]
     selected: MeetingInventoryEntry[]
     matchMode: ChatRetrievalDiagnostics['matchMode']
@@ -1715,6 +1935,7 @@ export class ChatRecordingIndex {
     return {
       directAnswer: params.directAnswer,
       context: params.context,
+      sources: params.sources,
       clarificationOptions: params.clarificationOptions,
       diagnostics: {
         intent: params.intent,
@@ -1781,7 +2002,9 @@ function summaryFromV2Entries(
     topic: note.topic,
     assignee: note.assignee,
     deadline: note.deadline,
-    searchText: note.searchText
+    searchText: note.searchText,
+    startMs: entries[index].sources[0]?.startMs ?? null,
+    endMs: entries[index].sources[0]?.endMs ?? null
   }))
   const searchText = notes.map((note) => note.searchText).join(' ')
   const snippets = notes.map((note) => `${note.title}: ${note.content}`)
@@ -1879,7 +2102,9 @@ async function loadMeetingSummaryFromDisk(
           topic: item.topic,
           assignee: item.assignee,
           deadline: item.deadline,
-          searchText: noteSearchText
+          searchText: noteSearchText,
+          startMs: item.sourceStartMs ?? null,
+          endMs: item.sourceEndMs ?? null
         })
       }
     }
@@ -2064,7 +2289,9 @@ async function readTranscriptEvidence(meetingDir: string): Promise<MeetingEviden
         topic: null,
         assignee: null,
         deadline: null,
-        searchText: text
+        searchText: text,
+        startMs: first.startMs,
+        endMs: last.endMs
       })
     }
     buffer = []
@@ -2391,6 +2618,36 @@ function isActionItemQuestion(question: string): boolean {
   return /\b(action|actions|item|items|task|tasks|todo|todos|follow|steps)\b/.test(normalized)
 }
 
+function isLastTalkQuestion(question: string): boolean {
+  const normalized = normalizeRecordingSearchText(question)
+  return /\b(last time|most recent time|when did we (last )?(talk|discuss|mention))\b/.test(
+    normalized
+  )
+}
+
+export function isDirectNoteFactQuestion(question: string): boolean {
+  if (isCompoundSummaryAndFactQuestion(question) || isComparisonQuestion(question)) return false
+  if (isActionItemQuestion(question) || isStructuredActionFactQuestion(question)) return false
+  const normalized = normalizeRecordingSearchText(question)
+  if (/\b(which meeting|which one|which call)\b/.test(normalized)) return false
+  return (
+    isLastTalkQuestion(question) ||
+    /\b(decid(e|ed|ing)|decisions?|agree[d]?|land(?:ed)? on)\b/.test(normalized) ||
+    /\bwhat did (we|.+) (say|agree)\b/.test(normalized) ||
+    /\bwhat was (said|decided|agreed)\b/.test(normalized)
+  )
+}
+
+function formatMeetingStamp(meeting: MeetingInventoryEntry): string {
+  return new Date(meeting.date).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+}
+
 function isStructuredActionFactQuestion(question: string): boolean {
   const normalized = normalizeRecordingSearchText(question)
   return /\b(assigned|assignee|owner|owns|responsible|due|deadline)\b/.test(normalized)
@@ -2699,11 +2956,11 @@ function limitText(text: string, maxChars: number): string {
   return normalized.slice(0, maxChars).trim()
 }
 
-function formatRelevantNoteEvidence(summary: MeetingSummary, question: string): string {
-  if (summary.evidence.length === 0) return ''
+function selectRelevantEvidence(summary: MeetingSummary, question: string): MeetingEvidenceChunk[] {
+  if (summary.evidence.length === 0) return []
 
   const profile = buildRetrievalProfile(question)
-  const scored = summary.evidence
+  return summary.evidence
     .map((chunk) => ({
       chunk,
       score: scoreEvidenceChunkForRetrieval(chunk, question, profile)
@@ -2711,12 +2968,7 @@ function formatRelevantNoteEvidence(summary: MeetingSummary, question: string): 
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_RELEVANT_NOTE_EXCERPTS_PER_MEETING)
-
-  if (scored.length === 0) return ''
-
-  return scored
-    .map(({ chunk }) => `- [${chunk.category}] ${formatEvidenceChunkForContext(chunk)}`)
-    .join('\n')
+    .map(({ chunk }) => chunk)
 }
 
 function formatNoteForContext(note: MeetingNoteItem): string {
@@ -3322,7 +3574,7 @@ function formatMeetingMetadataForContext(meeting: MeetingInventoryEntry): string
   return lines.length > 0 ? `${lines.join('\n')}\n` : ''
 }
 
-function filterMeetingsForQuestionWindow<T extends { date: number }>(
+export function filterMeetingsForQuestionWindow<T extends { date: number }>(
   meetings: T[],
   question: string
 ): T[] {
@@ -3418,7 +3670,7 @@ function hasExplicitMeetingTypeCue(question: string): boolean {
   return /\b(standup|stand up|huddle|1 on 1|one on one|one-on-one)\b/.test(normalizedQuestion)
 }
 
-function hasQuestionWindowCue(question: string): boolean {
+export function hasQuestionWindowCue(question: string): boolean {
   const normalizedQuestion = normalizeRecordingSearchText(question)
   return (
     normalizedQuestion.includes('today') ||

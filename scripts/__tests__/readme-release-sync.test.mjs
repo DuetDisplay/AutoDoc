@@ -154,3 +154,16 @@ test('retains numbers and does not treat generic changelog headings as benefits'
     '12 export formats.'
   )
 })
+
+test('published release sync preserves a newer prepared announcement', () => {
+  const prepared = syncReadmeRelease(readme, { ...release, tag_name: 'v1.3.4' })
+  assert.equal(syncReadmeRelease(prepared, release, { preserveNewer: true }), prepared)
+  assert.match(
+    syncReadmeRelease(prepared, { ...release, tag_name: 'v1.3.4', body: 'Updated summary.' }, { preserveNewer: true }),
+    /Updated summary\./
+  )
+  assert.match(
+    syncReadmeRelease(prepared, { ...release, tag_name: 'v1.4.0' }, { preserveNewer: true }),
+    /New in v1\.4\.0/
+  )
+})

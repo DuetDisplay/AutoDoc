@@ -48,6 +48,10 @@ export class OllamaSetupCoordinator {
     this.isCancellationError = options.isCancellationError ?? (() => false)
   }
 
+  isSetupInFlight(): boolean {
+    return this.setupPromise !== null
+  }
+
   ensureRunning(options: EnsureOllamaSetupOptions = {}): Promise<void> {
     if (this.setupPromise) {
       if (options.force && !this.isSetupLifecycleCurrent()) {

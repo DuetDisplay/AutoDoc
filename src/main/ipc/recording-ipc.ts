@@ -4,7 +4,7 @@ import type { Dirent } from 'fs'
 import { appendFile, readFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { spawn } from 'child_process'
-import { RecordingService } from '../services/recording'
+import { RecordingService, RecordingShutdownError } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
@@ -20,10 +20,12 @@ import { getE2ECalendarEvents, getE2ERecordingSources } from '../services/e2e-fi
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
 import { isDiskFullError } from '../services/disk-full'
+import { isMeetingDirMissing } from '../services/meeting-dir'
 import { createFfmpegExitError, withSentryFingerprint } from '../services/sentry-fingerprint'
 import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
 import type {
   CalendarEvent,
+  RecordingChunkResult,
   RecordingEntry,
   RecordingSource,
   RecordingState,
@@ -38,6 +40,8 @@ const CALENDAR_MATCH_LOOKBACK_DAYS = 30
 const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
 const RECORDING_DEBUG_PREFIX = '[recording-debug]'
 const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
+// Recorders have no output for about the first second, so a shorter recording is expected to be empty.
+const RAPID_ABORT_WITHOUT_MEDIA_MIN_REPORT_SECONDS = 3
 // If the renderer never sends recording:finalize-stop after a stop (crash, early
 // bail on a zero-length recording, IPC failure), run post-processing anyway so
 // the meeting cannot wedge in the "wrapping up" state until the next app launch.
@@ -990,7 +994,8 @@ async function maybeReportRapidAbortWithoutMedia(params: {
   const context = {
     durationSeconds: params.durationSeconds,
     sourceId: params.sourceId,
-    sourceName: params.sourceName,
+    // Window titles stay out of the log and Sentry.
+    hasSourceName: Boolean(params.sourceName),
     sourceType,
     recordingIntent: params.recordingIntent ?? null,
     meetingDir: params.meetingDir,
@@ -1004,6 +1009,8 @@ async function maybeReportRapidAbortWithoutMedia(params: {
     meetingId: params.meetingId,
     context
   })
+
+  if (params.durationSeconds < RAPID_ABORT_WITHOUT_MEDIA_MIN_REPORT_SECONDS) return
 
   captureMessage('Recording stopped shortly after start with no captured media', {
     area: 'recording',
@@ -1102,10 +1109,26 @@ export function registerRecordingIpc(
   } | null = null
   let recentEventsPromise: Promise<CalendarEvent[]> | null = null
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
+  // The renderer saves its last chunks after a Windows stop, so this waits for finalize-stop.
+  const windowsRapidAbortChecks = new Map<string, () => void>()
   const windowsCalendarRefreshInFlight = new Set<string>()
   const windowsPostProcessingInFlight = new Set<string>()
   const macPostProcessingInFlight = new Set<string>()
   const videoCaptureEndedEarlyMeetings = new Set<string>()
+  // First chunk-write failure per recording. Each recording gets a new ID, so entries never need
+  // clearing, and they keep later chunks from writing after a gap while capture shuts down.
+  const chunkWriteFailures = new Map<string, string>()
+  const isRecordingBusy = (meetingId: string): boolean => {
+    const { isRecording, meetingId: activeMeetingId } = recordingService.getState()
+    return (
+      (isRecording && activeMeetingId === meetingId) ||
+      windowsPendingFinalization.has(meetingId) ||
+      windowsPostProcessingInFlight.has(meetingId) ||
+      macPostProcessingInFlight.has(meetingId) ||
+      windowsVideoJobInFlight.has(meetingId) ||
+      windowsVideoJobQueue.includes(meetingId)
+    )
+  }
   // Meetings whose post-processing failed because the disk is full, mapped to when automatic
   // recovery may try them again. Recovery skips them until then so it stops re-running (and
   // failing) every pass; a manual retry or an app restart clears the hold immediately.
@@ -1473,10 +1496,18 @@ export function registerRecordingIpc(
       })
       .finally(() => {
         windowsVideoJobInFlight.delete(meetingId)
+        broadcastEntryUpdated(meetingId)
         postProcessingLanguages.delete(meetingId)
         windowsVideoJobProcessing = false
         processNextWindowsVideoJob()
       })
+  }
+
+  function releaseMissingWindowsMeeting(meetingId: string): void {
+    logRecordingDebug('meeting folder is gone; skipping finalization', meetingId)
+    windowsPendingFinalization.delete(meetingId)
+    recordingService.completeProcessingHandoff(meetingId)
+    broadcastEntryUpdated(meetingId)
   }
 
   function runRecordingPostProcessing(meetingId: string, metadata: MeetingMetadata): void {
@@ -1499,6 +1530,11 @@ export function registerRecordingIpc(
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       try {
+        if (await isMeetingDirMissing(meetingDir)) {
+          releaseMissingWindowsMeeting(meetingId)
+          return
+        }
+
         const ffmpegPath = await resolveFfmpegPath(meetingId)
 
         try {
@@ -1517,6 +1553,7 @@ export function registerRecordingIpc(
         if (!(isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1')) {
           transcriptionService.enqueue(meetingId)
         }
+        recordingService.completeProcessingHandoff(meetingId)
         logRecordingDebug('transcription enqueued after audio post-processing', meetingId, {
           elapsedMs: Date.now() - postProcessStartedAt,
           skippedForE2E: isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1'
@@ -1567,9 +1604,12 @@ export function registerRecordingIpc(
           isFinalizing: workingMetadata.isFinalizing ?? false,
           videoStatus: workingMetadata.videoStatus ?? null
         })
+        recordingService.completeProcessingHandoff(meetingId)
         windowsPostProcessingInFlight.delete(meetingId)
+        broadcastEntryUpdated(meetingId)
       }
     })().catch((err) => {
+      recordingService.completeProcessingHandoff(meetingId)
       windowsPostProcessingInFlight.delete(meetingId)
       void (async () => {
         noteDiskFullFailure(meetingId, err)
@@ -1861,11 +1901,22 @@ export function registerRecordingIpc(
     metadata: MeetingMetadata,
     recording?: ReturnType<RecordingService['stopRecording']>
   ): Promise<void> {
+    let handedOff = false
+    const completeHandoff = (): void => {
+      if (handedOff) return
+      handedOff = true
+      recordingService.completeProcessingHandoff(meetingId)
+    }
     macPostProcessingInFlight.add(meetingId)
     const pending = (async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, meetingId)
       let videoProcessingFailed = false
+      if (await isMeetingDirMissing(meetingDir)) {
+        logRecordingDebug('meeting folder is gone; skipping post-processing', meetingId)
+        broadcastEntryUpdated(meetingId)
+        return
+      }
       await maybeReportRapidAbortWithoutMedia({
         meetingDir,
         meetingId: meetingId,
@@ -1934,6 +1985,7 @@ export function registerRecordingIpc(
       ) {
         transcriptionService.enqueue(meetingId)
       }
+      completeHandoff()
       logRecordingDebug('transcription enqueued after audio post-processing', meetingId, {
         skippedForE2E: isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1'
       })
@@ -1995,7 +2047,9 @@ export function registerRecordingIpc(
         console.error('Recording post-processing failed:', err)
       })
       .finally(() => {
+        completeHandoff()
         macPostProcessingInFlight.delete(meetingId)
+        broadcastEntryUpdated(meetingId)
       })
 
     return pending
@@ -2005,7 +2059,7 @@ export function registerRecordingIpc(
     const stopRequestedAt = Date.now()
     let result: ReturnType<RecordingService['stopRecording']>
     try {
-      result = recordingService.stopRecording()
+      result = recordingService.stopRecording(true)
     } catch (err) {
       logAutodocFailure({
         area: 'recording',
@@ -2037,6 +2091,16 @@ export function registerRecordingIpc(
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
       windowsPendingFinalization.set(result.meetingId, metadata)
+      windowsRapidAbortChecks.set(result.meetingId, () => {
+        void maybeReportRapidAbortWithoutMedia({
+          meetingDir,
+          meetingId: result.meetingId,
+          durationSeconds: metadata.durationSeconds,
+          sourceId: result.sourceId,
+          sourceName: result.sourceName,
+          recordingIntent: result.recordingIntent
+        })
+      })
       logRecordingDebug('windows finalizing entry created', result.meetingId, {
         pendingFinalizationCount: windowsPendingFinalization.size
       })
@@ -2060,18 +2124,11 @@ export function registerRecordingIpc(
           logRecordingDebug('windows finalizing metadata persisted', result.meetingId, {
             elapsedMs: Date.now() - stopRequestedAt
           })
-          void maybeReportRapidAbortWithoutMedia({
-            meetingDir,
-            meetingId: result.meetingId,
-            durationSeconds: metadata.durationSeconds,
-            sourceId: result.sourceId,
-            sourceName: result.sourceName,
-            recordingIntent: result.recordingIntent
-          })
           scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)
           broadcastEntryUpdated(result.meetingId)
         })
-        .catch((err) => {
+        .catch(async (err) => {
+          if (await isMeetingDirMissing(meetingDir)) return
           logAutodocFailure({
             area: 'recording',
             message: 'Failed to save recording metadata during Windows stop finalization',
@@ -2144,6 +2201,14 @@ export function registerRecordingIpc(
         })()
         return paths
       } catch (err) {
+        if (err instanceof RecordingShutdownError) {
+          logAutodocEvent({
+            area: 'recording',
+            level: 'warn',
+            message: 'Refused to start a recording while AutoDoc is quitting'
+          })
+          throw err
+        }
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to start recording',
@@ -2182,6 +2247,12 @@ export function registerRecordingIpc(
     })
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
+    if (await isMeetingDirMissing(meetingDir)) {
+      releaseMissingWindowsMeeting(meetingId)
+      return
+    }
+    windowsRapidAbortChecks.get(meetingId)?.()
+    windowsRapidAbortChecks.delete(meetingId)
     const pendingMetadataFromMap = windowsPendingFinalization.get(meetingId) ?? null
     const metadata = (await readMetadata(meetingDir)) ?? pendingMetadataFromMap
     if (!metadata) {
@@ -2301,6 +2372,7 @@ export function registerRecordingIpc(
       date: startedAt,
       durationSeconds,
       isFinalizing,
+      deleteBlocked: isRecordingBusy(meetingId),
       videoProcessingFailed: metadata?.videoProcessingFailed,
       videoStatus: metadata?.videoStatus,
       videoCaptureEndedEarly: metadata?.videoCaptureEndedEarly
@@ -2343,15 +2415,22 @@ export function registerRecordingIpc(
       type: 'video' | 'mic' | 'system',
       chunk: ArrayBuffer,
       segmentIndex = 0
-    ) => {
+    ): Promise<RecordingChunkResult> => {
       const currentState = recordingService.getState()
       const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
       if (
         (!currentState.isRecording || currentState.meetingId !== meetingId) &&
         !allowFinalizingWrite
       ) {
-        return // Ignore chunks for stale or mismatched recordings
+        logRecordingDebug('ignored chunk for a recording that is not capturing', meetingId, {
+          type,
+          segmentIndex,
+          bytes: chunk.byteLength
+        })
+        return { status: 'ignored' }
       }
+      const firstFailure = chunkWriteFailures.get(meetingId)
+      if (firstFailure) return { status: 'failed', code: firstFailure }
       const baseDir = recordingService.getRecordingsBaseDir()
       const filename = getSegmentFilename(type, segmentIndex)
       const filePath = join(baseDir, meetingId, filename)
@@ -2364,15 +2443,21 @@ export function registerRecordingIpc(
             bytes: chunk.byteLength
           })
         }
+        return { status: 'written' }
       } catch (err) {
-        logAutodocFailure({
-          area: 'recording',
-          message: 'Failed to write recording chunk',
-          error: err,
-          meetingId,
-          context: { type, filePath }
-        })
-        throw err
+        const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN'
+        if (!chunkWriteFailures.has(meetingId)) {
+          chunkWriteFailures.set(meetingId, code)
+          logAutodocFailure({
+            area: 'recording',
+            message: 'Failed to write recording chunk',
+            error: err,
+            meetingId,
+            context: { type, segmentIndex, filePath },
+            fingerprint: ['recording-chunk-write', code]
+          })
+        }
+        return { status: 'failed', code: chunkWriteFailures.get(meetingId) ?? code }
       }
     }
   )
@@ -2488,13 +2573,24 @@ export function registerRecordingIpc(
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
     const dirStat = await stat(meetingDir).catch(() => null)
-    if (!dirStat?.isDirectory()) return
+    if (!dirStat?.isDirectory()) return { status: 'deleted' }
     logAutodocEvent({
       area: 'recording',
       message: 'recording:delete requested',
       meetingId,
       context: await getDeletionDiagnostics(meetingId)
     })
+    // Checked after the awaits above, with nothing async before rm. Windows refuses to remove a
+    // file transcription has open, after rm has already removed the files before it.
+    if (isRecordingBusy(meetingId) || transcriptionService.isActiveJob(meetingId)) {
+      logAutodocEvent({
+        area: 'recording',
+        level: 'warn',
+        message: 'recording:delete refused because the recording is busy',
+        meetingId
+      })
+      return { status: 'busy' }
+    }
     await rm(meetingDir, { recursive: true, force: true })
     broadcastEntryUpdated(meetingId)
     logAutodocEvent({
@@ -2503,6 +2599,7 @@ export function registerRecordingIpc(
       meetingId,
       context: await getDeletionDiagnostics(meetingId)
     })
+    return { status: 'deleted' }
   })
 
   async function recoverInterruptedRecordings(): Promise<void> {

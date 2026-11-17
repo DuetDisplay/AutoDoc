@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile, access, readFile } from 'fs/promises'
 import { delimiter, dirname, join } from 'path'
 import { tmpdir } from 'os'
+import { verifyFileSha256 } from '../resumable-download'
 
 const originalPlatform = process.platform
 const originalArch = process.arch
@@ -263,6 +264,10 @@ describe('Whisper onboarding dependency installation', () => {
             windowsBackend: 'whisper-cpp'
           })
           const manager = new WhisperManager()
+          vi.spyOn(manager, 'getModelInfo').mockReturnValue({
+            filename: 'test-model.bin',
+            downloadUrl: 'https://test.invalid/test-model.bin'
+          })
           await mkdir(dirname(manager.getWhisperPath()), { recursive: true })
           await writeFile(manager.getWhisperPath(), 'installed runtime')
           await writeFile(manager.getFfmpegPath(), 'installed ffmpeg')
@@ -397,6 +402,7 @@ describe('Whisper onboarding dependency installation', () => {
         })
       })
 
+      vi.spyOn(manager as any, 'ensureMacEnglishModel').mockResolvedValue(undefined)
       vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(true)
 
       await manager.ensureReady()
@@ -469,6 +475,188 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  describe('Mac English model', () => {
+    async function loadMacManager(rootDir: string) {
+      setArch('arm64')
+      const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+      await writeFile(bundledFfmpeg, 'ffmpeg')
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        ffmpegStaticPath: bundledFfmpeg,
+        isPackaged: true,
+        macBackend: 'auto'
+      })
+      const manager = new WhisperManager()
+      await mkdir(dirname(manager.getMlxWhisperPythonPath()), { recursive: true })
+      await mkdir(dirname(manager.getMlxWhisperScriptPath()), { recursive: true })
+      await writeFile(manager.getMlxWhisperPythonPath(), 'python')
+      await writeFile(manager.getMlxWhisperScriptPath(), 'bridge')
+      await writeFile(
+        join((manager as any).getMlxWhisperRuntimeDir(), 'AUTODOC_MLX_WHISPER_READY.txt'),
+        'ready'
+      )
+      return manager
+    }
+
+    it('downloads the pinned files, with fallbacks, before the first probe', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        const download = vi
+          .spyOn(manager as any, 'downloadFile')
+          .mockImplementation(async (...args: unknown[]) => {
+            await writeFile(args[1] as string, 'x')
+            return null
+          })
+        const probe = vi
+          .spyOn(manager as any, 'isMlxWhisperUsableWithRetry')
+          .mockResolvedValue(true)
+        // Sizes come from the pins; this only checks the order and the sources offered.
+        await expect((manager as any).ensureMlxWhisperReady()).rejects.toThrow(/unexpected size/)
+        expect(probe).not.toHaveBeenCalled()
+
+        const [url, , , , , options] = download.mock.calls[0] as [
+          string,
+          string,
+          string,
+          unknown,
+          unknown,
+          { expectedSha256: string; fallbackUrls: string[] }
+        ]
+        expect(url).toContain('huggingface.co/mlx-community/distil-whisper-large-v3/resolve/')
+        expect(options.fallbackUrls[0]).toContain('modelscope.cn/models/mlx-community/')
+        expect(options.fallbackUrls[1]).toContain('hf-mirror.com/mlx-community/')
+        expect(options.expectedSha256).toMatch(/^[a-f0-9]{64}$/)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('runs the model from its local folder with Hugging Face turned off', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+
+        expect(manager.getMlxWhisperModelRef()).toContain(
+          join(
+            'mlx-whisper-cache',
+            'hub',
+            'models--mlx-community--distil-whisper-large-v3',
+            'snapshots'
+          )
+        )
+        expect(manager.getMlxWhisperProcessEnv().HF_HUB_OFFLINE).toBe('1')
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('stays on MLX after a failed download, so Retry downloads again', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        const ensureEnglish = vi
+          .spyOn(manager as any, 'ensureMacEnglishModel')
+          .mockRejectedValueOnce(new Error('Failed to download speech model: 503 Unavailable'))
+          .mockResolvedValue(undefined)
+        vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(true)
+
+        await expect(manager.ensureReady()).rejects.toThrow('Failed to download speech model')
+        expect(manager.isMlxWhisperSelected()).toBe(true)
+        expect(manager.getTranscriptionBackend()).toBe('mlx-whisper')
+
+        await manager.ensureReady()
+
+        expect(ensureEnglish).toHaveBeenCalledTimes(2)
+        expect(manager.getTranscriptionBackend()).toBe('mlx-whisper')
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('stays on MLX after every source served a bad file', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        vi.spyOn(manager as any, 'ensureMacEnglishModel').mockRejectedValueOnce(
+          new Error('Downloaded speech model failed SHA256 verification: expected a, received b.')
+        )
+
+        await expect(manager.ensureReady()).rejects.toThrow('SHA256')
+
+        expect(manager.isMlxWhisperSelected()).toBe(true)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('still falls back when MLX itself fails, not the download', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      try {
+        const manager = await loadMacManager(rootDir)
+        vi.spyOn(manager as any, 'ensureMacEnglishModel').mockResolvedValue(undefined)
+        vi.spyOn(manager as any, 'recoverFromMlxProbeValidationFailure').mockResolvedValue(
+          undefined
+        )
+        vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(false)
+
+        await manager.ensureReady().catch(() => {})
+
+        expect(manager.isMlxWhisperSelected()).toBe(false)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('leaves a custom model override alone', async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-english-'))
+      vi.stubEnv('AUTODOC_MLX_WHISPER_MODEL', 'my-org/my-model')
+      try {
+        const manager = await loadMacManager(rootDir)
+        const download = vi.spyOn(manager as any, 'downloadFile')
+        vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(true)
+
+        await (manager as any).ensureMlxWhisperReady()
+
+        expect(download).not.toHaveBeenCalled()
+        expect(manager.getMlxWhisperModelRef()).toBe('my-org/my-model')
+        expect(manager.getMlxWhisperProcessEnv().HF_HUB_OFFLINE).toBeUndefined()
+      } finally {
+        vi.unstubAllEnvs()
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it('pins the Windows whisper.cpp fallback downloads', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-pins-'))
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'whisper-cpp'
+      })
+      const manager = new WhisperManager()
+      const download = vi
+        .spyOn(manager as any, 'downloadFile')
+        .mockRejectedValue(new Error('stop after the arguments are recorded'))
+
+      await expect((manager as any).downloadModel()).rejects.toThrow('stop after')
+      await expect((manager as any).downloadWhisperWindows()).rejects.toThrow('stop after')
+
+      const [modelUrl, , , , , modelOptions] = download.mock.calls[0] as any[]
+      expect(modelUrl).not.toContain('/resolve/main/')
+      expect(modelOptions).toEqual({
+        expectedSha256: 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002',
+        fallbackUrls: [
+          'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin'
+        ]
+      })
+      expect((download.mock.calls[1] as any[])[5]).toEqual({
+        expectedSha256: '74f973345cb52ef5ba3ec9e7e7af8e48cc8c71722d1528603b80588a11f82e3e'
+      })
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('clears the MLX Whisper model cache and retries after probe validation fails', async () => {
     setArch('arm64')
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-mlx-retry-'))
@@ -504,6 +692,9 @@ describe('Whisper onboarding dependency installation', () => {
           backendLabel: status.backendLabel
         })
       })
+      const ensureEnglish = vi
+        .spyOn(manager as any, 'ensureMacEnglishModel')
+        .mockResolvedValue(undefined)
       const usabilitySpy = vi
         .spyOn(manager as any, 'isMlxWhisperUsableWithRetry')
         .mockResolvedValueOnce(false)
@@ -512,6 +703,11 @@ describe('Whisper onboarding dependency installation', () => {
       await manager.ensureReady()
 
       expect(usabilitySpy).toHaveBeenCalledTimes(2)
+      // The retried probe must find the model again after the cache was cleared.
+      expect(ensureEnglish).toHaveBeenCalledTimes(2)
+      expect(ensureEnglish.mock.invocationCallOrder[1]).toBeLessThan(
+        usabilitySpy.mock.invocationCallOrder[1]
+      )
       await expect(access(staleCacheFile)).rejects.toThrow()
       expect(statuses).toContainEqual({
         phase: 'downloading-model',
@@ -1383,17 +1579,13 @@ describe('Whisper onboarding dependency installation', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-sha-'))
 
     try {
-      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
-        windowsBackend: 'whisper-cpp'
-      })
-      const manager = new WhisperManager()
       const assetPath = join(rootDir, 'asset.zip')
       await writeFile(assetPath, 'known payload')
       const expectedSha256 = createHash('sha256').update('known payload').digest('hex')
 
-      await expect(
-        (manager as any).verifyFileSha256(assetPath, expectedSha256, 'asset.zip')
-      ).resolves.toBe(expectedSha256)
+      await expect(verifyFileSha256(assetPath, expectedSha256, 'asset.zip')).resolves.toBe(
+        expectedSha256
+      )
       await expect(access(assetPath)).resolves.toBeUndefined()
     } finally {
       await rm(rootDir, { recursive: true, force: true })
@@ -1404,15 +1596,11 @@ describe('Whisper onboarding dependency installation', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-sha-fail-'))
 
     try {
-      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
-        windowsBackend: 'whisper-cpp'
-      })
-      const manager = new WhisperManager()
       const assetPath = join(rootDir, 'asset.zip')
       await writeFile(assetPath, 'known payload')
 
       await expect(
-        (manager as any).verifyFileSha256(
+        verifyFileSha256(
           assetPath,
           'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
           'asset.zip'

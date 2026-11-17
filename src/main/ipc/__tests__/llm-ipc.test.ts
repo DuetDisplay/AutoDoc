@@ -130,18 +130,17 @@ describe('registerLlmIpc', () => {
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
+    expect(ensureOllamaRunning).toHaveBeenCalledTimes(1)
+    expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
   })
 
-  it('preserves the existing active status-check behavior by default', async () => {
+  it('does not request a restart for one failed short status probe', async () => {
     const ensureOllamaRunning = vi.fn()
     registerWith(vi.fn().mockResolvedValue(false), ensureOllamaRunning)
 
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
-    expect(ensureOllamaRunning).toHaveBeenCalledTimes(1)
-    expect(ensureOllamaRunning).toHaveBeenCalledWith(undefined)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
   })
 
   it('force-restarts a hung Ollama serve after two failed health checks', async () => {
@@ -151,8 +150,8 @@ describe('registerLlmIpc', () => {
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
+    expect(ensureOllamaRunning).toHaveBeenCalledTimes(1)
+    expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
   })
 
   it('does not force-restart after a later healthy check', async () => {
@@ -168,9 +167,7 @@ describe('registerLlmIpc', () => {
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(true)
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
-    expect(ensureOllamaRunning).toHaveBeenCalledTimes(2)
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, undefined)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
   })
 
   it('does not count or restart while a freshly started serve is still starting', async () => {
@@ -191,9 +188,9 @@ describe('registerLlmIpc', () => {
     // Once the grace period ends, failed polls count from zero as usual.
     starting = false
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
-    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
+    expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
   })
 
   it('does not force-restart a starting serve in the passive coordinated branch', async () => {

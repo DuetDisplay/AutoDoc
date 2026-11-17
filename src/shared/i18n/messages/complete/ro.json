@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Preferați un aspect mai întunecat? Activați modul întunecat.",
   "announcement.done": "Gata",
   "announcement.meetingLanguageBody": "Transcrierile și notițele sunt acum disponibile în {count} de limbi!",
-  "announcement.meetingLanguageDescription": "Alegeți limba vorbită în întâlniri. Noile transcrieri și notițe vor fi în această limbă."
+  "announcement.meetingLanguageDescription": "Alegeți limba vorbită în întâlniri. Noile transcrieri și notițe vor fi în această limbă.",
+  "askAi.indexingPreparingAnnouncement": "Pregătirea întâlnirilor pentru Întreabă AI.",
+  "askAi.indexingPausedAnnouncement": "Pregătirea pentru Întreabă AI este în pauză cât timp se înregistrează o întâlnire sau se creează notițe."
 }

@@ -117,7 +117,7 @@ You can change your choice at any time in Settings.
 
 Crash reports are handled by Sentry and are **only enabled in production when you
 have opted in**. Stack traces have the machine name (`server_name`) stripped
-before sending. If no Sentry DSN is configured at build time, crash reporting is
+before sending. Reports don't include window or meeting titles. If no Sentry DSN is configured at build time, crash reporting is
 fully disabled.
 
 ## Third-party components
@@ -126,6 +126,11 @@ AutoDoc downloads and runs open-source components locally, including Ollama and
 its AI model plus the platform-specific transcription runtime and model
 (Parakeet on Windows or MLX Whisper on macOS). These downloads are standard
 asset fetches and do not transmit your meeting data.
+
+If Hugging Face can't be reached, AutoDoc downloads the same speech model files
+from [ModelScope](https://modelscope.cn) or [hf-mirror](https://hf-mirror.com)
+and checks each one against a pinned SHA-256 hash. Those services see your IP
+address and the file being requested, as Hugging Face would, and nothing else.
 
 ## Contact
 

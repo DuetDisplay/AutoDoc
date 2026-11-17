@@ -10,8 +10,9 @@ import {
 } from './token-store'
 import type { CalendarEvent, CalendarAccount, OAuthTokens } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
-import { logAutodocFailure } from './autodoc-log'
 import {
+  CALENDAR_CONNECTION_CANCELLED_MESSAGE,
+  NO_AUTH_WORKER_MESSAGE,
   CalendarTransientError,
   ReconnectRequiredCalendarAuthError,
   UnsupportedCalendarAccountError,
@@ -19,7 +20,7 @@ import {
   isReconnectRequiredMicrosoftAuthError,
   isUnsupportedMicrosoftMailboxError
 } from './calendar-error-classification'
-import { requireConfiguredAuthWorkerUrl } from './distribution-config'
+import { getConfiguredAuthWorkerUrl, requireConfiguredAuthWorkerUrl } from './distribution-config'
 
 const OAUTH_PORT = 42813
 const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
@@ -179,7 +180,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       const timeout = setTimeout(() => {
         rejectAndClose(new Error('Calendar connection timed out'))
       }, OAUTH_CALLBACK_TIMEOUT_MS)
-      const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
+      const cancel = (): void => rejectAndClose(new Error(CALENDAR_CONNECTION_CANCELLED_MESSAGE))
       this.pendingConnect = { cancel, closed }
 
       const closeServer = (): Promise<void> => {
@@ -364,8 +365,10 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     if (!tokens?.refresh_token) return
     if (tokens.expiry_date && tokens.expiry_date > Date.now() + 5 * 60_000) return
 
+    const authWorkerUrl = getConfiguredAuthWorkerUrl()
+    if (!authWorkerUrl) throw new CalendarTransientError(NO_AUTH_WORKER_MESSAGE)
+
     try {
-      const authWorkerUrl = requireConfiguredAuthWorkerUrl()
       const response = await fetch(`${authWorkerUrl}/microsoft/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -388,17 +391,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
             'Microsoft Outlook needs to be reconnected to resume calendar sync.'
           )
         }
-        console.error('Microsoft token refresh failed:', responseText)
-        logAutodocFailure({
-          area: 'calendar',
-          message: 'Microsoft token refresh failed',
-          error,
-          context: {
-            provider: 'microsoft',
-            status: response.status
-          }
-        })
-        return
+        throw error
       }
 
       const newTokens = (await response.json()) as { access_token: string; expires_in: number }
@@ -420,15 +413,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       if (err instanceof ReconnectRequiredCalendarAuthError) {
         throw err
       }
-      console.error('Microsoft token refresh error:', err)
-      logAutodocFailure({
-        area: 'calendar',
-        message: 'Microsoft token refresh errored',
-        error: err,
-        context: {
-          provider: 'microsoft'
-        }
-      })
+      throw err
     }
   }
 }

@@ -1,7 +1,5 @@
-import {
-  getMeetingLanguageDefinition,
-  type MeetingLanguageCode
-} from '../../shared/meeting-language'
+import type { MeetingLanguageCode } from '../../shared/meeting-language'
+import { chatReplyLanguageLabel, type ChatReplyLanguage } from './chat-reply-language'
 
 const RECORDING_COUNT_LABELS: Record<MeetingLanguageCode, string> = {
   en: 'Recordings',
@@ -33,15 +31,22 @@ const RECORDING_COUNT_LABELS: Record<MeetingLanguageCode, string> = {
   ko: '녹음'
 }
 
-export function localizeRecordingCount(
-  answer: string,
-  language: MeetingLanguageCode
-): string | null {
+export function localizeRecordingCount(answer: string, language: ChatReplyLanguage): string | null {
   const match = /^You have (\d+) recordings?\.$/.exec(answer)
-  return match ? `${RECORDING_COUNT_LABELS[language]}: ${match[1]}` : null
+  const label = RECORDING_COUNT_LABELS[language as MeetingLanguageCode]
+  return match && label ? `${label}: ${match[1]}` : null
 }
 
 export function chatLanguageInstruction(language: unknown): string {
-  const { label } = getMeetingLanguageDefinition(language)
-  return `Write the entire answer in ${label}, the user's selected meeting language, even when the question, conversation history, or source material is in another language. Preserve meeting titles, names, URLs, and quoted evidence.`
+  const label = chatReplyLanguageLabel(language)
+  return `Write the entire answer in ${label}, the reply language for this request. Source material or earlier turns in another language must not override it. Preserve meeting titles, names, URLs, and quoted evidence.`
+}
+
+/** Preserve authoritative totals/titles without a generative translation. */
+export function localizeRecordingList(answer: string, language: ChatReplyLanguage): string | null {
+  if (language === 'en' || !RECORDING_COUNT_LABELS[language as MeetingLanguageCode]) return null
+  const total = /I found (\d+) recordings? total/.exec(answer)?.[1]
+  const lines = answer.split('\n').filter((line) => /^\d+\. /.test(line))
+  if (!total || !/^Here are your (?:most recent )?recordings:/.test(answer)) return null
+  return `${RECORDING_COUNT_LABELS[language as MeetingLanguageCode]}: ${total}\n${lines.length}/${total}\n\n${lines.join('\n')}`
 }

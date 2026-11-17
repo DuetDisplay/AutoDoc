@@ -1,4 +1,4 @@
-import type { MeetingSegments } from '../../shared/types'
+import type { MeetingSegments, NoteSourceRange } from '../../shared/types'
 
 export type NotesSearchCategory = keyof MeetingSegments
 
@@ -10,6 +10,7 @@ export interface NotesV2SearchEntry {
   topic: string | null
   owner: string | null
   deadline: string | null
+  sources: NoteSourceRange[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -24,6 +25,18 @@ function asTrimmedString(value: unknown): string | null {
 
 function itemText(item: Record<string, unknown>): string | null {
   return asTrimmedString(item.text) ?? asTrimmedString(item.title)
+}
+
+function itemSources(value: unknown): NoteSourceRange[] {
+  if (!Array.isArray(value)) return []
+  const ranges: NoteSourceRange[] = []
+  for (const item of value) {
+    if (!isRecord(item)) continue
+    if (typeof item.startMs !== 'number' || typeof item.endMs !== 'number') continue
+    if (!Number.isFinite(item.startMs) || !Number.isFinite(item.endMs)) continue
+    ranges.push({ startMs: item.startMs, endMs: item.endMs })
+  }
+  return ranges
 }
 
 function pushItems(
@@ -45,7 +58,8 @@ function pushItems(
       content,
       topic,
       owner: asTrimmedString(item.owner),
-      deadline: asTrimmedString(item.deadline)
+      deadline: asTrimmedString(item.deadline),
+      sources: itemSources(item.sources)
     })
   }
 }
@@ -56,8 +70,9 @@ export function collectNotesV2SearchEntries(value: unknown): NotesV2SearchEntry[
   if (value.schemaVersion != null && value.schemaVersion !== 2) return []
 
   const entries: NotesV2SearchEntry[] = []
-  const overview = isRecord(value.overview) ? asTrimmedString(value.overview.text) : null
-  if (overview) {
+  const overviewBlock = isRecord(value.overview) ? value.overview : null
+  const overview = overviewBlock ? asTrimmedString(overviewBlock.text) : null
+  if (overview && overviewBlock) {
     entries.push({
       id: 'overview',
       category: 'information',
@@ -65,7 +80,8 @@ export function collectNotesV2SearchEntries(value: unknown): NotesV2SearchEntry[
       content: overview,
       topic: null,
       owner: null,
-      deadline: null
+      deadline: null,
+      sources: itemSources(overviewBlock.sources)
     })
   }
 
@@ -114,15 +130,17 @@ export function formatNotesV2SearchBody(entries: readonly NotesV2SearchEntry[]):
 export function matchNotesV2SearchEntries(
   entries: readonly NotesV2SearchEntry[],
   terms: readonly string[]
-): Array<{ type: 'segment'; text: string; category: string }> {
-  const matches: Array<{ type: 'segment'; text: string; category: string }> = []
+): Array<{ type: 'segment'; text: string; category: string; startMs?: number }> {
+  const matches: Array<{ type: 'segment'; text: string; category: string; startMs?: number }> = []
   for (const entry of entries) {
     const combined = `${entry.topic ?? ''} ${entry.title} ${entry.content}`.toLowerCase()
     if (terms.every((term) => combined.includes(term))) {
+      const startMs = entry.sources[0]?.startMs
       matches.push({
         type: 'segment',
         text: `${entry.title}: ${entry.content}`,
-        category: entry.category
+        category: entry.category,
+        ...(startMs != null ? { startMs } : {})
       })
     }
   }

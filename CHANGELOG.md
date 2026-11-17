@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-11-17
+
+### Added
+
+- **Ask about this meeting** opens Ask AI from a recording with the search
+  limited to that meeting. Clear the filter to search across all meetings.
+- Ask AI prepares its search index in the background and shows its progress.
+- Ask AI is marked Beta, with a one-time notice explaining what to expect.
+
+### Changed
+
+- Ask AI answers faster and more accurately by searching passages from meeting
+  notes and transcripts. Source links open recordings at the corresponding
+  moments.
+- Follow-up questions stay focused on the same meeting, and replies use the
+  language of the question.
+- Ask AI is available on computers using the `qwen3:4b-instruct` model with
+  GPU acceleration. Other computers no longer show Ask AI and skip its
+  associated downloads and indexing. Recording, transcription, and notes
+  remain available.
+- Crash reporting excludes window and meeting titles and reduces duplicate
+  reports and reports for expected events, such as cancelled calendar
+  connections and temporary network errors.
+
+### Fixed
+
+- Ask AI source links no longer accumulate across follow-up questions or
+  include duplicate links to the same moment.
+- Asking whether you have recordings returns the recording count without
+  unnecessary source links. Short English questions receive English replies.
+- Mac speech-model downloads can use ModelScope or hf-mirror when Hugging Face
+  is unavailable, including in mainland China. Downloaded files, including the
+  English Mac model, are checked against pinned hashes.
+- The Ollama runtime download is verified and can resume after interruption.
+- AutoDoc restarts its local AI server more promptly if it exits unexpectedly.
+- A Google Calendar connection that can no longer sync asks you to reconnect.
+- An interrupted quit or update installation no longer leaves AutoDoc
+  indefinitely unable to start new recordings.
+- A failed recording start no longer stops a recording already in progress.
+- Recordings cannot be deleted while recording, saving, or transcribing.
+  If a recording chunk cannot be saved, AutoDoc stops capture and explains
+  what happened.
+- On Windows, recording audio is encrypted after transcription finishes even
+  if the recording was opened during processing.
+
+### Known limitation
+
+- Ask AI source links show passages that were searched, which may include
+  passages the answer did not use. A question with no answer in your
+  meetings can still show source links and a passage-count line.
+
 ## [1.3.3] — 2026-10-30
 
 ### Added
@@ -248,7 +299,8 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.0...v1.3.1

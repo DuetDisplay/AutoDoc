@@ -136,6 +136,45 @@ export const en = {
   'search.transcript': 'transcript',
   'search.note': 'note',
 
+  'askAi.coverage': 'Based on {passages} from {meetings} of your {totalMeetings}.',
+  'count.passages.zero': '{count} passages',
+  'count.passages.one': '{count} passage',
+  'count.passages.two': '{count} passages',
+  'count.passages.few': '{count} passages',
+  'count.passages.many': '{count} passages',
+  'count.passages.other': '{count} passages',
+  'askAi.scope': 'Meeting scope',
+  'askAi.onlyMeeting': 'Only this meeting: {title}',
+  'askAi.removeScope': 'Remove meeting scope',
+  'askAi.countReceipt': 'Counted {count}: {filter}.',
+  'askAi.searchAll': 'Search all meetings',
+  'askAi.askMeeting': 'Ask about this meeting',
+  'askAi.notesPendingOne':
+    'Notes for {title} are still being made. Using Ask AI now will make them take a little longer.',
+  'askAi.notesPendingMany':
+    'Notes for {count} meetings are still being made. Using Ask AI now will make them take a little longer.',
+  'askAi.indexingPreparingAnnouncement': 'Preparing your meetings for Ask AI.',
+  'askAi.indexingPausedAnnouncement':
+    'Preparing your meetings for Ask AI is paused while a meeting is recording or notes are being made.',
+  'askAi.beta': 'Beta',
+  'askAi.indexingTitle': 'Preparing your meetings',
+  'askAi.indexingHelp': 'You can ask now, but answers might miss some details until this finishes.',
+  'askAi.indexingPausedTitle': 'Preparation paused',
+  'askAi.indexingPausedHelp':
+    'This continues after the recording or notes finish. Until then, answers might miss some details.',
+  'askAi.indexingPercent': '{percent}%',
+  'askAi.betaNoticeTitle': 'Ask AI is in beta',
+  'askAi.betaNoticeBody':
+    'It answers from your meetings, right on this device. Answers can miss details or get things wrong, so check the sources for anything important.',
+  'askAi.countAll': 'all saved recordings',
+  'askAi.countAttached': 'attached saved recordings',
+  'askAi.countNoFilters': 'no filters',
+  'askAi.filterFrom': 'on or after {value}',
+  'askAi.filterThrough': 'on or before {value}',
+  'askAi.filterTitle': 'title contains all terms {value}',
+  'askAi.filterParticipant': 'participant contains all terms {value}',
+  'askAi.filterKeyword': 'notes or transcript contain all terms {value}',
+  'askAi.filterUnavailable': 'filter details unavailable',
   'askAi.title': 'Ask AI',
   'askAi.newChat': 'New chat',
   'askAi.emptyHint':
@@ -183,6 +222,8 @@ export const en = {
   'recording.record': 'Record',
   'recording.stop': 'Stop',
   'recording.stopRecording': 'Stop Recording',
+  'recording.saveFailedStopped':
+    "Recording stopped because AutoDoc couldn't save it. Some of it may be missing. Check your free disk space before recording again.",
   'recording.startNotes': 'Start AI Notes',
   'recording.chooseWindow': 'Choose a window.',
   'recording.selectWindow': 'Select window',
@@ -296,6 +337,9 @@ export const en = {
   'meeting.dangerZone': 'Danger Zone',
   'meeting.cannotUndo': 'This action cannot be undone.',
   'meeting.deleteRecording': 'Delete recording',
+  'meeting.deleteBlocked':
+    'Stop the recording and wait for saving and transcription to finish before deleting it.',
+  'meeting.deleteFailed': "Couldn't delete this recording. Try again.",
   'meeting.deleteRecordingHint': 'Permanently remove all audio, video, transcript, and notes',
   'meeting.confirmDelete': 'Confirm Delete',
 

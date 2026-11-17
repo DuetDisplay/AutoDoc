@@ -467,5 +467,7 @@
   "announcement.darkModeBody": "Patinka tamsesnė išvaizda? Įjunkite tamsųjį režimą.",
   "announcement.done": "Atlikta",
   "announcement.meetingLanguageBody": "Transkripcijos ir užrašai dabar palaiko {count} kalbas!",
-  "announcement.meetingLanguageDescription": "Pasirinkite kalbą, kuria kalbama susitikimuose. Naujos transkripcijos ir užrašai bus kuriami šia kalba."
+  "announcement.meetingLanguageDescription": "Pasirinkite kalbą, kuria kalbama susitikimuose. Naujos transkripcijos ir užrašai bus kuriami šia kalba.",
+  "askAi.indexingPreparingAnnouncement": "Susitikimų paruošimas funkcijai Klausti DI.",
+  "askAi.indexingPausedAnnouncement": "Paruošimas funkcijai Klausti DI sustabdytas, kol įrašomas susitikimas arba rengiamos pastabos."
 }

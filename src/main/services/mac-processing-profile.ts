@@ -120,6 +120,15 @@ export function macUsesSmallNotesModel(
   )
 }
 
+/** Stable hardware tier for the tested Ask AI Append-8k defaults. */
+export function macUsesAskAiAppendFollowups(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  totalMemoryGiB: number = bytesToGiB(totalmem())
+): boolean {
+  return platform === 'darwin' && arch === 'arm64' && totalMemoryGiB >= 15.5
+}
+
 function getLowSpecHardwareReason(
   hardware: Pick<MacHardwareSnapshot, 'isAppleSilicon' | 'totalMemoryGiB'>
 ): string | null {

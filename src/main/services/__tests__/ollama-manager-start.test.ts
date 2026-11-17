@@ -15,6 +15,7 @@ function setPlatform(platform: NodeJS.Platform): void {
 interface LoadedOllamaManager {
   OllamaManager: typeof import('../ollama-manager').OllamaManager
   spawnMock: Mock
+  execFileMock: Mock
   logAutodocEvent: Mock
   logAutodocFailure: Mock
   markOllamaResumed: typeof import('../ollama-resume').markOllamaResumed
@@ -29,6 +30,7 @@ function createFakeProcess(pid: number): EventEmitter & {
   stderr: EventEmitter
   exitCode: number | null
   signalCode: NodeJS.Signals | null
+  holdClose: boolean
   kill: Mock
 } {
   const stderr = new EventEmitter()
@@ -37,12 +39,21 @@ function createFakeProcess(pid: number): EventEmitter & {
     stderr: EventEmitter
     exitCode: number | null
     signalCode: NodeJS.Signals | null
+    holdClose: boolean
     kill: Mock
   }
   proc.pid = pid
   proc.stderr = stderr
   proc.exitCode = null
   proc.signalCode = null
+  // Like a real child, 'close' follows 'exit' once stdio drains, unless a test holds it open.
+  proc.holdClose = false
+  const emit = proc.emit.bind(proc)
+  proc.emit = (event: string | symbol, ...args: unknown[]): boolean => {
+    const handled = emit(event, ...args)
+    if (event === 'exit' && !proc.holdClose) emit('close', ...args)
+    return handled
+  }
   proc.kill = vi.fn(() => {
     proc.exitCode = 1
     proc.emit('exit', 1, null)
@@ -56,10 +67,14 @@ function createFakeProcess(pid: number): EventEmitter & {
   return proc
 }
 
-async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> {
-  setPlatform('win32')
+async function loadOllamaManager(
+  rootDir: string,
+  platform: NodeJS.Platform = 'win32'
+): Promise<LoadedOllamaManager> {
+  setPlatform(platform)
   vi.resetModules()
   const spawnMock = vi.fn()
+  const execFileMock = vi.fn()
   const logAutodocEvent = vi.fn()
   const logAutodocFailure = vi.fn()
   vi.doMock('electron', () => ({
@@ -70,7 +85,7 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
   }))
   vi.doMock('child_process', () => ({
     spawn: spawnMock,
-    execFile: vi.fn(),
+    execFile: execFileMock,
     execSync: vi.fn(() => {
       throw new Error('execSync should not run in start lifecycle tests')
     })
@@ -85,6 +100,7 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
   return {
     OllamaManager: mod.OllamaManager,
     spawnMock,
+    execFileMock,
     logAutodocEvent,
     logAutodocFailure,
     markOllamaResumed: resume.markOllamaResumed,
@@ -154,6 +170,195 @@ function mockServeOrTaskkill(
 }
 
 describe('OllamaManager start lifecycle', () => {
+  it('discards serve stdout on Mac and Windows so request logs cannot fill an unread pipe', async () => {
+    for (const platform of ['darwin', 'win32'] as const) {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-stdout-'))
+      try {
+        const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir, platform)
+        const serve = createFakeProcess(4242)
+        mockServeOrTaskkill(spawnMock, () => serve)
+        const manager = new OllamaManager()
+        manager.latchCpuAccelerator('test')
+        stubStartLifecycle(manager)
+        vi.useFakeTimers()
+        const started = manager.start({ forceRespawn: true })
+        await vi.advanceTimersByTimeAsync(1000)
+        serve.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+        await vi.advanceTimersByTimeAsync(1000)
+        await started
+        expect(serveSpawnCalls(spawnMock)[0][2]).toMatchObject({
+          stdio: ['ignore', 'ignore', 'pipe']
+        })
+      } finally {
+        vi.useRealTimers()
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('adopts a busy live owned serve after a short probe fails and resetReady clears its marker', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-busy-adopt-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const serve = createFakeProcess(4242)
+      spawnMock.mockReturnValue(createFakeProcess(5252))
+      const manager = new OllamaManager()
+      vi.spyOn(manager, 'ensureReady').mockResolvedValue(undefined)
+      vi.spyOn(manager as never, 'getListeningPidsOnOllamaPort').mockReturnValue([4242])
+      vi.spyOn(manager as never, 'reapManagedLlamaServersOnce').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'killManagedLlamaServers').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'killProcessOnPort').mockReturnValue(undefined)
+      const kill = vi.spyOn(manager as never, 'killProcessAndWait').mockResolvedValue(true)
+      Object.assign(manager, {
+        process: serve,
+        readyServeProcess: serve,
+        readyAtMs: Date.now() - 480_000
+      })
+      vi.useFakeTimers()
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
+        const controller = new AbortController()
+        setTimeout(() => controller.abort(), delay)
+        return controller.signal
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url, options) =>
+            new Promise((resolve, reject) => {
+              const timer = setTimeout(() => resolve({ ok: true }), 4_000)
+              options.signal.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(timer)
+                  reject(options.signal.reason)
+                },
+                { once: true }
+              )
+            })
+        )
+      )
+      const probe = manager.isServerRunning()
+      await vi.advanceTimersByTimeAsync(2_001)
+      await expect(probe).resolves.toBe(false)
+      manager.resetReady()
+      const restart = manager.start()
+      void restart.catch(() => {})
+      await vi.advanceTimersByTimeAsync(4_001)
+      expect(kill).not.toHaveBeenCalled()
+      expect(serveSpawnCalls(spawnMock)).toHaveLength(0)
+      await restart
+      expect((manager as unknown as { readyServeProcess: unknown }).readyServeProcess).toBe(serve)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reaps only the killed tracked serve descendants even after startup runner cleanup was latched', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-owned-tree-'))
+    try {
+      const { OllamaManager, execFileMock } = await loadOllamaManager(rootDir, 'darwin')
+      const manager = new OllamaManager()
+      const serve = createFakeProcess(4242)
+      const runtime = join(rootDir, 'models', 'ollama-runtime')
+      Object.assign(manager, { process: serve, didReapAdoptedRunners: true })
+      let snapshots = 0
+      execFileMock.mockImplementation((_file, _args, _options, callback) => {
+        snapshots++
+        callback(
+          null,
+          `9000 1 1024 ${runtime}/ollama serve\n9001 9000 1024 ${runtime}/lib/ollama/llama-server\n4252 1 1024 /other/runtime/llama-server\n` +
+            (snapshots === 1
+              ? `4250 4242 1024 ${runtime}/lib/ollama/llama-server\n4251 4250 1024 ${runtime}/lib/ollama/llama-server\n`
+              : `4253 1 1024 ${runtime}/lib/ollama/llama-server\n`)
+        )
+      })
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+        if (pid === serve.pid) serve.emit('exit', 1, null)
+        return true
+      })
+      await (manager as any).killProcessAndWait(serve, 'replace-unadopted-server')
+      expect(kill.mock.calls.map(([pid]) => pid).sort()).toEqual([4242, 4250, 4251, 4253])
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('adopts an answering tracked serve when macOS listener inspection fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-lsof-fallback-'))
+    try {
+      const { OllamaManager, execFileMock, spawnMock } = await loadOllamaManager(rootDir, 'darwin')
+      const manager = new OllamaManager()
+      const serve = createFakeProcess(4242)
+      Object.assign(manager, { process: serve })
+      vi.spyOn(manager, 'ensureReady').mockResolvedValue(undefined)
+      vi.spyOn(manager, 'isServerRunning').mockResolvedValue(true)
+      vi.spyOn(manager as never, 'reapManagedLlamaServersOnce').mockReturnValue(undefined)
+      const kill = vi.spyOn(manager as never, 'killProcessAndWait').mockResolvedValue(true)
+      execFileMock.mockImplementation((_file, _args, _options, callback) =>
+        callback(new Error('lsof timed out'), '')
+      )
+      await manager.start()
+      expect(kill).not.toHaveBeenCalled()
+      expect(spawnMock).not.toHaveBeenCalled()
+      expect((manager as any).readyServeProcess).toBe(serve)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces a silent owned serve after resetReady and the full confirmation window', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-silent-reset-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const manager = new OllamaManager()
+      const old = createFakeProcess(4242),
+        replacement = createFakeProcess(5252)
+      Object.assign(manager, {
+        process: old,
+        readyServeProcess: old,
+        readyAtMs: Date.now() - 480_000
+      })
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      vi.spyOn(manager as never, 'getListeningPidsOnOllamaPort').mockReturnValue([4242])
+      vi.spyOn(manager, 'isServerRunning').mockRestore()
+      vi.spyOn(manager as never, 'killProcessAndWait').mockImplementation(async () => {
+        old.emit('exit', 1, null)
+        return true
+      })
+      spawnMock.mockReturnValue(replacement)
+      vi.useFakeTimers()
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
+        const controller = new AbortController()
+        setTimeout(() => controller.abort(), delay)
+        return controller.signal
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url, options) =>
+            new Promise((_resolve, reject) =>
+              options.signal.addEventListener('abort', () => reject(options.signal.reason), {
+                once: true
+              })
+            )
+        )
+      )
+      manager.resetReady()
+      const started = manager.start()
+      void started.catch(() => {})
+      await vi.advanceTimersByTimeAsync(9_999)
+      expect(serveSpawnCalls(spawnMock)).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(3_002)
+      await vi.waitFor(() => expect(serveSpawnCalls(spawnMock)).toHaveLength(1))
+      replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      expect(serveSpawnCalls(spawnMock)).toHaveLength(1)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('latches CPU for the process lifetime', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-latch-'))
     try {
@@ -291,6 +496,30 @@ describe('OllamaManager start lifecycle', () => {
 
       expect(serveSpawnCalls(spawnMock)).toHaveLength(1)
       expect(taskkillPids(spawnMock)).not.toContain('4242')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('emits server-ready before start() resolves', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-server-ready-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      mockServeOrTaskkill(spawnMock, () => serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      const order: string[] = []
+      manager.on('server-ready', () => order.push('event'))
+
+      vi.useFakeTimers()
+      const started = manager.start().then(() => order.push('resolved'))
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      expect(order).toEqual(['event', 'resolved'])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -463,6 +692,203 @@ describe('OllamaManager start lifecycle', () => {
       } finally {
         await rm(rootDir, { recursive: true, force: true })
       }
+    })
+
+    describe('an unexpected exit of a ready serve', () => {
+      function failureReports(loaded: LoadedOllamaManager) {
+        return loaded.logAutodocFailure.mock.calls
+          .map((call) => call[0])
+          .filter((report) => report?.message === 'ollama server process exited')
+      }
+
+      it.each([
+        ['exit code 1', 1, null],
+        ['exit code 0', 0, null],
+        ['a signal', null, 'SIGTERM']
+      ] as const)('asks for recovery after %s', async (_label, code, signal) => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+
+          serveProc.emit('exit', code, signal)
+
+          expect(onUnexpectedExit).toHaveBeenCalledTimes(1)
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('does not ask for recovery after a stop the app requested', async () => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+          vi.spyOn(manager as never, 'killProcessByPid').mockResolvedValue(undefined as never)
+
+          manager.stop()
+          serveProc.emit('exit', 1, null)
+
+          expect(onUnexpectedExit).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('does not ask for recovery after a kill the app marked as its own', async () => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+          ;(
+            manager as unknown as { markIntentionalKill: (p: unknown, r: string) => void }
+          ).markIntentionalKill(serveProc, 'recover-unhealthy-runtime')
+
+          serveProc.emit('exit', 1, null)
+
+          expect(onUnexpectedExit).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('does not ask for recovery when the model failed to load', async () => {
+        const { manager, serveProc, rootDir } = await startReadyManager()
+        try {
+          const onUnexpectedExit = vi.fn()
+          manager.on('unexpected-exit', onUnexpectedExit)
+          serveProc.stderr.emit(
+            'data',
+            Buffer.from('llama_model_loader: failed to load model from models\\x.gguf\n')
+          )
+
+          serveProc.emit('exit', 1, null)
+
+          expect(onUnexpectedExit).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('includes stderr that arrives after exit in the single report', async () => {
+        const { loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          serveProc.holdClose = true
+          serveProc.emit('exit', 1, null)
+          serveProc.stderr.emit('data', Buffer.from('Error: listen tcp: bind failed\n'))
+          serveProc.emit('close', 1, null)
+          await vi.advanceTimersByTimeAsync(2_000)
+
+          const reports = failureReports(loaded)
+          expect(reports).toHaveLength(1)
+          expect(reports[0].context.stderrTail).toContain('bind failed')
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('reports after a short wait when stderr never closes', async () => {
+        const { loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          serveProc.holdClose = true
+          serveProc.emit('exit', 1, null)
+          expect(failureReports(loaded)).toHaveLength(0)
+
+          await vi.advanceTimersByTimeAsync(1_500)
+          expect(failureReports(loaded)).toHaveLength(1)
+
+          serveProc.emit('close', 1, null)
+          expect(failureReports(loaded)).toHaveLength(1)
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it.each([
+        ['exit code 0', 0, null],
+        ['a signal', null, 'SIGTERM']
+      ] as const)(
+        'reports %s once per session and still logs later ones',
+        async (_l, code, sig) => {
+          const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+          try {
+            const onUnexpectedExit = vi.fn()
+            manager.on('unexpected-exit', onUnexpectedExit)
+            serveProc.emit('exit', code, sig)
+            expect(failureReports(loaded)).toHaveLength(1)
+            expect(failureReports(loaded)[0].fingerprint).toEqual([
+              'ollama-server-exited',
+              code !== null ? String(code) : `signal-${sig}`
+            ])
+
+            const replacement = createFakeProcess(5252)
+            loaded.spawnMock.mockReturnValue(replacement)
+            const restarted = manager.start()
+            await vi.advanceTimersByTimeAsync(1_000)
+            replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+            await restarted
+            loaded.logAutodocEvent.mockClear()
+
+            replacement.emit('exit', code, sig)
+
+            expect(failureReports(loaded)).toHaveLength(1)
+            expect(onUnexpectedExit).toHaveBeenCalledTimes(2)
+            expect(loaded.logAutodocEvent).toHaveBeenCalledWith(
+              expect.objectContaining({ message: 'ollama server process exited', level: 'warn' })
+            )
+          } finally {
+            await rm(rootDir, { recursive: true, force: true })
+          }
+        }
+      )
+    })
+
+    describe('the Vulkan fallback during recovery', () => {
+      function useVulkan(manager: InstanceType<LoadedOllamaManager['OllamaManager']>) {
+        ;(manager as unknown as { acceleratorDecision: unknown }).acceleratorDecision = {
+          accelerator: 'vulkan',
+          env: {}
+        }
+        return vi.spyOn(manager, 'latchCpuAccelerator')
+      }
+
+      it('keeps Vulkan when the serve is already dead', async () => {
+        const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          const latch = useVulkan(manager)
+          serveProc.emit('exit', 1, null)
+          const replacement = createFakeProcess(5252)
+          loaded.spawnMock.mockReturnValue(replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(2_000)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(latch).not.toHaveBeenCalled()
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('still falls back to CPU when the serve is alive but unhealthy', async () => {
+        const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          await vi.advanceTimersByTimeAsync(61_000)
+          const latch = useVulkan(manager)
+          const replacement = createFakeProcess(5252)
+          replaceServeOnKill(loaded, serveProc, replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(2_000)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(latch).toHaveBeenCalledTimes(1)
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
     })
 
     it('stops reporting a starting serve once the process has exited', async () => {
@@ -1883,5 +2309,155 @@ describe('OllamaManager start lifecycle', () => {
       vi.useRealTimers()
       await rm(rootDir, { recursive: true, force: true })
     }
+  })
+})
+
+it('does not reap a live Ask AI runner at a notes boundary and releases requests once', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'autodoc-interactive-lease-'))
+  try {
+    const { OllamaManager } = await loadOllamaManager(dir)
+    const manager = new OllamaManager()
+    const list = vi.spyOn(manager as never, 'listManagedLlamaServers').mockReturnValue([])
+    const releaseFirst = manager.beginInteractiveRequest()
+    const releaseSecond = manager.beginInteractiveRequest()
+    manager.reapLeftoverRunners('before-scan')
+    expect(list).not.toHaveBeenCalled()
+    releaseFirst()
+    releaseFirst()
+    manager.reapLeftoverRunners('after-notes')
+    expect(list).not.toHaveBeenCalled()
+    releaseSecond()
+    manager.reapLeftoverRunners('before-scan')
+    expect(list).toHaveBeenCalled()
+    list.mockClear()
+    const releaseThird = manager.beginInteractiveRequest()
+    manager.reapLeftoverRunners('stop')
+    expect(list).toHaveBeenCalled()
+    releaseThird()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it('on macOS kills only the port listener, never this app as an Ollama client', async () => {
+  setPlatform('darwin')
+  vi.resetModules()
+  const execSync = vi.fn((cmd: string) => (cmd.startsWith('lsof') ? `${process.pid}\n4242\n` : ''))
+  vi.doMock('electron', () => ({ app: { getPath: vi.fn(() => tmpdir()), isPackaged: false } }))
+  vi.doMock('child_process', () => ({ spawn: vi.fn(), execFile: vi.fn(), execSync }))
+  vi.doMock('../autodoc-log', () => ({ logAutodocEvent: vi.fn(), logAutodocFailure: vi.fn() }))
+  const { OllamaManager } = await import('../ollama-manager')
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+  ;(new OllamaManager() as unknown as { killProcessOnPort(): void }).killProcessOnPort()
+  expect(execSync.mock.calls[0][0]).toMatch(/^lsof -ti tcp:\d+ -sTCP:LISTEN$/)
+  expect(kill.mock.calls).toEqual([[4242, 'SIGKILL']])
+})
+
+describe('reporting a server that fails to start', () => {
+  async function startFailing(rootDir: string, exits: number) {
+    const loaded = await loadOllamaManager(rootDir)
+    const manager = new loaded.OllamaManager()
+    manager.latchCpuAccelerator('test')
+    stubStartLifecycle(manager)
+    vi.useFakeTimers()
+    for (let attempt = 0; attempt < exits; attempt++) {
+      const serveProc = createFakeProcess(4242 + attempt)
+      loaded.spawnMock.mockReturnValue(serveProc)
+      const rejected = expect(manager.start({ forceRespawn: true })).rejects.toThrow(/code 1/)
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+      await rejected
+      await vi.advanceTimersByTimeAsync(2000)
+    }
+    return loaded
+  }
+
+  afterEach(() => vi.useRealTimers())
+
+  it('reports repeated exits with the same code once', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-exits-'))
+    try {
+      const { logAutodocFailure, logAutodocEvent } = await startFailing(rootDir, 3)
+
+      expect(logAutodocFailure).toHaveBeenCalledTimes(1)
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ollama server process exited', level: 'warn' })
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a start timeout for the final setup report', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-timeout-'))
+    try {
+      const loaded = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      mockServeOrTaskkill(loaded.spawnMock, () => serveProc)
+      const manager = new loaded.OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      vi.useFakeTimers()
+
+      const rejected = expect(manager.start({ forceRespawn: true })).rejects.toThrow(
+        'failed to start within 30 seconds'
+      )
+      await vi.advanceTimersByTimeAsync(31_000)
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+      await rejected
+
+      expect(loaded.logAutodocFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ollama server failed to start within timeout' })
+      )
+      expect(loaded.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ollama server failed to start within timeout' })
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('background notes model download failures', () => {
+  async function pullFails(error: Error): Promise<LoadedOllamaManager> {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-pull-'))
+    try {
+      const loaded = await loadOllamaManager(rootDir)
+      const manager = new loaded.OllamaManager() as unknown as {
+        startEpoch: number
+        pullNotesModel: Mock
+        pullWindowsPreferredInBackground: (
+          plan: { pullModel: string },
+          epoch: number
+        ) => Promise<void>
+      }
+      manager.pullNotesModel = vi.fn().mockRejectedValue(error)
+      await manager.pullWindowsPreferredInBackground({ pullModel: 'model' }, manager.startEpoch)
+      return loaded
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  }
+
+  it.each([
+    ['a connection that could not be made', new TypeError('fetch failed')],
+    ['a connection dropped mid-download', new TypeError('terminated')]
+  ])('logs %s locally without reporting it', async (_label, error) => {
+    const loaded = await pullFails(error)
+
+    expect(loaded.logAutodocFailure).not.toHaveBeenCalled()
+    expect(loaded.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'background preferred notes model pull failed' })
+    )
+  })
+
+  it('still reports any other download failure', async () => {
+    const loaded = await pullFails(new Error('model manifest is invalid'))
+
+    expect(loaded.logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'background preferred notes model pull failed' })
+    )
   })
 })

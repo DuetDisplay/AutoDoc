@@ -3,6 +3,7 @@ import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared
 import {
   isMemoryHealthyForConcurrentProcessing,
   macUsesSmallNotesModel,
+  macUsesAskAiAppendFollowups,
   parseMacAvailableMemoryGiBFromVmStat,
   parseMacMemoryPressureOutput,
   selectEffectiveMacProcessingProfile,
@@ -24,6 +25,21 @@ function hardware(overrides: Partial<MacHardwareSnapshot> = {}): MacHardwareSnap
     ...overrides
   }
 }
+
+describe('Ask AI append hardware tier', () => {
+  it.each([
+    ['darwin', 'arm64', 8, false],
+    ['darwin', 'arm64', 16, true],
+    ['darwin', 'arm64', 24, true],
+    ['darwin', 'arm64', 15.49, false],
+    ['darwin', 'arm64', 15.5, true],
+    ['darwin', 'x64', 16, false],
+    ['win32', 'arm64', 24, false],
+    ['linux', 'arm64', 24, false]
+  ] as const)('%s/%s/%s GiB -> %s', (platform, arch, memory, expected) => {
+    expect(macUsesAskAiAppendFollowups(platform, arch, memory)).toBe(expected)
+  })
+})
 
 describe('mac processing profile selection', () => {
   it('selects low-spec mode for 8 GB Apple Silicon Macs', () => {

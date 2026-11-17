@@ -24,6 +24,21 @@ function segment(partial: Partial<Segment> & Pick<Segment, 'id' | 'category' | '
 
 const SYNTHESIZED_OVERVIEW = 'The team locked login analytics coverage and assigned the offline review.'
 
+it('does not persist an optional overview fallback after intentional preemption', async () => {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+  try {
+    await expect(runNotesScanPipeline(segments(), {
+      title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless',
+      attributionTranscript: [], spanSources: [], generate: async () => {
+        throw new Error('SEGMENTATION_PREEMPTED')
+      }
+    })).rejects.toThrow('SEGMENTATION_PREEMPTED')
+  } finally {
+    Object.defineProperty(process, 'platform', original)
+  }
+})
+
 function overviewGenerate(): ReturnType<typeof vi.fn> {
   return vi.fn(async () => JSON.stringify({ overview: SYNTHESIZED_OVERVIEW }))
 }

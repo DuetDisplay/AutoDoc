@@ -1,0 +1,90 @@
+name: Prepare release README
+
+# Run trusted base-branch code only. PR content is read as data; no PR scripts
+# or dependencies are executed with this workflow's write permissions.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prepare-release-readme-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'DuetDisplay/AutoDoc' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted base and fetch PR commit
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_DOCS_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+
+      - name: Prepare and commit release announcement
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$HEAD_SHA"
+          base_version="$(node -p "require('./package.json').version")"
+          head_version="$(git show "$HEAD_SHA:package.json" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>process.stdout.write(JSON.parse(s).version))")"
+          export base_version head_version
+          if ! node -e '
+            const parse = s => /^\d+\.\d+\.\d+$/.test(s) ? s.split(".").map(Number) : null
+            const a = parse(process.env.head_version), b = parse(process.env.base_version)
+            if (!a || !b) process.exit(1)
+            for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) process.exit(a[i] > b[i] ? 0 : 1) }
+            process.exit(1)
+          '; then
+            echo 'Not a version-bumping release PR; nothing to prepare.'
+            exit 0
+          fi
+          notes_path="release-notes/v${head_version}.md"
+          if ! git cat-file -e "$HEAD_SHA:$notes_path" 2>/dev/null; then
+            echo "No $notes_path in this PR; nothing to prepare."
+            exit 0
+          fi
+          temp_dir="$RUNNER_TEMP/release-readme"
+          mkdir -p "$temp_dir/scripts"
+          cp scripts/sync-readme-release.mjs scripts/update-readme-release-links.mjs "$temp_dir/scripts/"
+          git show "$HEAD_SHA:README.md" > "$temp_dir/README.md"
+          git show "$HEAD_SHA:$notes_path" > "$temp_dir/notes.md"
+          TEMP_DIR="$temp_dir" node --input-type=module -e '
+            import fs from "node:fs"
+            const dir = process.env.TEMP_DIR
+            fs.writeFileSync(`${dir}/release.json`, JSON.stringify({
+              tag_name: `v${process.env.head_version}`,
+              body: fs.readFileSync(`${dir}/notes.md`, "utf8"),
+              draft: false, prerelease: false
+            }))
+          '
+          node "$temp_dir/scripts/sync-readme-release.mjs" --release-json "$temp_dir/release.json"
+          if cmp -s "$temp_dir/README.md" <(git show "$HEAD_SHA:README.md"); then
+            echo 'README already matches release notes.'
+            exit 0
+          fi
+          git -c core.hooksPath=/dev/null checkout --detach "$HEAD_SHA"
+          if [ -L README.md ] || [ ! -f README.md ]; then
+            echo '::error::README.md must be a regular file.'
+            exit 1
+          fi
+          cp "$temp_dir/README.md" README.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- README.md
+          git -c core.hooksPath=/dev/null commit -m 'docs: prepare README release announcement'
+          # A normal push rejects an outdated PR head instead of overwriting it.
+          git push origin "HEAD:refs/heads/$HEAD_REF"

@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { throwIfNotesPreempted } from './notes-preemption'
 import type { MeetingNotesContent, MeetingSegments, Segment } from '../../shared/types'
 import type { ScanGenerateFn } from './notes-scan-pipeline'
 import { normalizeNoteSources } from './notes-revision'
@@ -342,6 +343,7 @@ export async function organizeWindowsNotes(
       result = applyWindowsOrganization(raw, segments)
     }
   } catch (caught) {
+    throwIfNotesPreempted(caught)
     error = caught instanceof Error ? caught.message : String(caught)
   }
   const captureDir = process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR

@@ -1,9 +1,12 @@
+import { useChatStore } from '../stores/chat'
+import { useToastStore } from '../stores/toast'
+import { useAskAiAvailable } from '../stores/ask-ai-availability'
 import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
+import { NOTES_WRITER_PROGRESS_END, ROUTES } from '../../../shared/constants'
 import type { MessageKey } from '../../../shared/i18n'
 import { useI18n, useT } from '../services/i18n'
 import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
@@ -300,6 +303,7 @@ function EditableText({
 export function MeetingDetail() {
   const { t, language } = useI18n()
   const { id } = useParams<{ id: string }>()
+  const askAiAvailable = useAskAiAvailable()
   const titleLanguageRef = useRef(language)
   useEffect(() => {
     if (titleLanguageRef.current === language) return
@@ -320,6 +324,9 @@ export function MeetingDetail() {
   const [searchParams] = useSearchParams()
   const initialTab = (searchParams.get('tab') as Tab) || 'notes'
   const highlightText = searchParams.get('highlight') || ''
+  const seekParam = searchParams.get('t')
+  const seekMsParam = seekParam == null || seekParam === '' ? Number.NaN : Number(seekParam)
+  const pendingSeekMs = Number.isFinite(seekMsParam) && seekMsParam >= 0 ? seekMsParam : null
   const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
@@ -346,6 +353,7 @@ export function MeetingDetail() {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    deleteBlocked?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
     videoCaptureEndedEarly?: boolean
@@ -566,6 +574,17 @@ export function MeetingDetail() {
     },
     [id, scrollTranscriptIntoView]
   )
+
+  const soughtMsRef = useRef<number | null>(null)
+  useEffect(() => {
+    soughtMsRef.current = null
+  }, [id])
+  useEffect(() => {
+    if (pendingSeekMs == null || !media) return
+    if (soughtMsRef.current === pendingSeekMs) return
+    soughtMsRef.current = pendingSeekMs
+    seekToSegment(pendingSeekMs)
+  }, [pendingSeekMs, media, seekToSegment])
 
   const cyclePlaybackRate = useCallback(() => {
     const el = mediaRef.current
@@ -976,6 +995,7 @@ export function MeetingDetail() {
           mergeProgress(payload.status, current, payload.progress)
         )
         setTranscriptionBackendLabel(payload.backendLabel)
+        if (payload.status === 'complete' || payload.status === 'failed') void refreshDetail()
         if (payload.status === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
           window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
@@ -1408,9 +1428,29 @@ export function MeetingDetail() {
     }
   }, [id, transcriptionStatus, segmentationStatus])
 
+  // Queued jobs are safe to delete: only a running job holds the meeting's files open.
+  const deleteBlocked =
+    detail?.deleteBlocked === true ||
+    ['downloading', 'transcribing', 'diarizing'].includes(transcriptionStatus)
+
   const handleDelete = async () => {
     if (!id) return
-    await window.electronAPI.invoke('recording:delete', id)
+    setShowDeleteConfirm(false)
+    try {
+      const { status } = await window.electronAPI.invoke('recording:delete', id)
+      if (status === 'busy') {
+        setDetail((current) => current && { ...current, deleteBlocked: true })
+        return
+      }
+    } catch (err) {
+      console.error('Failed to delete recording:', err)
+      useToastStore.getState().showToast({
+        type: 'warning',
+        messageKey: 'meeting.deleteFailed',
+        message: "Couldn't delete this recording. Try again."
+      })
+      return
+    }
     trackEvent('recording_deleted')
     navigate('/recordings')
   }
@@ -1578,7 +1618,22 @@ export function MeetingDetail() {
             </button>
           ))}
         </div>
-        <div className="pb-1.5">
+        <div className="ml-auto flex max-w-full flex-wrap items-start justify-end gap-2 pb-1.5">
+          {askAiAvailable === true && (
+            <button
+              type="button"
+              disabled={!id || !detail}
+              onClick={() => {
+                if (!id || !detail) return
+                useChatStore.getState().startMeetingChat({ meetingId: id, title: detail.title })
+                void window.electronAPI.invoke('chat:new')
+                navigate(ROUTES.askAi)
+              }}
+              className="i18n-btn rounded-lg border border-border bg-bg-card px-3 py-1.5 text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark"
+            >
+              {t('askAi.askMeeting')}
+            </button>
+          )}
           <MeetingExportMenu
             disabled={notesActionsDisabled}
             disabledReason={notesActionsDisabledReason}
@@ -1997,13 +2052,14 @@ export function MeetingDetail() {
                     {t('meeting.deleteRecording')}
                   </div>
                   <div className="text-[11px] text-ink-faint">
-                    {t('meeting.deleteRecordingHint')}
+                    {deleteBlocked ? t('meeting.deleteBlocked') : t('meeting.deleteRecordingHint')}
                   </div>
                 </div>
-                {!showDeleteConfirm ? (
+                {!showDeleteConfirm || deleteBlocked ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark hover:bg-clay-light transition-colors"
+                    disabled={deleteBlocked}
+                    className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark enabled:hover:bg-clay-light disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {t('common.delete')}
                   </button>
@@ -2016,6 +2072,7 @@ export function MeetingDetail() {
                       {t('common.cancel')}
                     </button>
                     <button
+                      data-sentry-label="Confirm delete recording"
                       onClick={handleDelete}
                       className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-on-brand hover:bg-clay/90 transition-colors"
                     >

@@ -180,6 +180,7 @@ describe('recording IPC source handling', () => {
     const recording = registerRecordingIpc(
       {
         getState: () => ({ isRecording: false }),
+        completeProcessingHandoff: vi.fn(),
         getRecordingsBaseDir: () => baseDir
       } as any,
       { enqueue } as any,
@@ -215,6 +216,7 @@ describe('recording IPC source handling', () => {
     registerRecordingIpc(
       {
         getState: () => ({ isRecording: true, meetingId: 'active' }),
+        completeProcessingHandoff: vi.fn(),
         getRecordingsBaseDir: () => baseDir
       } as any,
       { getStatus: async () => 'pending' } as any,
@@ -314,6 +316,7 @@ describe('recording IPC source handling', () => {
 
     registerRecordingIpc(
       {
+        completeProcessingHandoff: vi.fn(),
         stopRecording: vi.fn(),
         getState: vi.fn(() => ({ isRecording: false })),
         getRecordingsBaseDir: vi.fn(() => '/mock/recordings'),
@@ -366,6 +369,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -373,7 +377,8 @@ describe('recording IPC source handling', () => {
         } as any,
         {
           getStatus: vi.fn(),
-          enqueue: vi.fn()
+          enqueue: vi.fn(),
+          isActiveJob: vi.fn(() => false)
         } as any,
         {
           ensureReady: vi.fn(),
@@ -418,71 +423,134 @@ describe('recording IPC source handling', () => {
     }
   })
 
-  it('reports rapid recording aborts that produce no media files', async () => {
-    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
-    const recordingsDir = path.join(userDataDir, 'recordings')
-    const meetingDir = path.join(recordingsDir, 'meeting-rapid-abort')
+  it.each([
+    ['reports', 4_000, true],
+    ['only logs', 1_000, false]
+  ])(
+    '%s a recording stopped after %i ms with no media files',
+    async (_label, ranForMs, reports) => {
+      const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+      const recordingsDir = path.join(userDataDir, 'recordings')
+      const meetingDir = path.join(recordingsDir, 'meeting-rapid-abort')
 
-    try {
-      appGetPath.mockImplementation((name: string) => {
-        if (name === 'userData') return userDataDir
-        throw new Error(`unexpected app.getPath(${name})`)
-      })
-      await fsp.mkdir(meetingDir, { recursive: true })
+      try {
+        appGetPath.mockImplementation((name: string) => {
+          if (name === 'userData') return userDataDir
+          throw new Error(`unexpected app.getPath(${name})`)
+        })
+        await fsp.mkdir(meetingDir, { recursive: true })
 
-      const { stopActiveRecording } = registerRecordingIpc(
-        {
-          stopRecording: vi.fn(() => ({
-            meetingId: 'meeting-rapid-abort',
-            startedAt: Date.now() - 2_000,
-            sourceId: 'screen:0:0',
-            sourceName: 'Entire screen',
-            recordingIntent: 'general'
-          })),
-          getState: vi.fn(() => ({ isRecording: true })),
-          getRecordingsBaseDir: vi.fn(() => recordingsDir),
-          startRecording: vi.fn()
-        } as any,
-        {
-          getStatus: vi.fn(),
-          enqueue: vi.fn()
-        } as any,
-        {
-          ensureReady: vi.fn(),
-          getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
-          getWhisperPath: vi.fn(() => '/mock/whisper'),
-          getModelPath: vi.fn(() => '/mock/model')
-        } as any,
-        {
-          isConnected: vi.fn(() => false),
-          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
-        } as any
-      )
+        const { stopActiveRecording } = registerRecordingIpc(
+          {
+            completeProcessingHandoff: vi.fn(),
+            stopRecording: vi.fn(() => ({
+              meetingId: 'meeting-rapid-abort',
+              startedAt: Date.now() - ranForMs,
+              sourceId: 'screen:0:0',
+              sourceName: 'Entire screen',
+              recordingIntent: 'general'
+            })),
+            getState: vi.fn(() => ({ isRecording: true })),
+            getRecordingsBaseDir: vi.fn(() => recordingsDir),
+            startRecording: vi.fn()
+          } as any,
+          {
+            getStatus: vi.fn(),
+            enqueue: vi.fn()
+          } as any,
+          {
+            ensureReady: vi.fn(),
+            getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
+            getWhisperPath: vi.fn(() => '/mock/whisper'),
+            getModelPath: vi.fn(() => '/mock/model')
+          } as any,
+          {
+            isConnected: vi.fn(() => false),
+            fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+          } as any
+        )
 
-      stopActiveRecording()
+        stopActiveRecording()
 
-      await vi.waitFor(() => {
-        expect(logAutodocEvent).toHaveBeenCalledWith(
+        await vi.waitFor(() => {
+          expect(logAutodocEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              area: 'recording',
+              level: 'warn',
+              message: 'Recording stopped shortly after start with no captured media',
+              meetingId: 'meeting-rapid-abort'
+            })
+          )
+        })
+        if (!reports) {
+          expect(captureMessage).not.toHaveBeenCalled()
+          return
+        }
+        expect(captureMessage).toHaveBeenCalledWith(
+          'Recording stopped shortly after start with no captured media',
           expect.objectContaining({
             area: 'recording',
-            level: 'warn',
-            message: 'Recording stopped shortly after start with no captured media',
-            meetingId: 'meeting-rapid-abort'
+            meetingId: 'meeting-rapid-abort',
+            level: 'warning'
           })
         )
-      })
-      expect(captureMessage).toHaveBeenCalledWith(
-        'Recording stopped shortly after start with no captured media',
-        expect.objectContaining({
-          area: 'recording',
-          meetingId: 'meeting-rapid-abort',
-          level: 'warning'
-        })
-      )
-    } finally {
-      await fsp.rm(userDataDir, { recursive: true, force: true })
+        const reported = vi.mocked(captureMessage).mock.calls.at(-1)?.[1].extra
+        expect(reported).toEqual(expect.objectContaining({ hasSourceName: true }))
+        expect(JSON.stringify(reported)).not.toContain('Entire screen')
+      } finally {
+        await fsp.rm(userDataDir, { recursive: true, force: true })
+      }
     }
-  })
+  )
+
+  // Windows waits for recording:finalize-stop instead, and has its own suite below.
+  it.skipIf(process.platform === 'win32')(
+    'releases the stop handoff once after enqueue, including an enqueue failure',
+    async () => {
+      for (const fail of [false, true]) {
+        const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-handoff-ipc-'))
+        const meetingId = 'synthetic-handoff'
+        await fsp.mkdir(path.join(base, meetingId))
+        const order: string[] = []
+        const release = vi.fn(() => {
+          order.push('release')
+        })
+        const enqueue = vi.fn(() => {
+          order.push('enqueue')
+          if (fail) throw Error('Synthetic enqueue failure')
+        })
+        const recording = {
+          completeProcessingHandoff: release,
+          stopRecording: vi.fn(() => ({
+            meetingId,
+            startedAt: Date.now() - 10000,
+            sourceId: null,
+            sourceName: 'Synthetic',
+            meetingIntent: 'general'
+          })),
+          getState: () => ({ isRecording: false }),
+          getRecordingsBaseDir: () => base
+        }
+        try {
+          const ipc = registerRecordingIpc(
+            recording as any,
+            { enqueue } as any,
+            { ensureFfmpeg: async () => {}, getFfmpegPath: () => '/mock/ffmpeg' } as any,
+            { isConnected: () => false } as any
+          )
+          ipc.stopActiveRecording()
+          expect(recording.stopRecording).toHaveBeenCalledWith(true)
+          expect(release).not.toHaveBeenCalled()
+          await vi.waitFor(() => expect(release).toHaveBeenCalled())
+          await vi.waitFor(() => expect(ipc.hasPostProcessingWork()).toBe(false))
+          expect(release).toHaveBeenCalledTimes(1)
+          expect(order).toEqual(['enqueue', 'release'])
+        } finally {
+          await fsp.rm(base, { recursive: true, force: true })
+        }
+      }
+    }
+  )
 
   it('does not rename existing source-titled recordings from newly linked calendar matches', async () => {
     const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
@@ -520,6 +588,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -593,6 +662,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -667,6 +737,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -714,6 +785,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -777,6 +849,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -872,6 +945,7 @@ describe('recording IPC source handling', () => {
 
       registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -959,6 +1033,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1018,6 +1093,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1062,6 +1138,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: true, meetingId })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1115,6 +1192,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1182,6 +1260,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
       const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
         {
+          completeProcessingHandoff: vi.fn(),
           stopRecording: vi.fn(),
           getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
           getRecordingsBaseDir: vi.fn(() => recordingsDir),
@@ -1225,6 +1304,7 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
   }) {
     return registerRecordingIpc(
       {
+        completeProcessingHandoff: vi.fn(),
         stopRecording: vi.fn(() => options.stopResult),
         getState: vi.fn(() => options.state ?? { isRecording: false, meetingId: null }),
         getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
@@ -1655,6 +1735,7 @@ describe('recording IPC meeting language', () => {
     registerRecordingIpc?: typeof registerRecordingIpc
   }) {
     const recordingService = {
+      completeProcessingHandoff: vi.fn(),
       stopRecording: vi.fn(() => options.stopResult),
       getState: vi.fn(() => ({ isRecording: options.stopResult != null })),
       getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
@@ -1910,6 +1991,7 @@ describe('recording calendar attachment diagnostics', () => {
         startRecording: vi
           .fn()
           .mockResolvedValue({ meetingId: `m-${selectionEventId}`, dir: '/tmp' }),
+        completeProcessingHandoff: vi.fn(),
         stopRecording: vi.fn()
       } as any,
       {} as any,
@@ -2015,6 +2097,7 @@ describe.runIf(process.platform !== 'win32')(
       const recording = registerRecordingIpc(
         {
           getState: () => ({ isRecording: false, meetingId: null }),
+          completeProcessingHandoff: vi.fn(),
           getRecordingsBaseDir: () => baseDir
         } as any,
         { enqueue } as any,

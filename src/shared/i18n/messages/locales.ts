@@ -1,3 +1,4 @@
+import { askAiOverlays } from './ask-ai-overlays'
 import { completeOverlays } from './complete-overlays'
 import type { UiLanguageCode } from '../../ui-language'
 import type { MessageCatalog } from './en'
@@ -1023,7 +1024,8 @@ for (const overlays of [
   chromeOverlays,
   remainingOverlays,
   leftoverOverlays,
-  completeOverlays
+  completeOverlays,
+  askAiOverlays
 ]) {
   for (const [code, overlay] of Object.entries(overlays) as [UiLanguageCode, LocaleMessages][]) {
     localeCatalogs[code] = { ...localeCatalogs[code], ...overlay }

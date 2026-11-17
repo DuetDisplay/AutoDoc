@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { sentryModule, sentryScope } = vi.hoisted(() => {
   const scope = {
     setTag: vi.fn(),
-    setExtras: vi.fn()
+    setExtras: vi.fn(),
+    setFingerprint: vi.fn()
   }
 
   return {
@@ -35,6 +36,17 @@ describe('captureRecordingStartFailure', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     updateRendererSentryConsent(false)
+  })
+
+  it('leaves failures from the main process to the main process report', () => {
+    updateRendererSentryConsent(true)
+
+    captureRecordingStartFailure(
+      new Error("Error invoking remote method 'recording:start': Error: disk failed"),
+      { sourceType: 'window', sourceSelectionMode: 'manual' }
+    )
+
+    expect(sentryModule.captureException).not.toHaveBeenCalled()
   })
 
   it('reports unexpected recording start failures when consent is enabled', () => {
@@ -99,6 +111,11 @@ describe('captureRecordingRecoveryFailure', () => {
     expect(sentryScope.setTag).toHaveBeenCalledWith('recording_phase', 'recovery')
     expect(sentryScope.setTag).toHaveBeenCalledWith('source_type', 'window')
     expect(sentryScope.setTag).toHaveBeenCalledWith('recovery_failure_kind', 'failed')
+    expect(sentryScope.setFingerprint).toHaveBeenCalledWith([
+      'recording-recovery',
+      'failed',
+      'none'
+    ])
     expect(sentryScope.setExtras).toHaveBeenCalledWith(
       expect.objectContaining({
         meetingId: 'meeting-1',
