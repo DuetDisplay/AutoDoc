@@ -243,6 +243,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "U bent offline. Maak verbinding met internet om het spraakmodel te downloaden (ongeveer {size}). Taal: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "U bent offline. Maak verbinding met internet om het spraakmodel te downloaden. Taal: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Uw vergadertaal is nog steeds {language}.",
+  "meeting.reprocessNotesLanguageHint": "Verwerk eerst de transcriptie opnieuw om deze vergadering naar {language} om te zetten.",
+  "meeting.reprocessLanguageFailed": "Opnieuw verwerken in {language} is mislukt. Uw vergadertaal is nog steeds {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "We installeren de nieuwe lokale notitie-engine zodra u weer online bent (eenmalig ongeveer 2,5 GB). U kunt blijven opnemen. Bestaande notities blijven zoals ze zijn.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "We installeren een nieuwe lokale notitie-engine zodat uw volgende vergadernotities duidelijker en makkelijker te scannen worden. Blijf verbonden totdat dit klaar is (eenmalig ongeveer 2,5 GB). Bestaande notities blijven zoals ze zijn.",
   "ui.jumpToTime": "Ga naar {time}",

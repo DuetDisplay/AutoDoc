@@ -243,6 +243,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Izvan mreže ste. Povežite se s internetom za preuzimanje govornog modela (oko {size}). Jezik: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Izvan mreže ste. Povežite se s internetom za preuzimanje govornog modela. Jezik: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Jezik vaših sastanaka i dalje je {language}.",
+  "meeting.reprocessNotesLanguageHint": "Najprije ponovno obradite transkript kako biste ovaj sastanak prebacili na {language}.",
+  "meeting.reprocessLanguageFailed": "Ponovna obrada na {language} nije uspjela. Jezik vaših sastanaka i dalje je {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Novi lokalni alat za bilješke instalirat ćemo kad sljedeći put budete na mreži (oko 2,5 GB, jednokratno). Možete nastaviti snimati. Postojeće bilješke ostaju nepromijenjene.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Instaliramo novi lokalni alat za bilješke kako bi bilješke budućih sastanaka bile jasnije i preglednije. Ostanite povezani do završetka (oko 2,5 GB, jednokratno). Postojeće bilješke ostaju nepromijenjene.",
   "ui.jumpToTime": "Idi na {time}",

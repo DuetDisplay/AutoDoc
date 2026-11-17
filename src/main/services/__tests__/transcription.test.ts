@@ -7,7 +7,7 @@ import { TranscriptionWorkerClient } from '../transcription-worker-client'
 import { EventEmitter } from 'events'
 import path from 'path'
 import { classifyError } from '../error-classification'
-import { runWithMeetingLanguage } from '../notes-language'
+import { activeMeetingLanguage, runWithMeetingLanguage } from '../notes-language'
 import { LocalProcessingCoordinator } from '../local-processing-coordinator'
 
 vi.mock('electron', () => ({
@@ -3231,6 +3231,74 @@ describe('TranscriptionService meeting-language routing', () => {
       expect(transcribe).toHaveBeenCalled()
     }
   )
+
+  describe('reprocessing in another language', () => {
+    function macServiceRecordedIn(storedLanguage: string) {
+      setPlatform('darwin')
+      vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+      mockWhisper.ensureMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
+      mockWhisper.getMlxWhisperTurboModelRef = vi.fn().mockReturnValue('/local/turbo')
+      mockWhisper.isMlxWhisperSelected = vi.fn().mockReturnValue(true)
+      macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+        pythonPath: '/canary/python3',
+        scriptPath: '/canary/script'
+      } as any)
+      const service = createService()
+      const transcribe = stubTranscribe(service)
+      recordMeeting(storedLanguage)
+      // The language each job ran in, read inside the job's language scope.
+      const jobLanguages: string[] = []
+      const run = (service as any).processJobInMeetingLanguage.bind(service)
+      ;(service as any).processJobInMeetingLanguage = (meetingId: string) => {
+        jobLanguages.push(activeMeetingLanguage())
+        return run(meetingId)
+      }
+      const metadataWrites = () =>
+        cryptoMock.encryptJSON.mock.calls.filter(([, file]) =>
+          String(file).endsWith('metadata.json')
+        )
+      return { service, transcribe, jobLanguages, metadataWrites }
+    }
+
+    it('transcribes in the requested language and stores it before reporting completion', async () => {
+      const { service, jobLanguages, metadataWrites } = macServiceRecordedIn('en')
+      let metadataWritesAtCompletion = -1
+      service.onComplete(() => {
+        metadataWritesAtCompletion = metadataWrites().length
+      })
+
+      service.retry('switch-to-german', 'direct', 'de')
+      await vi.waitFor(() => expect(metadataWritesAtCompletion).toBe(1))
+
+      expect(jobLanguages).toEqual(['de'])
+      expect(metadataWrites()[0][0]).toEqual(
+        expect.objectContaining({ sourceName: 'Zoom', durationSeconds: 60, meetingLanguage: 'de' })
+      )
+      expect(metadataWrites()[0][1]).toBe(
+        path.join('/mock/home/AutoDoc/recordings', 'switch-to-german', 'metadata.json')
+      )
+    })
+
+    it('keeps the stored language when the reprocess fails, so later retries use it', async () => {
+      const { service, transcribe, jobLanguages, metadataWrites } = macServiceRecordedIn('en')
+      transcribe.mockRejectedValueOnce(new Error('speech model download failed'))
+
+      service.retry('failed-switch', 'direct', 'de')
+      await vi.waitFor(() =>
+        expect(fsMock.writeFile).toHaveBeenCalledWith(
+          expect.stringContaining('transcript.error'),
+          expect.any(String)
+        )
+      )
+      expect(jobLanguages).toEqual(['de'])
+      expect(metadataWrites()).toHaveLength(0)
+
+      // The next retry carries no language and runs in the recording's own.
+      service.retry('failed-switch', 'recovery-scan')
+      await vi.waitFor(() => expect(jobLanguages).toEqual(['de', 'en']))
+      expect(metadataWrites()).toHaveLength(0)
+    })
+  })
 
   it('fails a German macOS meeting clearly when the Canary runtime is unavailable', async () => {
     setPlatform('darwin')

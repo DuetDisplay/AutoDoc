@@ -78,19 +78,13 @@ import {
 import { windowBackgroundForAppearance } from './services/appearance-runtime'
 import { tMain, setMainUiLanguage } from './services/ui-locale'
 import { refreshApplicationMenu } from './services/application-menu'
-import { registerPrefsIpc } from './ipc/prefs-ipc'
-import { isMeetingLanguageAvailable } from '../shared/meeting-language'
+import { getMeetingLanguageBlockReason, registerPrefsIpc } from './ipc/prefs-ipc'
 import {
   bindMeetingLanguagePreferenceStore,
   bindWindowsNotesModelSource,
-  currentMeetingLanguageAvailability,
-  resolveRecordingMeetingLanguage,
-  waitForWindowsNotesModel
+  resolveRecordingMeetingLanguage
 } from './services/meeting-language-availability'
-import {
-  bindWindowsMultilingualReadiness,
-  getWindowsMeetingLanguageAvailability
-} from './services/windows-multilingual-readiness'
+import { bindWindowsMultilingualReadiness } from './services/windows-multilingual-readiness'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { speechRuntimeLicenseNotices } from './services/speech-runtime-licenses'
@@ -2037,26 +2031,14 @@ app.whenReady().then(async () => {
   const {
     recoverInterruptedRecordings: recoverInterruptedRecordingsImpl,
     hasPostProcessingWork,
-    clearDiskFullHold
+    clearDiskFullHold,
+    isRecordingBusy
   } = registerRecordingIpc(
     recordingService,
     transcriptionService,
     whisperManager,
     calendarManager,
-    () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage()),
-    async (language) => {
-      await waitForWindowsNotesModel()
-      if (!isMeetingLanguageAvailable(language, currentMeetingLanguageAvailability())) {
-        return `Meeting language ${language} is not available on this computer.`
-      }
-      if (process.platform === 'win32') {
-        const engine = await getWindowsMeetingLanguageAvailability(language)
-        if (engine.availability === 'locked') {
-          return engine.reason ?? "This language isn't available on this PC."
-        }
-      }
-      return null
-    }
+    () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage())
   )
   recoverInterruptedRecordings = recoverInterruptedRecordingsImpl
   getUpdateInstallBlockReason = () => {
@@ -2332,12 +2314,20 @@ app.whenReady().then(async () => {
     })
   }
 
-  registerTranscriptionIpc(transcriptionService, (meetingId) => {
-    // A manual retry means the user freed space (or wants another attempt), so lift the
-    // disk-full hold that stops automatic recovery from re-running this meeting's post-processing.
-    clearDiskFullHold(meetingId)
-    markReprocessNotificationPending(meetingId)
-  })
+  registerTranscriptionIpc(
+    transcriptionService,
+    (meetingId) => {
+      // A manual retry means the user freed space (or wants another attempt), so lift the
+      // disk-full hold that stops automatic recovery from re-running this meeting's post-processing.
+      clearDiskFullHold(meetingId)
+      markReprocessNotificationPending(meetingId)
+    },
+    {
+      isRecordingBusy,
+      // Same refusals as the global preference in Settings.
+      getMeetingLanguageBlockReason: (language) => getMeetingLanguageBlockReason(language)
+    }
+  )
   registerLlmIpc(
     segmentationService,
     managedOllamaManager,

@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Brak połączenia z siecią. Połącz się z internetem, aby pobrać model mowy (około {size}). Język: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Brak połączenia z siecią. Połącz się z internetem, aby pobrać model mowy. Język: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Język spotkań to nadal {language}.",
+  "meeting.reprocessNotesLanguageHint": "Najpierw przetwórz ponownie transkrypcję, aby przełączyć to spotkanie na {language}.",
+  "meeting.reprocessLanguageFailed": "Ponowne przetwarzanie w języku {language} nie powiodło się. Język spotkań to nadal {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Zainstalujemy nowy lokalny silnik notatek, gdy znów będziesz online (jednorazowo około 2,5 GB). Możesz nadal nagrywać. Istniejące notatki pozostaną bez zmian.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Instalujemy nowy lokalny silnik notatek, aby kolejne spotkania były jaśniejsze i łatwiejsze do przejrzenia. Pozostań online do zakończenia instalacji (jednorazowo około 2,5 GB). Istniejące notatki pozostaną bez zmian.",
   "ui.jumpToTime": "Przejdź do {time}",

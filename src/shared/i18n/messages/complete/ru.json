@@ -208,6 +208,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Вы не в сети. Подключитесь к интернету для загрузки речевой модели (около {size}). Язык: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Вы не в сети. Подключитесь к интернету для загрузки речевой модели. Язык: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Язык ваших встреч по-прежнему {language}.",
+  "meeting.reprocessNotesLanguageHint": "Сначала переработайте транскрипт, чтобы перевести эту встречу на {language}.",
+  "meeting.reprocessLanguageFailed": "Переработка на {language} не удалась. Язык ваших встреч по-прежнему {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Мы установим новый локальный движок для заметок при следующем подключении к интернету (около 2,5 ГБ, один раз). Вы можете продолжать записывать. Существующие заметки останутся без изменений.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Мы устанавливаем новый локальный модуль заметок, чтобы заметки следующих встреч были понятнее и удобнее для просмотра. Оставайтесь в сети до завершения (около 2,5 ГБ, один раз). Существующие заметки останутся без изменений.",
   "ui.jumpToTime": "Перейти к {time}",

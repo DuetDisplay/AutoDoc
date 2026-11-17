@@ -24,7 +24,6 @@ import { isMeetingDirMissing } from '../services/meeting-dir'
 import { createFfmpegExitError, withSentryFingerprint } from '../services/sentry-fingerprint'
 import {
   DEFAULT_MEETING_LANGUAGE,
-  isMeetingLanguageCode,
   normalizeMeetingLanguage,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
@@ -1099,11 +1098,7 @@ export function registerRecordingIpc(
   whisperManager: WhisperManager,
   calendarManager: CalendarManager,
   getMeetingLanguage: () => MeetingLanguageCode | Promise<MeetingLanguageCode> = () =>
-    DEFAULT_MEETING_LANGUAGE,
-  /** Why this computer cannot process a language, or null when it can. */
-  getMeetingLanguageBlockReason: (
-    language: MeetingLanguageCode
-  ) => string | null | Promise<string | null> = () => null
+    DEFAULT_MEETING_LANGUAGE
 ): {
   stopActiveRecording: () => ReturnType<RecordingService['stopRecording']>
   recoverInterruptedRecordings: () => Promise<void>
@@ -1111,6 +1106,8 @@ export function registerRecordingIpc(
   hasPostProcessingWork: () => boolean
   /** Lets automatic recovery retry a meeting held back after a disk-full failure (manual retry). */
   clearDiskFullHold: (meetingId: string) => void
+  /** True while the recording is captured, saved, or post-processed; its files must not change. */
+  isRecordingBusy: (meetingId: string) => boolean
 } {
   let cachedRecentEvents: {
     fetchedAt: number
@@ -2389,49 +2386,6 @@ export function registerRecordingIpc(
     }
   })
 
-  // Changes the language stored on a finished recording. Transcription and
-  // notes read it from metadata, so the next reprocess runs in this language.
-  ipcMain.handle(
-    'recording:set-meeting-language',
-    async (_event, meetingId: string, language: unknown): Promise<void> => {
-      if (!isMeetingLanguageCode(language)) {
-        throw new Error('This meeting language is not supported.')
-      }
-      const captureState = recordingService.getState()
-      if (captureState.isRecording && captureState.meetingId === meetingId) {
-        throw new Error('The meeting language cannot be changed while recording.')
-      }
-      const meetingDir = join(recordingService.getRecordingsBaseDir(), meetingId)
-      const metadata = await readMetadata(meetingDir)
-      if (
-        !metadata ||
-        metadata.isFinalizing === true ||
-        windowsPendingFinalization.has(meetingId)
-      ) {
-        throw new Error('The meeting language cannot be changed until the recording is saved.')
-      }
-      const status = await transcriptionService.getStatus(meetingId)
-      if (['queued', 'downloading', 'transcribing', 'diarizing'].includes(status)) {
-        throw new Error('The meeting language cannot be changed while the meeting is processing.')
-      }
-      const blockReason = await Promise.resolve(getMeetingLanguageBlockReason(language))
-      if (blockReason) throw new Error(blockReason)
-      // The checks above await, and other handlers (title, video status) can
-      // write metadata meanwhile: merge the language into the latest copy.
-      const latest = (await readMetadata(meetingDir)) ?? metadata
-      if (normalizeMeetingLanguage(latest.meetingLanguage) === language) return
-      await persistRecordingMetadata(meetingDir, { ...latest, meetingLanguage: language })
-      if (postProcessingLanguages.has(meetingId)) postProcessingLanguages.set(meetingId, language)
-      logAutodocEvent({
-        area: 'recording',
-        message: 'meeting language changed for existing recording',
-        meetingId,
-        context: { from: latest.meetingLanguage ?? null, to: language }
-      })
-      broadcastEntryUpdated(meetingId)
-    }
-  )
-
   ipcMain.handle('recording:retry-video', async (_event, meetingId: string) => {
     if (!isWindows) {
       return
@@ -2817,7 +2771,8 @@ export function registerRecordingIpc(
     recoverInterruptedRecordings,
     recoverWindowsFinalizingMeetings,
     hasPostProcessingWork,
-    clearDiskFullHold
+    clearDiskFullHold,
+    isRecordingBusy
   }
 }
 

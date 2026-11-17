@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Ви не в мережі. Під’єднайтеся до інтернету, щоб завантажити мовленнєву модель (приблизно {size}). Мова: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Ви не в мережі. Під’єднайтеся до інтернету, щоб завантажити мовленнєву модель. Мова: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Мова ваших зустрічей досі {language}.",
+  "meeting.reprocessNotesLanguageHint": "Спочатку переопрацюйте транскрипт, щоб перевести цю зустріч на {language}.",
+  "meeting.reprocessLanguageFailed": "Переопрацювання мовою {language} не вдалося. Мова ваших зустрічей досі {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Ми встановимо новий локальний рушій нотаток, коли ви наступного разу будете в мережі (приблизно 2,5 ГБ, одноразово). Ви можете продовжувати запис. Наявні нотатки залишаться без змін.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Ми встановлюємо новий локальний рушій нотаток, щоб майбутні зустрічі були зрозумілішими й легшими для перегляду. Залишайтеся в мережі до завершення (приблизно 2,5 ГБ, одноразово). Наявні нотатки залишаться без змін.",
   "ui.jumpToTime": "Перейти до {time}",

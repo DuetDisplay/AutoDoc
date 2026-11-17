@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Είστε εκτός σύνδεσης. Συνδεθείτε στο διαδίκτυο για να λάβετε το μοντέλο ομιλίας (περίπου {size}). Γλώσσα: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Είστε εκτός σύνδεσης. Συνδεθείτε στο διαδίκτυο για να λάβετε το μοντέλο ομιλίας. Γλώσσα: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Η γλώσσα συναντήσεών σας παραμένει: {language}.",
+  "meeting.reprocessNotesLanguageHint": "Επανεπεξεργαστείτε πρώτα την απομαγνητοφώνηση για να αλλάξετε αυτή τη συνάντηση σε {language}.",
+  "meeting.reprocessLanguageFailed": "Η επανεπεξεργασία σε {language} απέτυχε. Η γλώσσα συναντήσεών σας παραμένει: {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Θα εγκαταστήσουμε τη νέα τοπική μηχανή σημειώσεων την επόμενη φορά που θα συνδεθείτε (περίπου 2,5 GB, μία φορά). Μπορείτε να συνεχίσετε την εγγραφή. Οι υπάρχουσες σημειώσεις παραμένουν ως έχουν.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Εγκαθιστούμε νέα τοπική μηχανή σημειώσεων, ώστε οι επόμενες συναντήσεις σας να είναι πιο σαφείς και εύκολες στην επισκόπηση. Παραμείνετε συνδεδεμένοι μέχρι να ολοκληρωθεί (περίπου 2,5 GB, μία φορά). Οι υπάρχουσες σημειώσεις παραμένουν ως έχουν.",
   "ui.jumpToTime": "Μετάβαση στο {time}",

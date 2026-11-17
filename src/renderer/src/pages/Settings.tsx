@@ -1,4 +1,3 @@
-import { isDiskFullError } from '../../../shared/disk-full'
 import { updateInstallBlockMessage } from '../services/update-install-status'
 import { AUTODOC_GITHUB_URL } from '../../../shared/constants'
 import type { MessageKey } from '../../../shared/i18n'
@@ -20,13 +19,16 @@ import {
   normalizeMeetingLanguage,
   UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
   type MeetingLanguageAvailability,
-  type MeetingLanguageCode,
-  type MeetingLanguageEngineState
+  type MeetingLanguageCode
 } from '../../../shared/meeting-language'
-import type { WhisperSetupStatus } from '../../../shared/types'
 import { formatBytes, formatMeetingLanguageFirstUseDownload } from '../services/format-bytes'
-import { loadMeetingLanguageStates } from '../services/meeting-language-setup'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
+import {
+  classifyMeetingLanguageFailure,
+  meetingLanguageFailureMessage,
+  useMeetingLanguagePreparation,
+  type MeetingLanguageFailure
+} from '../hooks/useMeetingLanguagePreparation'
 
 import {
   identifyConsentedInstall,
@@ -40,8 +42,6 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { UpdateDiskFullAlert } from '../components/UpdateDiskFullAlert'
 import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
-import { isNetworkErrorMessage } from '../services/network-errors'
-import { offlineMeetingLanguageMessage } from '../services/meeting-language-copy'
 import { APPEARANCE_MODES } from '../../../shared/appearance'
 import { UI_LANGUAGE_NATIVE_LABELS } from '../../../shared/ui-language'
 import { useI18n } from '../services/i18n'
@@ -133,26 +133,10 @@ export function Settings() {
   const [meetingLanguage, setMeetingLanguageState] =
     useState<MeetingLanguageCode>(DEFAULT_MEETING_LANGUAGE)
   const [isSavingMeetingLanguage, setIsSavingMeetingLanguage] = useState(false)
-  const [meetingLanguageFailure, setMeetingLanguageFailure] = useState<
-    | { kind: 'save' | 'disk-full' }
-    | { kind: 'locked'; language: MeetingLanguageCode }
-    | {
-        kind: 'offline'
-        language: MeetingLanguageCode
-        bytes?: number
-        savedLanguage: MeetingLanguageCode | null
-      }
-    | null
-  >(null)
+  const [meetingLanguageFailure, setMeetingLanguageFailure] =
+    useState<MeetingLanguageFailure | null>(null)
   const [meetingLanguageAvailability, setMeetingLanguageAvailability] =
     useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
-  const [languageStates, setLanguageStates] = useState<
-    Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>
-  >({})
-  const [preparingMeetingLanguage, setPreparingMeetingLanguage] =
-    useState<MeetingLanguageCode | null>(null)
-  const [meetingLanguageSetupStatus, setMeetingLanguageSetupStatus] =
-    useState<WhisperSetupStatus | null>(null)
   const [storageNotice, setStorageNotice] = useState<MessageKey | null>(null)
   const [storageError, setStorageError] = useState<MessageKey | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -213,32 +197,12 @@ export function Settings() {
   }, [refreshStorageInfo])
 
   const isWindows = runtimeInfo?.platform === 'win32'
-
-  const refreshLanguageStates = useCallback(async () => {
-    if (!runtimeInfo?.platform) return
-    try {
-      setLanguageStates(await loadMeetingLanguageStates(runtimeInfo.platform))
-    } catch {
-      // Keep the last known engine states if a refresh fails.
-    }
-  }, [runtimeInfo?.platform])
-
-  useEffect(() => {
-    void refreshLanguageStates()
-  }, [refreshLanguageStates])
-
-  useEffect(() => {
-    if (!preparingMeetingLanguage) {
-      setMeetingLanguageSetupStatus(null)
-      return
-    }
-    const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
-      if (!status.meetingLanguage || status.meetingLanguage === preparingMeetingLanguage) {
-        setMeetingLanguageSetupStatus(status)
-      }
-    })
-    return unsub
-  }, [preparingMeetingLanguage])
+  const {
+    languageStates,
+    preparingLanguage: preparingMeetingLanguage,
+    setupStatus: meetingLanguageSetupStatus,
+    prepareMeetingLanguage
+  } = useMeetingLanguagePreparation(runtimeInfo?.platform)
 
   useEffect(() => {
     const previousState = previousUpdateState.current
@@ -371,39 +335,8 @@ export function Settings() {
     setMeetingLanguageFailure(null)
     setIsSavingMeetingLanguage(true)
     try {
-      if (isWindows && language !== DEFAULT_MEETING_LANGUAGE) {
-        let engineState = languageStates[language]
-        if (!engineState) {
-          const fetched = await window.electronAPI.invoke(
-            'whisper:get-windows-meeting-language-availability',
-            language
-          )
-          if (fetched) {
-            engineState = fetched
-            setLanguageStates((current) => ({ ...current, [language]: fetched }))
-          }
-        }
-        if (engineState?.availability === 'locked') {
-          setMeetingLanguageFailure({ kind: 'locked', language })
-          return
-        }
-        const needsEnsure =
-          (engineState?.firstUseDownloadBytes ?? 0) > 0 || engineState?.needsSelfTest === true
-        if (needsEnsure) {
-          setPreparingMeetingLanguage(language)
-          try {
-            // Same path as onboarding, so setup status reports ready afterwards.
-            // It throws the lock reason when the engine turns out to be locked.
-            await window.electronAPI.invoke('whisper:prepare-meeting-language', language)
-          } finally {
-            await refreshLanguageStates()
-          }
-        }
-      } else if (runtimeInfo?.platform === 'darwin' || language === DEFAULT_MEETING_LANGUAGE) {
-        setPreparingMeetingLanguage(language)
-        setMeetingLanguageSetupStatus({ phase: 'checking', percent: 0 })
-        await window.electronAPI.invoke('whisper:prepare-meeting-language', language)
-      }
+      // Same downloads and lock checks as changing one recording's language.
+      await prepareMeetingLanguage(language)
       await window.electronAPI.invoke('prefs:set-meeting-language', language)
       setMeetingLanguageState(language)
       setUiLanguageOffer(language !== uiLanguage ? language : null)
@@ -413,7 +346,6 @@ export function Settings() {
         details: { language }
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : t('settings.saveMeetingLanguageFailed')
       let savedLanguage: MeetingLanguageCode | null = null
       try {
         savedLanguage = normalizeMeetingLanguage(
@@ -424,21 +356,14 @@ export function Settings() {
         // Keep the last picker value if the saved preference cannot be read.
       }
       setMeetingLanguageFailure(
-        isDiskFullError(err)
-          ? { kind: 'disk-full' }
-          : isNetworkErrorMessage(message)
-            ? {
-                kind: 'offline',
-                language,
-                bytes: languageStates[language]?.firstUseDownloadBytes,
-                savedLanguage
-              }
-            : { kind: 'save' }
+        classifyMeetingLanguageFailure(
+          err,
+          language,
+          languageStates[language]?.firstUseDownloadBytes,
+          savedLanguage
+        )
       )
     } finally {
-      if (!isWindows) await refreshLanguageStates()
-      setPreparingMeetingLanguage(null)
-      setMeetingLanguageSetupStatus(null)
       setIsSavingMeetingLanguage(false)
     }
   }
@@ -477,24 +402,9 @@ export function Settings() {
     }
   }
 
-  const meetingLanguageError = !meetingLanguageFailure
-    ? null
-    : meetingLanguageFailure.kind === 'offline'
-      ? offlineMeetingLanguageMessage(
-          meetingLanguageName(meetingLanguageFailure.language, uiLanguage),
-          meetingLanguageFailure.bytes,
-          meetingLanguageFailure.savedLanguage
-            ? meetingLanguageName(meetingLanguageFailure.savedLanguage, uiLanguage)
-            : null
-        )
-      : meetingLanguageFailure.kind === 'locked'
-        ? t('settings.meetingLanguageUnavailable', {
-            language: meetingLanguageName(meetingLanguageFailure.language, uiLanguage),
-            machine: t('machine.pc')
-          })
-        : meetingLanguageFailure.kind === 'disk-full'
-          ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
-          : t('settings.saveMeetingLanguageFailed')
+  const meetingLanguageError = meetingLanguageFailure
+    ? meetingLanguageFailureMessage(meetingLanguageFailure, t, uiLanguage)
+    : null
 
   const uninstallGuidance =
     runtimeInfo?.platform === 'win32'

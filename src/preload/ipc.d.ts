@@ -226,7 +226,10 @@ export interface IpcInvokeEvents {
   'transcription:get-error-code': [meetingId: string]
   'transcription:get-cpu-fallback': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
-  'transcription:retry': [meetingId: string, options?: { reprocess: boolean }]
+  'transcription:retry': [
+    meetingId: string,
+    options?: { reprocess?: boolean; meetingLanguage?: MeetingLanguageCode }
+  ]
   'transcription:get-reprocess-failure': [meetingId: string]
   'ollama:check-status': []
   'ollama:get-model': []
@@ -252,7 +255,6 @@ export interface IpcInvokeEvents {
   'recording:get-media': [meetingId: string]
   'recording:report-media-player-error': [payload: RecordingMediaPlayerErrorReport]
   'recording:get-detail': [meetingId: string]
-  'recording:set-meeting-language': [meetingId: string, language: MeetingLanguageCode]
   'search:query': [query: string]
   'chat:send': [question: string]
   'chat:new': []
@@ -456,7 +458,6 @@ export interface IpcInvokeReturns {
     videoStatus?: VideoStatus
     videoCaptureEndedEarly?: boolean
   }
-  'recording:set-meeting-language': void
   'search:query': SearchResult[]
   'chat:send': string
   'chat:new': void

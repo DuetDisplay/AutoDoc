@@ -218,69 +218,191 @@ describe('memory failure guidance', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Transcript', exact: true }))
     expect(screen.getByText('Intro')).toBeInTheDocument()
   })
-  it('saves the language chosen in Reprocess before retranscribing, and keeps it when the save fails', async () => {
-    const api = window.electronAPI as unknown as MockElectronAPI
-    api.setHandler('transcription:get-status', 'complete')
-    let failSave = true
-    api.setHandler('recording:set-meeting-language', () => {
-      if (failSave) throw new Error('disk full')
-    })
-    await renderMeetingDetail()
-    await userEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }))
-    await userEvent.click(screen.getByRole('button', { name: /meeting language/i }))
-    await userEvent.click(screen.getByRole('option', { name: /German/ }))
-
-    const reprocess = () => screen.getAllByRole('button', { name: 'Reprocess', exact: true })[0]
-    await userEvent.click(reprocess())
-    expect(api.invoke).toHaveBeenCalledWith('recording:set-meeting-language', 'test-123', 'de')
-    // A failed save reports the problem, keeps the choice and does not reprocess.
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Could not save this preference. Try again.'
-    )
-    expect(api.invoke).not.toHaveBeenCalledWith('transcription:retry', 'test-123')
-    expect(screen.getByRole('button', { name: /meeting language/i })).toHaveTextContent('German')
-
-    failSave = false
-    await userEvent.click(reprocess())
-    await vi.waitFor(() =>
-      expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123')
-    )
-    expect(
-      vi.mocked(api.invoke).mock.calls.filter(([c]) => c === 'recording:set-meeting-language')
-    ).toHaveLength(2)
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('locks the language picker and Reprocess while the language save is pending', async () => {
-    const api = window.electronAPI as unknown as MockElectronAPI
-    api.setHandler('transcription:get-status', 'complete')
-    let finishSave: () => void = () => {}
-    api.setHandler(
-      'recording:set-meeting-language',
-      () => new Promise<void>((resolve) => (finishSave = resolve))
-    )
-    await renderMeetingDetail()
-    await userEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }))
+  describe('reprocessing in another language', () => {
     const picker = () => screen.getByRole('button', { name: /meeting language/i })
-    const reprocess = () => screen.getAllByRole('button', { name: 'Reprocess', exact: true })[0]
-    await userEvent.click(picker())
-    await userEvent.click(screen.getByRole('option', { name: /German/ }))
-    await userEvent.click(reprocess())
+    const reprocessButtons = () => screen.getAllByRole('button', { name: 'Reprocess', exact: true })
+    const reprocessTranscript = () => reprocessButtons()[0]
+    const reprocessNotes = () => reprocessButtons()[1]
 
-    // Until the save settles the choice cannot change and cannot be submitted twice.
-    expect(picker()).toBeDisabled()
-    expect(reprocess()).toBeDisabled()
-    await userEvent.click(reprocess())
-    expect(
-      vi.mocked(api.invoke).mock.calls.filter(([c]) => c === 'recording:set-meeting-language')
-    ).toHaveLength(1)
-    expect(api.invoke).not.toHaveBeenCalledWith('transcription:retry', 'test-123')
+    function installLanguageApi(options?: {
+      prepare?: (language: string) => unknown
+      retry?: (meetingId: string, retryOptions?: { meetingLanguage?: string }) => unknown
+    }) {
+      const api = window.electronAPI as unknown as MockElectronAPI
+      api.setHandler('transcription:get-status', 'complete')
+      api.setHandler('whisper:prepare-meeting-language', options?.prepare ?? (() => undefined))
+      api.setHandler('transcription:retry', options?.retry ?? (() => undefined))
+      return api
+    }
 
-    await act(async () => finishSave())
-    await vi.waitFor(() =>
+    async function openSettingsTab() {
+      await userEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }))
+    }
+
+    async function pickGerman() {
+      await userEvent.click(picker())
+      await userEvent.click(screen.getByRole('option', { name: /German/ }))
+    }
+
+    it('prepares the picked language, reprocesses in it, and shows it once the transcript succeeds', async () => {
+      const api = installLanguageApi()
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() =>
+        expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'de')
+      )
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+      expect(picker()).toHaveTextContent('German')
+      // Nothing is saved yet, and notes alone would still come out in English.
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'transcription:retry',
+        expect.anything(),
+        expect.anything()
+      )
+      expect(reprocessNotes()).toBeDisabled()
+      expect(
+        screen.getByText('Reprocess the transcript first to switch this meeting to German.')
+      ).toBeInTheDocument()
+
+      await userEvent.click(reprocessTranscript())
+      await vi.waitFor(() =>
+        expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123', {
+          meetingLanguage: 'de'
+        })
+      )
+      api.setHandler('recording:get-detail', {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300,
+        meetingLanguage: 'de'
+      })
+      await act(async () => {
+        api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+      })
+      expect(picker()).toHaveTextContent('German')
+      await vi.waitFor(() => expect(reprocessNotes()).toBeEnabled())
+      expect(
+        screen.getByText('Regenerate AI notes from the existing transcript')
+      ).toBeInTheDocument()
+    })
+
+    it('explains an offline download when the language is picked and keeps the recording language', async () => {
+      const api = installLanguageApi({
+        prepare: () =>
+          Promise.reject(
+            new Error(
+              "Error invoking remote method 'whisper:prepare-meeting-language': TypeError: fetch failed"
+            )
+          )
+      })
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'You’re offline. Connect to the internet to download the German speech model. Your meeting language is still English.'
+      )
+      expect(picker()).toHaveTextContent('English')
+      expect(reprocessNotes()).toBeEnabled()
+
+      await userEvent.click(reprocessTranscript())
       expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123')
-    )
-    expect(picker()).toHaveTextContent('German')
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'transcription:retry',
+        'test-123',
+        expect.objectContaining({ meetingLanguage: 'de' })
+      )
+    })
+
+    it('shows the recording kept its language when the reprocess in the new one fails', async () => {
+      const api = installLanguageApi()
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+      await userEvent.click(reprocessTranscript())
+      await vi.waitFor(() =>
+        expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123', {
+          meetingLanguage: 'de'
+        })
+      )
+
+      await act(async () => {
+        api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'failed' })
+      })
+      expect(picker()).toHaveTextContent('English')
+      expect(
+        screen.getByText('Reprocessing in German failed. Your meeting language is still English.')
+      ).toBeInTheDocument()
+      expect(reprocessNotes()).toBeDisabled()
+    })
+
+    it('keeps the pick and reports the reason when main refuses the language change', async () => {
+      installLanguageApi({
+        retry: (_meetingId, retryOptions) => {
+          if (retryOptions?.meetingLanguage) {
+            throw new Error(
+              'The meeting language cannot be changed while the recording is saved or processed.'
+            )
+          }
+        }
+      })
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+      await userEvent.click(reprocessTranscript())
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Failed to save the meeting language.'
+      )
+      expect(picker()).toHaveTextContent('German')
+      expect(reprocessTranscript()).toBeEnabled()
+    })
+
+    it('keeps a meeting locked while its language is prepared, even after switching meetings', async () => {
+      let finishPrepare!: () => void
+      const api = installLanguageApi({
+        prepare: () =>
+          new Promise<void>((resolve) => {
+            finishPrepare = resolve
+          })
+      })
+      await act(async () => {
+        render(
+          <MemoryRouter initialEntries={['/recordings/test-123']}>
+            <Link to="/recordings/test-456">Open next recording</Link>
+            <Link to="/recordings/test-123">Open first recording</Link>
+            <Routes>
+              <Route path="/recordings/:id" element={<MeetingDetail />} />
+            </Routes>
+          </MemoryRouter>
+        )
+      })
+      await openSettingsTab()
+      await pickGerman()
+      expect(picker()).toBeDisabled()
+      expect(reprocessTranscript()).toBeDisabled()
+
+      await userEvent.click(screen.getByRole('link', { name: 'Open next recording' }))
+      // The other meeting can still reprocess in its own language.
+      expect(picker()).toHaveTextContent('English')
+      expect(reprocessTranscript()).toBeEnabled()
+
+      await userEvent.click(screen.getByRole('link', { name: 'Open first recording' }))
+      expect(picker()).toBeDisabled()
+      expect(reprocessTranscript()).toBeDisabled()
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'transcription:retry',
+        expect.anything(),
+        expect.anything()
+      )
+
+      await act(async () => finishPrepare())
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+      expect(picker()).toHaveTextContent('German')
+      expect(reprocessTranscript()).toBeEnabled()
+    })
   })
 
   it('shows a persisted transcription shortage in Notes and Transcript and clears it on retry', async () => {

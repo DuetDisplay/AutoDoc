@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Nėra interneto ryšio. Prisijunkite, kad atsisiųstumėte kalbos atpažinimo modelį (apie {size}). Kalba: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Nėra interneto ryšio. Prisijunkite, kad atsisiųstumėte kalbos atpažinimo modelį. Kalba: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Susitikimų kalba vis dar yra {language}.",
+  "meeting.reprocessNotesLanguageHint": "Norėdami perjungti šį susitikimą į {language}, pirmiausia iš naujo apdorokite transkriptą.",
+  "meeting.reprocessLanguageFailed": "Apdoroti iš naujo kalba {language} nepavyko. Susitikimų kalba vis dar yra {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Naują vietinį pastabų modulį įdiegsime, kai vėl prisijungsite prie interneto (vieną kartą apie 2,5 GB). Galite toliau įrašinėti. Esamos pastabos nesikeičia.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Diegiame naują vietinį pastabų modulį, kad kitų susitikimų pastabos būtų aiškesnės ir lengviau peržvelgiamos. Likite prisijungę, kol baigsime (vieną kartą apie 2,5 GB). Esamos pastabos nesikeičia.",
   "ui.jumpToTime": "Pereiti į {time}",

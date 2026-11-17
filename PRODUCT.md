@@ -103,7 +103,7 @@ On macOS, the MLX worker exchanges newline-delimited JSON messages with the Elec
 
 AutoDoc supports 27 meeting languages on supported hardware. The language selected during onboarding or in Settings controls transcription, meeting notes, and Ask AI answers. Settings shows per-language availability and remaining first-use model downloads. After the required models download, processing runs locally and works offline.
 
-Each recording stores the language it was started with. The Reprocess section of a meeting can change that language: reprocessing the transcript saves the choice on the recording and redoes the transcript and notes in it. The global setting is unchanged and stays the default for new recordings.
+Each recording stores the language it was started with. The Reprocess section of a meeting can change that language. Picking a language runs the same availability checks and model download as Settings, so offline, locked, or disk problems show up before anything changes. Reprocessing the transcript then sends the choice with the request; the recording adopts the language only once the new transcript succeeds, and keeps its previous language if it fails. Notes read the recording's language, so Reprocess notes waits until a picked language has been applied by reprocessing the transcript. The global setting is unchanged and stays the default for new recordings.
 
 The shared language definitions select one of three routes:
 
