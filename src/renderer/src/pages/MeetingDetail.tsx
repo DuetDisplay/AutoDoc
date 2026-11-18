@@ -340,13 +340,17 @@ export function MeetingDetail() {
     if (titleLanguageRef.current === language) return
     titleLanguageRef.current = language
     let cancelled = false
-    if (id)
+    if (id) {
+      const request = ++detailRequestRef.current
       void window.electronAPI
         .invoke('recording:get-detail', id)
         .then((next) => {
-          if (!cancelled) setDetail(next)
+          if (cancelled || request !== detailRequestRef.current) return
+          setDetail(next)
+          setDetailMeetingId(id)
         })
         .catch(() => {})
+    }
     return () => {
       cancelled = true
     }
@@ -390,6 +394,10 @@ export function MeetingDetail() {
     videoStatus?: 'processing' | 'ready' | 'failed'
     videoCaptureEndedEarly?: boolean
   } | null>(null)
+  /** Which meeting `detail` describes; it lags behind `id` while the next one loads. */
+  const [detailMeetingId, setDetailMeetingId] = useState<string | undefined>()
+  /** Only the latest detail request may apply, so an older reply cannot undo a newer state. */
+  const detailRequestRef = useRef(0)
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
@@ -461,7 +469,9 @@ export function MeetingDetail() {
       else next.delete(meetingId)
       return next
     })
-  const storedMeetingLanguage = detail?.meetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+  const detailLoaded = detail !== null && detailMeetingId === id
+  const storedMeetingLanguage =
+    (detailLoaded ? detail.meetingLanguage : undefined) ?? DEFAULT_MEETING_LANGUAGE
   const reprocessLanguage = id ? reprocessLanguageByMeeting[id] : undefined
   const reprocessLanguageDraft = reprocessLanguage?.draft ?? null
   const reprocessLanguagePending = id ? reprocessLanguagePendingIds.has(id) : false
@@ -474,6 +484,8 @@ export function MeetingDetail() {
         submittedReprocessLanguagesRef.current.delete(payload.meetingId)
         updateReprocessLanguage(payload.meetingId, EMPTY_REPROCESS_LANGUAGE_STATE)
         if (activeMeetingIdRef.current === payload.meetingId) {
+          // A detail reply still in flight predates this change and must not undo it.
+          detailRequestRef.current += 1
           setDetail((prev) => (prev ? { ...prev, meetingLanguage: submitted } : prev))
         }
       } else if (payload.status === 'failed' || payload.reprocessFailed === true) {
@@ -984,8 +996,10 @@ export function MeetingDetail() {
 
     const refreshDetail = () => {
       const requestedLanguage = titleLanguageRef.current
+      const request = ++detailRequestRef.current
       return window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
         if (cancelled || requestedLanguage !== titleLanguageRef.current) return
+        if (request !== detailRequestRef.current) return
         console.info('[meeting-detail] refreshDetail resolved', {
           at: new Date().toISOString(),
           meetingId: id,
@@ -993,6 +1007,7 @@ export function MeetingDetail() {
           videoStatus: nextDetail?.videoStatus ?? null
         })
         setDetail(nextDetail)
+        setDetailMeetingId(id)
         if (nextDetail?.videoStatus === 'ready' || nextDetail?.videoStatus === 'failed') {
           setVideoRetryPending(false)
         }
@@ -1233,7 +1248,7 @@ export function MeetingDetail() {
   }
 
   const handlePickReprocessLanguage = async (language: MeetingLanguageCode) => {
-    if (!id || reprocessLanguagePendingIds.has(id)) return
+    if (!id || !detailLoaded || reprocessLanguagePendingIds.has(id)) return
     const meetingId = id
     const currentLanguage = storedMeetingLanguage
     if (language === currentLanguage) {
@@ -1295,11 +1310,13 @@ export function MeetingDetail() {
     }
     setReprocessLanguagePending(meetingId, true)
     updateReprocessLanguage(meetingId, { failure: null, revertedFrom: null })
+    // Registered before the request, so an outcome that beats the reply is not missed.
+    submittedReprocessLanguagesRef.current.set(meetingId, meetingLanguage)
     try {
       // Main refuses while the recording is busy or the language is unavailable.
       await requestReprocess(meetingId, meetingLanguage)
-      submittedReprocessLanguagesRef.current.set(meetingId, meetingLanguage)
     } catch (error) {
+      submittedReprocessLanguagesRef.current.delete(meetingId)
       console.error('Failed to reprocess in another language:', error)
       updateReprocessLanguage(meetingId, {
         failure: classifyMeetingLanguageFailure(
@@ -1313,6 +1330,8 @@ export function MeetingDetail() {
     } finally {
       setReprocessLanguagePending(meetingId, false)
     }
+    // The outcome may have arrived before the reply; then the view already shows it.
+    if (!submittedReprocessLanguagesRef.current.has(meetingId)) return
     // The job runs either way; only the meeting still on screen resets its view.
     if (activeMeetingIdRef.current === meetingId) resetForReprocess()
   }
@@ -1368,6 +1387,9 @@ export function MeetingDetail() {
           : handleReprocessNotes
       }
       retryDisabled={!showTranscriptionMemoryFailure && reprocessLanguageDraft !== null}
+      retryHint={
+        showTranscriptionMemoryFailure ? undefined : (reprocessNotesLanguageHint ?? undefined)
+      }
       onViewTranscript={
         !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
           ? () => setActiveTab('transcript')
@@ -1387,6 +1409,7 @@ export function MeetingDetail() {
         showTranscriptionDiskFull ? () => void handleReprocessTranscript() : handleReprocessNotes
       }
       retryDisabled={!showTranscriptionDiskFull && reprocessLanguageDraft !== null}
+      retryHint={showTranscriptionDiskFull ? undefined : (reprocessNotesLanguageHint ?? undefined)}
     />
   ) : null
   const showCpuFallbackNotice =
@@ -2208,6 +2231,8 @@ export function MeetingDetail() {
                     <MeetingLanguagePicker
                       value={reprocessLanguageDraft?.language ?? storedMeetingLanguage}
                       disabled={
+                        // The picker shows this meeting's language only once its detail is in.
+                        !detailLoaded ||
                         reprocessLanguagePending ||
                         // One engine download at a time, whichever meeting started it.
                         preparingReprocessLanguage !== null ||

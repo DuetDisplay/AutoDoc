@@ -6,13 +6,16 @@ export function MemoryFailureCallout({
   failure,
   onRetry,
   onViewTranscript,
-  retryDisabled = false
+  retryDisabled = false,
+  retryHint
 }: {
   stage: 'transcription' | 'notes'
   failure: MemoryFailure
   onRetry: () => void
   onViewTranscript?: () => void
   retryDisabled?: boolean
+  /** Why retrying is held back right now; shown while `retryDisabled`. */
+  retryHint?: string
 }) {
   const { t, language } = useI18n()
 
@@ -41,6 +44,9 @@ export function MemoryFailureCallout({
               : t('ui.yourComputerDoesnTHaveEnoughFreeRAMToGenerateNotesCloseOtherAppsThenRetry')}
           </p>
           {details && <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">{details}</p>}
+          {retryDisabled && retryHint && (
+            <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">{retryHint}</p>
+          )}
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <button
               onClick={onRetry}

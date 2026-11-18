@@ -353,7 +353,142 @@ describe('memory failure guidance', () => {
         screen.getByText('Reprocess the transcript first to switch this meeting to German.')
       ).toBeInTheDocument()
       await userEvent.click(tryAgain)
+      await userEvent.click(screen.getByText('Notes failed — Retry'))
       expect(api.invoke).not.toHaveBeenCalledWith('segmentation:retry', 'test-123')
+    })
+
+    it.each([
+      [
+        'memory',
+        {
+          'segmentation:get-error-code': 'ollama-insufficient-memory',
+          'segmentation:get-memory-failure': {
+            available: { value: 1.2, unit: 'GiB' },
+            minimum: { value: 3.4, unit: 'GiB' }
+          }
+        }
+      ],
+      ['disk-full', { 'segmentation:get-error-code': 'disk-full' }]
+    ])('explains the held notes retry inside the %s callout', async (_kind, handlers) => {
+      const api = installLanguageApi()
+      api.setHandler('segmentation:get-status', 'failed')
+      for (const [channel, value] of Object.entries(handlers)) api.setHandler(channel, value)
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: 'Notes', exact: true }))
+      const retryNotes = screen.getByRole('button', { name: 'Retry notes', exact: true })
+      expect(retryNotes).toBeDisabled()
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Reprocess the transcript first to switch this meeting to German.'
+      )
+      await userEvent.click(retryNotes)
+      expect(api.invoke).not.toHaveBeenCalledWith('segmentation:retry', 'test-123')
+    })
+
+    it('keeps a failure that arrives before the retry reply', async () => {
+      const api = installLanguageApi({
+        retry: () => {
+          // Main reports the outcome before the request itself resolves.
+          api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'failed' })
+        }
+      })
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+
+      await userEvent.click(reprocessTranscript())
+      await vi.waitFor(() =>
+        expect(
+          screen.getByText(
+            "Reprocessing in German failed. This meeting's language is still English."
+          )
+        ).toBeInTheDocument()
+      )
+      expect(picker()).toHaveTextContent('English')
+      // The late reply must not turn the failed view back into a queued one.
+      expect(reprocessButtons()).toHaveLength(2)
+    })
+
+    it('does not let an older detail reply undo the language the transcript adopted', async () => {
+      const api = installLanguageApi()
+      await renderMeetingDetail()
+      await openSettingsTab()
+      await pickGerman()
+      await vi.waitFor(() => expect(picker()).toBeEnabled())
+      await userEvent.click(reprocessTranscript())
+      await vi.waitFor(() =>
+        expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123', {
+          meetingLanguage: 'de'
+        })
+      )
+      const baseDetail = {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: 1,
+        durationSeconds: 300
+      }
+      let answerStaleDetail!: () => void
+      api.setHandler(
+        'recording:get-detail',
+        () =>
+          new Promise((resolve) => {
+            answerStaleDetail = () => resolve(baseDetail)
+          })
+      )
+      // A refresh issued while the transcript was still being made...
+      act(() => api.emit('recording:entry-updated', { meetingId: 'test-123' }))
+      api.setHandler('recording:get-detail', { ...baseDetail, meetingLanguage: 'de' })
+      await act(async () => {
+        api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+      })
+      expect(picker()).toHaveTextContent('German')
+      // ...answers only now, with the language from before the change.
+      await act(async () => answerStaleDetail())
+      expect(picker()).toHaveTextContent('German')
+    })
+
+    it('holds the picker until the opened meeting has its own detail', async () => {
+      const api = installLanguageApi()
+      const baseDetail = {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: 1,
+        durationSeconds: 300
+      }
+      api.setHandler('recording:get-detail', (meetingId: string) =>
+        meetingId === 'test-123' ? { ...baseDetail, meetingLanguage: 'de' } : baseDetail
+      )
+      await act(async () => {
+        render(
+          <MemoryRouter initialEntries={['/recordings/test-123']}>
+            <Link to="/recordings/test-456">Open next recording</Link>
+            <Routes>
+              <Route path="/recordings/:id" element={<MeetingDetail />} />
+            </Routes>
+          </MemoryRouter>
+        )
+      })
+      await openSettingsTab()
+      expect(picker()).toHaveTextContent('German')
+
+      let answerNextDetail!: () => void
+      api.setHandler(
+        'recording:get-detail',
+        () =>
+          new Promise((resolve) => {
+            answerNextDetail = () => resolve(baseDetail)
+          })
+      )
+      await userEvent.click(screen.getByRole('link', { name: 'Open next recording' }))
+      // The first meeting's German must not be offered as the next meeting's language.
+      expect(picker()).toBeDisabled()
+      await act(async () => answerNextDetail())
+      expect(picker()).toBeEnabled()
+      expect(picker()).toHaveTextContent('English')
     })
 
     it('keeps the pick and reports the reason when main refuses the language change', async () => {

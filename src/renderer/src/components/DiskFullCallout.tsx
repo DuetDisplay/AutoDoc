@@ -3,11 +3,14 @@ import { useT } from '../services/i18n'
 export function DiskFullCallout({
   stage,
   onRetry,
-  retryDisabled = false
+  retryDisabled = false,
+  retryHint
 }: {
   stage: 'transcription' | 'notes'
   onRetry: () => void
   retryDisabled?: boolean
+  /** Why retrying is held back right now; shown while `retryDisabled`. */
+  retryHint?: string
 }) {
   const t = useT()
 
@@ -31,6 +34,9 @@ export function DiskFullCallout({
           <p className="text-[12px] text-ink-muted leading-relaxed">
             {t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')}
           </p>
+          {retryDisabled && retryHint && (
+            <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">{retryHint}</p>
+          )}
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <button
               onClick={onRetry}

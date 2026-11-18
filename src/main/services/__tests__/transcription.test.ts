@@ -45,6 +45,7 @@ vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   unlink: vi.fn(),
+  rename: vi.fn(),
   access: vi.fn()
 }))
 
@@ -3054,6 +3055,8 @@ describe('TranscriptionService meeting-language routing', () => {
     macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue(null)
     fsMock.writeFile.mockResolvedValue(undefined as any)
     fsMock.unlink.mockResolvedValue(undefined as any)
+    fsMock.rename.mockResolvedValue(undefined as any)
+    cryptoMock.encryptJSON.mockReset()
     mockWhisper = createMockWhisperManager()
     mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
     mockWhisper.ensureMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
@@ -3257,14 +3260,24 @@ describe('TranscriptionService meeting-language routing', () => {
         cryptoMock.encryptJSON.mock.calls.filter(([, file]) =>
           String(file).endsWith('metadata.json')
         )
-      return { service, transcribe, jobLanguages, metadataWrites }
+      const transcriptWrites = () =>
+        cryptoMock.encryptJSON.mock.calls.filter(([, file]) =>
+          String(file).includes('transcript.json')
+        )
+      const failedWith = () =>
+        fsMock.writeFile.mock.calls.find(([file]) => String(file).endsWith('transcript.error'))
+      return { service, transcribe, jobLanguages, metadataWrites, transcriptWrites, failedWith }
     }
+    const recordingPath = (meetingId: string, file: string) =>
+      path.join('/mock/home/AutoDoc/recordings', meetingId, file)
 
     it('transcribes in the requested language and stores it before reporting completion', async () => {
-      const { service, jobLanguages, metadataWrites } = macServiceRecordedIn('en')
+      const { service, jobLanguages, metadataWrites, transcriptWrites } = macServiceRecordedIn('en')
       let metadataWritesAtCompletion = -1
+      let renamesAtCompletion = -1
       service.onComplete(() => {
         metadataWritesAtCompletion = metadataWrites().length
+        renamesAtCompletion = fsMock.rename.mock.calls.length
       })
 
       service.retry('switch-to-german', 'direct', 'de')
@@ -3274,9 +3287,78 @@ describe('TranscriptionService meeting-language routing', () => {
       expect(metadataWrites()[0][0]).toEqual(
         expect.objectContaining({ sourceName: 'Zoom', durationSeconds: 60, meetingLanguage: 'de' })
       )
-      expect(metadataWrites()[0][1]).toBe(
-        path.join('/mock/home/AutoDoc/recordings', 'switch-to-german', 'metadata.json')
+      expect(metadataWrites()[0][1]).toBe(recordingPath('switch-to-german', 'metadata.json'))
+      // The transcript is staged and only takes its place once the language is saved.
+      expect(transcriptWrites().map(([, file]) => file)).toEqual([
+        recordingPath('switch-to-german', 'transcript.json.staged')
+      ])
+      expect(renamesAtCompletion).toBe(1)
+      expect(fsMock.rename).toHaveBeenCalledWith(
+        recordingPath('switch-to-german', 'transcript.json.staged'),
+        recordingPath('switch-to-german', 'transcript.json')
       )
+      expect(fsMock.rename.mock.invocationCallOrder[0]).toBeGreaterThan(
+        cryptoMock.encryptJSON.mock.invocationCallOrder[1]
+      )
+    })
+
+    it('leaves the old transcript and language in place when the language cannot be saved', async () => {
+      const { service, metadataWrites, failedWith } = macServiceRecordedIn('en')
+      cryptoMock.encryptJSON.mockImplementation(async (_data, file) => {
+        if (String(file).endsWith('metadata.json')) throw new Error('EIO: metadata write failed')
+      })
+
+      service.retry('unsaved-switch', 'direct', 'de')
+      await vi.waitFor(() => expect(failedWith()).toBeDefined())
+
+      expect(String(failedWith()![1])).toContain('metadata write failed')
+      expect(metadataWrites()).toHaveLength(1)
+      expect(fsMock.rename).not.toHaveBeenCalled()
+      // The staged transcript is cleaned up like any other temporary file.
+      expect(fsMock.unlink).toHaveBeenCalledWith(
+        recordingPath('unsaved-switch', 'transcript.json.staged')
+      )
+    })
+
+    it('puts the old language back when the new transcript cannot take its place', async () => {
+      const { service, metadataWrites, failedWith } = macServiceRecordedIn('en')
+      // Reads see the metadata as last written, like the real file would.
+      let stored: unknown = { sourceName: 'Zoom', durationSeconds: 60, meetingLanguage: 'en' }
+      cryptoMock.encryptJSON.mockImplementation(async (data, file) => {
+        if (String(file).endsWith('metadata.json')) stored = data
+      })
+      fsMock.readFile.mockImplementation(async (file) =>
+        String(file).endsWith('metadata.json')
+          ? JSON.stringify(stored)
+          : JSON.stringify({ transcription: [] })
+      )
+      fsMock.rename.mockRejectedValueOnce(new Error('EPERM: rename failed'))
+
+      service.retry('unpublished-switch', 'direct', 'de')
+      await vi.waitFor(() => expect(failedWith()).toBeDefined())
+
+      expect(String(failedWith()![1])).toContain('rename failed')
+      expect(
+        metadataWrites().map(([data]) => (data as { meetingLanguage: string }).meetingLanguage)
+      ).toEqual(['de', 'en'])
+    })
+
+    it('reports a failure when a language change finds no audio to transcribe', async () => {
+      const { service, metadataWrites, failedWith } = macServiceRecordedIn('en')
+      fsMock.access.mockRejectedValue(new Error('ENOENT'))
+
+      service.retry('no-audio', 'direct', 'de')
+      await vi.waitFor(() => expect(failedWith()).toBeDefined())
+
+      expect(String(failedWith()![1])).toContain('no audio')
+      expect(metadataWrites()).toHaveLength(0)
+      expect((service as any).reprocessLanguages.has('no-audio')).toBe(false)
+
+      // Without a language the missing audio is still skipped quietly.
+      fsMock.writeFile.mockClear()
+      service.retry('no-audio', 'recovery-scan')
+      await vi.waitFor(() => expect((service as any).activeJobId).toBeNull())
+      expect(failedWith()).toBeUndefined()
     })
 
     it('drops a language whose retry the cooldown rejected, so no later job inherits it', () => {

@@ -77,8 +77,12 @@ export function registerTranscriptionIpc(
         if (busy()) throw new Error(busyMessage)
       }
       onManualRetry?.(meetingId)
+      // On Windows a plain retry keeps a usable transcript; a language change must replace it.
       const source =
-        process.platform === 'win32' && options?.reprocess === true ? 'reprocess' : 'direct'
+        process.platform === 'win32' &&
+        (options?.reprocess === true || meetingLanguage !== undefined)
+          ? 'reprocess'
+          : 'direct'
       const queued = transcriptionService.retry(meetingId, source, meetingLanguage)
       // A plain retry may be dropped silently (cooldown); a language change must not be.
       if (!queued && meetingLanguage) {

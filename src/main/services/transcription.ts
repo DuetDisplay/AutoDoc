@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
+import { access, readFile, writeFile, unlink, stat, rename } from 'fs/promises'
 import { join } from 'path'
 import { availableParallelism, constants as osConstants, cpus, setPriority, tmpdir } from 'os'
 import { spawn } from 'child_process'
@@ -616,11 +616,21 @@ export class TranscriptionService {
     const hasLegacy = await this.fileExists(legacyAudio)
 
     if (!hasMic && !hasSystem && !hasLegacy) {
+      // A language change was accepted for this meeting; the renderer waits for its outcome.
+      if (this.reprocessLanguages.has(meetingId)) {
+        throw new Error('The recording has no audio left to transcribe in another language.')
+      }
       return
     }
 
     const tempPrefix = join(tmpdir(), `autodoc-${meetingId}-${Date.now()}`)
     const tempFiles: string[] = []
+    // A new language is published together with its transcript: the transcript
+    // is staged until the language is saved, so neither lands without the other.
+    const stagedTranscriptPath = this.reprocessLanguages.has(meetingId)
+      ? join(meetingDir, 'transcript.json.staged')
+      : null
+    if (stagedTranscriptPath) tempFiles.push(stagedTranscriptPath)
 
     try {
       this.windowsMultilingualReady = null
@@ -829,7 +839,7 @@ export class TranscriptionService {
         await this.generateSpeakersJson(meetingId, transcripts)
       }
 
-      await encryptJSON(transcripts, transcriptPath)
+      await encryptJSON(transcripts, stagedTranscriptPath ?? transcriptPath)
       await unlink(join(meetingDir, 'transcript.error')).catch(() => {})
 
       // Encrypt raw media files
@@ -921,7 +931,18 @@ export class TranscriptionService {
       await this.logWindowsResourceSnapshot('transcription-complete', meetingId)
       // Notes and later reprocesses read the language from metadata, so it is
       // saved now, before anyone learns the transcript is complete.
-      await this.saveReprocessLanguage(meetingId, meetingDir)
+      const previousLanguage = await this.saveReprocessLanguage(meetingId, meetingDir)
+      if (stagedTranscriptPath) {
+        try {
+          await rename(stagedTranscriptPath, transcriptPath)
+        } catch (error) {
+          // The old transcript is still in place, so the old language goes back with it.
+          if (previousLanguage) {
+            await this.writeMeetingLanguage(meetingDir, previousLanguage).catch(() => {})
+          }
+          throw error
+        }
+      }
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete', undefined, undefined, {
@@ -3432,11 +3453,33 @@ export class TranscriptionService {
       .trim()
   }
 
-  /** Stores the language a successful reprocess ran in on the recording. */
-  private async saveReprocessLanguage(meetingId: string, meetingDir: string): Promise<void> {
+  /**
+   * Stores the language a successful reprocess ran in on the recording.
+   * Returns the language it replaced, or null when nothing changed.
+   */
+  private async saveReprocessLanguage(
+    meetingId: string,
+    meetingDir: string
+  ): Promise<MeetingLanguageCode | null> {
     const language = this.reprocessLanguages.get(meetingId)
-    if (!language) return
+    if (!language) return null
     this.reprocessLanguages.delete(meetingId)
+    const previous = await this.writeMeetingLanguage(meetingDir, language)
+    if (previous === null) return null
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'meeting language changed by reprocess',
+      meetingId,
+      context: { from: previous, to: language }
+    })
+    return previous
+  }
+
+  /** Writes the language into the recording's metadata; returns the one it replaced, or null. */
+  private async writeMeetingLanguage(
+    meetingDir: string,
+    language: MeetingLanguageCode
+  ): Promise<MeetingLanguageCode | null> {
     // Other handlers (title, video status) may have written metadata during the
     // job, so the language is merged into the latest copy.
     const latest = await readMetadata(meetingDir)
@@ -3444,14 +3487,9 @@ export class TranscriptionService {
       throw new Error('The recording was removed before its language could be saved.')
     }
     const previous = normalizeMeetingLanguage(latest.meetingLanguage)
-    if (previous === language) return
+    if (previous === language) return null
     await encryptJSON({ ...latest, meetingLanguage: language }, join(meetingDir, 'metadata.json'))
-    logAutodocEvent({
-      area: 'transcription',
-      message: 'meeting language changed by reprocess',
-      meetingId,
-      context: { from: previous, to: language }
-    })
+    return previous
   }
 
   private async markFailed(

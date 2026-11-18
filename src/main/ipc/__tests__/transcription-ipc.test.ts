@@ -75,7 +75,23 @@ describe('registerTranscriptionIpc', () => {
       await invoke({ meetingLanguage: 'de' })
       expect(getMeetingLanguageBlockReason).toHaveBeenCalledWith('de')
       expect(onManualRetry).toHaveBeenCalledWith('meeting')
-      expect(retry).toHaveBeenCalledWith('meeting', 'direct', 'de')
+      expect(retry).toHaveBeenCalledWith(
+        'meeting',
+        process.platform === 'win32' ? 'reprocess' : 'direct',
+        'de'
+      )
+    })
+
+    it('replaces a usable Windows transcript for a language change even without the reprocess flag', async () => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      try {
+        const { retry, invoke } = registerWithGuards()
+        await invoke({ meetingLanguage: 'de' })
+        expect(retry).toHaveBeenCalledWith('meeting', 'reprocess', 'de')
+      } finally {
+        Object.defineProperty(process, 'platform', { configurable: true, value: original })
+      }
     })
 
     it('retries without a language as before', async () => {
