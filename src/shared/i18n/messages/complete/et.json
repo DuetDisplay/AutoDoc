@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Olete võrguühenduseta. Ühendage arvuti internetiga, et laadida alla keele {language} kõnemudel (umbes {size}).",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Olete võrguühenduseta. Ühendage arvuti internetiga, et laadida alla keele {language} kõnemudel.",
   "ui.yourMeetingLanguageIsStillLanguage": "Koosoleku keel on endiselt {language}.",
+  "meeting.reprocessNotesLanguageHint": "Selle koosoleku keeleks {language} vahetamiseks töötle kõigepealt transkriptsioon uuesti.",
+  "meeting.reprocessLanguageFailed": "Uuesti töötlemine keeles {language} ebaõnnestus. Selle koosoleku keel on endiselt {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Installime uue kohaliku märkmete mootori, kui olete järgmisel korral võrgus (ühekordselt umbes 2,5 GB). Võite salvestamist jätkata. Varasemad märkmed jäävad samaks.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Installime uut kohalikku märkmete mootorit, et järgmiste koosolekute märkmed oleksid selgemad ja ülevaatlikumad. Hoidke ühendust kuni lõpuni (ühekordselt umbes 2,5 GB). Varasemad märkmed jäävad samaks.",
   "ui.jumpToTime": "Hüppa ajale {time}",

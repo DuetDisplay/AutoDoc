@@ -243,6 +243,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Ei verkkoyhteyttä. Yhdistä internetiin puhemallin lataamista varten (noin {size}). Kieli: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Ei verkkoyhteyttä. Yhdistä internetiin puhemallin lataamista varten. Kieli: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Kokoustesi kieli on edelleen {language}.",
+  "meeting.reprocessNotesLanguageHint": "Käsittele ensin litterointi uudelleen vaihtaaksesi tämän kokouksen kieleksi {language}.",
+  "meeting.reprocessLanguageFailed": "Uudelleenkäsittely kielellä {language} epäonnistui. Tämän kokouksen kieli on edelleen {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Asennamme uuden paikallisen muistiinpanomoottorin seuraavan verkkoyhteyden aikana (noin 2,5 Gt, kerran). Voit jatkaa tallennusta. Nykyiset muistiinpanot säilyvät ennallaan.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Asennamme uutta paikallista muistiinpanomoottoria, jotta tulevien kokousten muistiinpanot ovat selkeämpiä ja helpompia silmäillä. Pysy yhteydessä valmistumiseen asti (noin 2,5 Gt, kerran). Nykyiset muistiinpanot säilyvät ennallaan.",
   "ui.jumpToTime": "Siirry kohtaan {time}",

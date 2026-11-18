@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Du är offline. Anslut till internet för att hämta talmodellen för {language} (cirka {size}).",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Du är offline. Anslut till internet för att hämta talmodellen för {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Ditt mötesspråk är fortfarande {language}.",
+  "meeting.reprocessNotesLanguageHint": "Bearbeta först om transkriptionen för att byta det här mötet till {language}.",
+  "meeting.reprocessLanguageFailed": "Ombearbetning på {language} misslyckades. Det här mötets språk är fortfarande {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Vi installerar den nya lokala anteckningsmotorn nästa gång du är online (cirka 2,5 GB, en gång). Du kan fortsätta spela in. Befintliga anteckningar förblir oförändrade.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Vi installerar en ny lokal anteckningsmotor så att dina nästa möten blir tydligare och lättare att överblicka. Behåll anslutningen tills det är klart (cirka 2,5 GB, en gång). Befintliga anteckningar förblir oförändrade.",
   "ui.jumpToTime": "Hoppa till {time}",

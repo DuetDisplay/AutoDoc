@@ -44,8 +44,39 @@ import { MediaPlaybackControls } from '../components/MediaPlaybackControls'
 import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
+import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
+  type MeetingLanguageAvailability,
+  type MeetingLanguageCode
+} from '../../../shared/meeting-language'
+import {
+  classifyMeetingLanguageFailure,
+  meetingLanguageFailureMessage,
+  useMeetingLanguagePreparation,
+  type MeetingLanguageFailure
+} from '../hooks/useMeetingLanguagePreparation'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
+import { meetingLanguageName } from '../services/meeting-language-name'
+import { getWhisperSetupLabel } from '../services/setup-status-labels'
 
 type Tab = 'notes' | 'transcript' | 'settings'
+
+/** One recording's language choice in the Reprocess section. */
+interface ReprocessLanguageState {
+  /** Picked for the next transcript reprocess; `ready` once its engine is prepared. */
+  draft: { language: MeetingLanguageCode; ready: boolean } | null
+  failure: MeetingLanguageFailure | null
+  /** A reprocess in this language failed, so the recording kept its own language. */
+  revertedFrom: MeetingLanguageCode | null
+}
+
+const EMPTY_REPROCESS_LANGUAGE_STATE: ReprocessLanguageState = {
+  draft: null,
+  failure: null,
+  revertedFrom: null
+}
 
 interface NotesWriteQueue {
   notes: MeetingNotesV2 | null
@@ -309,13 +340,17 @@ export function MeetingDetail() {
     if (titleLanguageRef.current === language) return
     titleLanguageRef.current = language
     let cancelled = false
-    if (id)
+    if (id) {
+      const request = ++detailRequestRef.current
       void window.electronAPI
         .invoke('recording:get-detail', id)
         .then((next) => {
-          if (!cancelled) setDetail(next)
+          if (cancelled || request !== detailRequestRef.current) return
+          setDetail(next)
+          setDetailMeetingId(id)
         })
         .catch(() => {})
+    }
     return () => {
       cancelled = true
     }
@@ -353,11 +388,16 @@ export function MeetingDetail() {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    meetingLanguage?: MeetingLanguageCode
     deleteBlocked?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
     videoCaptureEndedEarly?: boolean
   } | null>(null)
+  /** Which meeting `detail` describes; it lags behind `id` while the next one loads. */
+  const [detailMeetingId, setDetailMeetingId] = useState<string | undefined>()
+  /** Only the latest detail request may apply, so an older reply cannot undo a newer state. */
+  const detailRequestRef = useRef(0)
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
@@ -379,6 +419,86 @@ export function MeetingDetail() {
   const segmentsWriteQueuesRef = useRef<Map<string, SegmentsWriteQueue>>(new Map())
   const auxiliaryWritePromisesRef = useRef<Map<string, Set<Promise<boolean>>>>(new Map())
   activeMeetingIdRef.current = id
+  // --- Language for the Reprocess section ---
+  // A pick is prepared (engine downloaded, lock checked) right away and sent
+  // with the next transcript reprocess. The recording adopts it only once that
+  // transcript succeeds, so the stored language and the transcript never diverge.
+  const online = useOnlineStatus()
+  const {
+    languageStates: reprocessLanguageStates,
+    preparingLanguage: preparingReprocessLanguage,
+    setupStatus: reprocessLanguageSetupStatus,
+    prepareMeetingLanguage
+  } = useMeetingLanguagePreparation(isWindowsRenderer() ? 'win32' : 'darwin')
+  const [reprocessLanguageByMeeting, setReprocessLanguageByMeeting] = useState<
+    Record<string, ReprocessLanguageState>
+  >({})
+  // Meetings with a preparation or reprocess request in flight. Keyed per
+  // meeting, so opening another meeting and coming back keeps the lock.
+  const [reprocessLanguagePendingIds, setReprocessLanguagePendingIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+  // Languages sent with a reprocess, until that transcript completes or fails.
+  const submittedReprocessLanguagesRef = useRef<Map<string, MeetingLanguageCode>>(new Map())
+  const [reprocessLanguageAvailability, setReprocessLanguageAvailability] =
+    useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
+  useEffect(() => {
+    let cancelled = false
+    void window.electronAPI
+      .invoke('prefs:get-meeting-language-availability')
+      .then((availability) => {
+        if (!cancelled && availability) setReprocessLanguageAvailability(availability)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const updateReprocessLanguage = useCallback(
+    (meetingId: string, patch: Partial<ReprocessLanguageState>) =>
+      setReprocessLanguageByMeeting((current) => ({
+        ...current,
+        [meetingId]: { ...EMPTY_REPROCESS_LANGUAGE_STATE, ...current[meetingId], ...patch }
+      })),
+    []
+  )
+  const setReprocessLanguagePending = (meetingId: string, pending: boolean) =>
+    setReprocessLanguagePendingIds((current) => {
+      const next = new Set(current)
+      if (pending) next.add(meetingId)
+      else next.delete(meetingId)
+      return next
+    })
+  const detailLoaded = detail !== null && detailMeetingId === id
+  const storedMeetingLanguage =
+    (detailLoaded ? detail.meetingLanguage : undefined) ?? DEFAULT_MEETING_LANGUAGE
+  const reprocessLanguage = id ? reprocessLanguageByMeeting[id] : undefined
+  const reprocessLanguageDraft = reprocessLanguage?.draft ?? null
+  const reprocessLanguagePending = id ? reprocessLanguagePendingIds.has(id) : false
+  // Listens for every meeting: the outcome can arrive while another one is open.
+  useEffect(() => {
+    return window.electronAPI.on('transcription:status-changed', (payload) => {
+      const submitted = submittedReprocessLanguagesRef.current.get(payload.meetingId)
+      if (!submitted) return
+      if (payload.status === 'complete' && payload.reprocessFailed !== true) {
+        submittedReprocessLanguagesRef.current.delete(payload.meetingId)
+        updateReprocessLanguage(payload.meetingId, EMPTY_REPROCESS_LANGUAGE_STATE)
+        if (activeMeetingIdRef.current === payload.meetingId) {
+          // A detail reply still in flight predates this change and must not undo it.
+          detailRequestRef.current += 1
+          setDetail((prev) => (prev ? { ...prev, meetingLanguage: submitted } : prev))
+        }
+      } else if (payload.status === 'failed' || payload.reprocessFailed === true) {
+        // Main kept the recording's language; show that instead of the pick.
+        submittedReprocessLanguagesRef.current.delete(payload.meetingId)
+        updateReprocessLanguage(payload.meetingId, {
+          draft: null,
+          failure: null,
+          revertedFrom: submitted
+        })
+      }
+    })
+  }, [updateReprocessLanguage])
   const lastProgressLogAtRef = useRef(0)
   const lastTimeUpdateLogAtRef = useRef(0)
   const segmentationEventRevisionRef = useRef(0)
@@ -876,8 +996,10 @@ export function MeetingDetail() {
 
     const refreshDetail = () => {
       const requestedLanguage = titleLanguageRef.current
+      const request = ++detailRequestRef.current
       return window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
         if (cancelled || requestedLanguage !== titleLanguageRef.current) return
+        if (request !== detailRequestRef.current) return
         console.info('[meeting-detail] refreshDetail resolved', {
           at: new Date().toISOString(),
           meetingId: id,
@@ -885,6 +1007,7 @@ export function MeetingDetail() {
           videoStatus: nextDetail?.videoStatus ?? null
         })
         setDetail(nextDetail)
+        setDetailMeetingId(id)
         if (nextDetail?.videoStatus === 'ready' || nextDetail?.videoStatus === 'failed') {
           setVideoRetryPending(false)
         }
@@ -1088,7 +1211,9 @@ export function MeetingDetail() {
   }
 
   const handleRetrySegmentation = () => {
-    if (id) window.electronAPI.invoke('segmentation:retry', id)
+    // Notes read the recording's language; an unapplied pick waits for the transcript.
+    if (!id || reprocessLanguageDraft) return
+    window.electronAPI.invoke('segmentation:retry', id)
   }
 
   const handleRetryVideo = () => {
@@ -1112,29 +1237,107 @@ export function MeetingDetail() {
       })
   }
 
-  const handleReprocessTranscript = () => {
-    if (!id) return
-    transcriptionEventRevisionRef.current += 1
-    segmentationEventRevisionRef.current += 1
-    setTranscriptionStatus('queued')
-    setTranscriptionProgress(undefined)
-    if (!isWindowsRenderer()) {
-      setTranscript([])
-      setSegments(null)
-      setSegmentationStatus('pending')
+  const requestReprocess = (meetingId: string, meetingLanguage?: MeetingLanguageCode) => {
+    if (!isWindowsRenderer() && !meetingLanguage) {
+      return window.electronAPI.invoke('transcription:retry', meetingId)
     }
-    setReprocessFailed(false)
-    setSegmentationErrorCode(undefined)
-    setSegmentationActivity(null)
-    if (isWindowsRenderer()) {
-      window.electronAPI.invoke('transcription:retry', id, { reprocess: true })
-    } else {
-      window.electronAPI.invoke('transcription:retry', id)
+    return window.electronAPI.invoke('transcription:retry', meetingId, {
+      ...(isWindowsRenderer() ? { reprocess: true } : {}),
+      ...(meetingLanguage ? { meetingLanguage } : {})
+    })
+  }
+
+  const handlePickReprocessLanguage = async (language: MeetingLanguageCode) => {
+    if (!id || !detailLoaded || reprocessLanguagePendingIds.has(id)) return
+    const meetingId = id
+    const currentLanguage = storedMeetingLanguage
+    if (language === currentLanguage) {
+      updateReprocessLanguage(meetingId, EMPTY_REPROCESS_LANGUAGE_STATE)
+      return
+    }
+    setReprocessLanguagePending(meetingId, true)
+    updateReprocessLanguage(meetingId, {
+      draft: { language, ready: false },
+      failure: null,
+      revertedFrom: null
+    })
+    try {
+      // Downloads or checks the engine now, so offline, locked, or disk
+      // problems show up here rather than after the transcript is gone.
+      await prepareMeetingLanguage(language)
+      updateReprocessLanguage(meetingId, { draft: { language, ready: true } })
+    } catch (error) {
+      console.error('Failed to prepare meeting language:', error)
+      updateReprocessLanguage(meetingId, {
+        draft: null,
+        failure: classifyMeetingLanguageFailure(
+          error,
+          language,
+          reprocessLanguageStates[language]?.firstUseDownloadBytes,
+          currentLanguage
+        )
+      })
+    } finally {
+      setReprocessLanguagePending(meetingId, false)
     }
   }
 
+  const handleReprocessTranscript = async () => {
+    if (!id || reprocessLanguagePendingIds.has(id)) return
+    const meetingId = id
+    const currentLanguage = storedMeetingLanguage
+    const draft = reprocessLanguageByMeeting[meetingId]?.draft
+    const meetingLanguage =
+      draft?.ready && draft.language !== currentLanguage ? draft.language : undefined
+    const resetForReprocess = () => {
+      transcriptionEventRevisionRef.current += 1
+      segmentationEventRevisionRef.current += 1
+      setTranscriptionStatus('queued')
+      setTranscriptionProgress(undefined)
+      if (!isWindowsRenderer()) {
+        setTranscript([])
+        setSegments(null)
+        setSegmentationStatus('pending')
+      }
+      setReprocessFailed(false)
+      setSegmentationErrorCode(undefined)
+      setSegmentationActivity(null)
+    }
+    if (!meetingLanguage) {
+      resetForReprocess()
+      void requestReprocess(meetingId)
+      return
+    }
+    setReprocessLanguagePending(meetingId, true)
+    updateReprocessLanguage(meetingId, { failure: null, revertedFrom: null })
+    // Registered before the request, so an outcome that beats the reply is not missed.
+    submittedReprocessLanguagesRef.current.set(meetingId, meetingLanguage)
+    try {
+      // Main refuses while the recording is busy or the language is unavailable.
+      await requestReprocess(meetingId, meetingLanguage)
+    } catch (error) {
+      submittedReprocessLanguagesRef.current.delete(meetingId)
+      console.error('Failed to reprocess in another language:', error)
+      updateReprocessLanguage(meetingId, {
+        failure: classifyMeetingLanguageFailure(
+          error,
+          meetingLanguage,
+          reprocessLanguageStates[meetingLanguage]?.firstUseDownloadBytes,
+          currentLanguage
+        )
+      })
+      return
+    } finally {
+      setReprocessLanguagePending(meetingId, false)
+    }
+    // The outcome may have arrived before the reply; then the view already shows it.
+    if (!submittedReprocessLanguagesRef.current.has(meetingId)) return
+    // The job runs either way; only the meeting still on screen resets its view.
+    if (activeMeetingIdRef.current === meetingId) resetForReprocess()
+  }
+
   const handleReprocessNotes = () => {
-    if (!id) return
+    if (!id || reprocessLanguageDraft) return
     segmentationEventRevisionRef.current += 1
     setSegmentationStatus('queued')
     setSegmentationErrorCode(undefined)
@@ -1148,6 +1351,21 @@ export function MeetingDetail() {
   }
 
   const meetingSpan = useMeetingSpan(detail?.durationSeconds)
+  const transcriptionBusy =
+    transcriptionStatus === 'transcribing' ||
+    transcriptionStatus === 'queued' ||
+    transcriptionStatus === 'downloading' ||
+    transcriptionStatus === 'diarizing'
+  // Shown wherever notes could be regenerated while a picked language is unapplied.
+  const reprocessNotesLanguageHint = reprocessLanguageDraft
+    ? t('meeting.reprocessNotesLanguageHint', {
+        language: meetingLanguageName(reprocessLanguageDraft.language, language)
+      })
+    : null
+  const reprocessLanguageSetupLabel =
+    reprocessLanguagePending && preparingReprocessLanguage === reprocessLanguageDraft?.language
+      ? getWhisperSetupLabel(reprocessLanguageSetupStatus, t)
+      : null
   const layoutDegraded =
     segmentationStatus === 'complete' && segmentationErrorCode === 'scan_or_persist'
   const showHardFailCallout = segmentationStatus === 'no-notes' || segmentationStatus === 'failed'
@@ -1163,7 +1381,15 @@ export function MeetingDetail() {
         (showTranscriptionMemoryFailure ? transcriptionMemoryFailure : segmentationMemoryFailure) ??
         {}
       }
-      onRetry={showTranscriptionMemoryFailure ? handleReprocessTranscript : handleReprocessNotes}
+      onRetry={
+        showTranscriptionMemoryFailure
+          ? () => void handleReprocessTranscript()
+          : handleReprocessNotes
+      }
+      retryDisabled={!showTranscriptionMemoryFailure && reprocessLanguageDraft !== null}
+      retryHint={
+        showTranscriptionMemoryFailure ? undefined : (reprocessNotesLanguageHint ?? undefined)
+      }
       onViewTranscript={
         !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
           ? () => setActiveTab('transcript')
@@ -1179,7 +1405,11 @@ export function MeetingDetail() {
   const diskFullCallout = showDiskFullCallout ? (
     <DiskFullCallout
       stage={showTranscriptionDiskFull ? 'transcription' : 'notes'}
-      onRetry={showTranscriptionDiskFull ? handleReprocessTranscript : handleReprocessNotes}
+      onRetry={
+        showTranscriptionDiskFull ? () => void handleReprocessTranscript() : handleReprocessNotes
+      }
+      retryDisabled={!showTranscriptionDiskFull && reprocessLanguageDraft !== null}
+      retryHint={showTranscriptionDiskFull ? undefined : (reprocessNotesLanguageHint ?? undefined)}
     />
   ) : null
   const showCpuFallbackNotice =
@@ -1582,7 +1812,7 @@ export function MeetingDetail() {
             hasMemoryFailure={segmentationMemoryFailure != null}
             progress={segmentationProgress}
             errorCode={segmentationErrorCode}
-            onRetry={handleRetrySegmentation}
+            onRetry={reprocessLanguageDraft ? undefined : handleRetrySegmentation}
           />
         </div>
       </div>
@@ -1706,7 +1936,8 @@ export function MeetingDetail() {
                       <div className="flex flex-wrap items-center gap-2 mt-3">
                         <button
                           onClick={handleReprocessNotes}
-                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+                          disabled={reprocessLanguageDraft !== null}
+                          className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                           {segmentationErrorCode === 'scan_or_persist'
                             ? t('meeting.regenerateNotes')
@@ -1719,6 +1950,11 @@ export function MeetingDetail() {
                           {t('meeting.viewTranscript')}
                         </button>
                       </div>
+                      {reprocessNotesLanguageHint && (
+                        <p className="mt-2 text-[11px] text-ink-muted">
+                          {reprocessNotesLanguageHint}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1988,6 +2224,52 @@ export function MeetingDetail() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">
+                      {t('settings.meetingLanguage')}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <MeetingLanguagePicker
+                      value={reprocessLanguageDraft?.language ?? storedMeetingLanguage}
+                      disabled={
+                        // The picker shows this meeting's language only once its detail is in.
+                        !detailLoaded ||
+                        reprocessLanguagePending ||
+                        // One engine download at a time, whichever meeting started it.
+                        preparingReprocessLanguage !== null ||
+                        detail?.isFinalizing === true ||
+                        transcriptionBusy
+                      }
+                      availability={{
+                        ...reprocessLanguageAvailability,
+                        languageStates: reprocessLanguageStates
+                      }}
+                      offline={!online}
+                      onChange={(language) => void handlePickReprocessLanguage(language)}
+                    />
+                  </div>
+                  {reprocessLanguageSetupLabel && (
+                    <p role="status" className="basis-full text-[11px] text-ink-muted">
+                      {reprocessLanguageSetupLabel}
+                    </p>
+                  )}
+                  {reprocessLanguage?.failure && (
+                    <p role="alert" className="basis-full text-[11px] text-clay-dark text-pretty">
+                      {meetingLanguageFailureMessage(reprocessLanguage.failure, t, language)}
+                    </p>
+                  )}
+                  {reprocessLanguage?.revertedFrom && !reprocessLanguage.failure && (
+                    <p role="status" className="basis-full text-[11px] text-clay-dark text-pretty">
+                      {t('meeting.reprocessLanguageFailed', {
+                        language: meetingLanguageName(reprocessLanguage.revertedFrom, language),
+                        current: meetingLanguageName(storedMeetingLanguage, language)
+                      })}
+                    </p>
+                  )}
+                </div>
+                <div className="border-t border-border" />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-[1_1_12rem]">
+                    <div className="text-[12.5px] font-semibold text-ink">
                       {t('meeting.transcript')}
                     </div>
                     <div className="text-[11px] text-ink-faint">
@@ -1995,13 +2277,8 @@ export function MeetingDetail() {
                     </div>
                   </div>
                   <button
-                    onClick={handleReprocessTranscript}
-                    disabled={
-                      transcriptionStatus === 'transcribing' ||
-                      transcriptionStatus === 'queued' ||
-                      transcriptionStatus === 'downloading' ||
-                      transcriptionStatus === 'diarizing'
-                    }
+                    onClick={() => void handleReprocessTranscript()}
+                    disabled={reprocessLanguagePending || transcriptionBusy}
                     className="i18n-btn shrink-0 px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
@@ -2016,13 +2293,16 @@ export function MeetingDetail() {
                   <div className="min-w-0 flex-[1_1_12rem]">
                     <div className="text-[12.5px] font-semibold text-ink">{t('meeting.notes')}</div>
                     <div className="text-[11px] text-ink-faint">
-                      {t('meeting.reprocessNotesHint')}
+                      {reprocessNotesLanguageHint ?? t('meeting.reprocessNotesHint')}
                     </div>
                   </div>
                   <button
                     onClick={handleReprocessNotes}
                     disabled={
                       transcriptionStatus !== 'complete' ||
+                      // Notes read the recording's language, so a pending pick
+                      // would still produce notes in the old one.
+                      reprocessLanguageDraft !== null ||
                       segmentationStatus === 'segmenting' ||
                       segmentationStatus === 'queued' ||
                       segmentationStatus === 'downloading-model'

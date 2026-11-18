@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
+import { access, readFile, writeFile, unlink, stat, rename } from 'fs/promises'
 import { join } from 'path'
 import { availableParallelism, constants as osConstants, cpus, setPriority, tmpdir } from 'os'
 import { spawn } from 'child_process'
@@ -51,7 +51,11 @@ import {
 } from './notes-language'
 import { MAC_CANARY_MODEL, resolveMacCanaryTranscriber } from './mac-canary-transcription'
 import { tokenizeUnicodeWords } from './unicode-text'
-import { getMeetingLanguageDefinition } from '../../shared/meeting-language'
+import {
+  getMeetingLanguageDefinition,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
 import {
   ensureWindowsMultilingualEngineReady,
   windowsMultilingualTranscribeLanguage,
@@ -169,6 +173,12 @@ export class TranscriptionService {
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private enqueueSource = new Map<string, EnqueueSource>()
+  /**
+   * Languages requested for a reprocess that is queued or running. The recording keeps
+   * its stored language until the transcript in the new language succeeds, so a failed
+   * reprocess leaves the meeting as it was.
+   */
+  private readonly reprocessLanguages = new Map<string, MeetingLanguageCode>()
   private getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>
   private memoryGateDelay: (ms: number) => Promise<void>
   private readSystemMemoryInfo: () => SystemMemorySnapshot
@@ -234,18 +244,34 @@ export class TranscriptionService {
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
-    if (this.queue.includes(meetingId)) return
+    if (this.queue.includes(meetingId)) {
+      // A reprocess must replace the transcript even when a plain retry queued the meeting first.
+      if (source === 'reprocess') this.enqueueSource.set(meetingId, source)
+      return
+    }
     this.enqueueSource.set(meetingId, source)
     this.queue.push(meetingId)
     this.broadcastStatus(meetingId, 'queued')
     this.processNext()
   }
 
-  retry(meetingId: string, source: EnqueueSource = 'direct'): void {
-    if (source === 'direct') {
-      if (this.activeJobId === meetingId || this.queue.includes(meetingId)) return
+  /**
+   * Re-runs transcription. With `meetingLanguage`, the job transcribes in that language and
+   * saves it on the recording once the transcript succeeds (see reprocessLanguages).
+   * Returns false when the request was dropped (job already running, or a manual retry
+   * inside the cooldown), so a requested language is never kept for an unrelated later job.
+   */
+  retry(
+    meetingId: string,
+    source: EnqueueSource = 'direct',
+    meetingLanguage?: MeetingLanguageCode
+  ): boolean {
+    // A running job already chose its language.
+    if (this.activeJobId === meetingId) return false
+    const alreadyQueued = this.queue.includes(meetingId)
+    if (source === 'direct' && !alreadyQueued) {
       const now = Date.now()
-      if (now - (this.lastManualRetry.get(meetingId) ?? -Infinity) < 1500) return
+      if (now - (this.lastManualRetry.get(meetingId) ?? -Infinity) < 1500) return false
       this.lastManualRetry.set(meetingId, now)
       logAutodocEvent({
         area: 'transcription',
@@ -253,7 +279,10 @@ export class TranscriptionService {
         meetingId
       })
     }
+    // A queued job picks the language up when it starts.
+    if (meetingLanguage) this.reprocessLanguages.set(meetingId, meetingLanguage)
     this.enqueue(meetingId, source)
+    return true
   }
 
   private async hasUsableTranscript(meetingId: string): Promise<boolean> {
@@ -435,6 +464,8 @@ export class TranscriptionService {
       this.activeProgress = undefined
       this.processing = false
       this.enqueueSource.delete(meetingId)
+      // A failed job drops the requested language: the stored one still applies.
+      this.reprocessLanguages.delete(meetingId)
       this.jobIdentity.delete(meetingId)
       this.windowsCpuFallbackMeetingId = null
       this.processNext()
@@ -540,10 +571,14 @@ export class TranscriptionService {
     return await this.processJobExclusive(meetingId)
   }
 
-  /** Scopes the whole transcription job to the language stored on the recording (legacy: English). */
+  /**
+   * Scopes the whole transcription job to the language requested for this reprocess, else
+   * the language stored on the recording (legacy: English).
+   */
   private async processJobExclusive(meetingId: string): Promise<void> {
     const metadata = await readMetadata(join(this.recordingsBaseDir, meetingId))
-    return runWithMeetingLanguage(metadata?.meetingLanguage, () => {
+    const language = this.reprocessLanguages.get(meetingId) ?? metadata?.meetingLanguage
+    return runWithMeetingLanguage(language, () => {
       this.jobIdentity.set(meetingId, {
         meetingLanguage: activeMeetingLanguage(),
         asrRoute: activeMeetingAsrRoute(),
@@ -581,11 +616,21 @@ export class TranscriptionService {
     const hasLegacy = await this.fileExists(legacyAudio)
 
     if (!hasMic && !hasSystem && !hasLegacy) {
+      // A language change was accepted for this meeting; the renderer waits for its outcome.
+      if (this.reprocessLanguages.has(meetingId)) {
+        throw new Error('The recording has no audio left to transcribe in another language.')
+      }
       return
     }
 
     const tempPrefix = join(tmpdir(), `autodoc-${meetingId}-${Date.now()}`)
     const tempFiles: string[] = []
+    // A new language is published together with its transcript: the transcript
+    // is staged until the language is saved, so neither lands without the other.
+    const stagedTranscriptPath = this.reprocessLanguages.has(meetingId)
+      ? join(meetingDir, 'transcript.json.staged')
+      : null
+    if (stagedTranscriptPath) tempFiles.push(stagedTranscriptPath)
 
     try {
       this.windowsMultilingualReady = null
@@ -794,7 +839,7 @@ export class TranscriptionService {
         await this.generateSpeakersJson(meetingId, transcripts)
       }
 
-      await encryptJSON(transcripts, transcriptPath)
+      await encryptJSON(transcripts, stagedTranscriptPath ?? transcriptPath)
       await unlink(join(meetingDir, 'transcript.error')).catch(() => {})
 
       // Encrypt raw media files
@@ -884,6 +929,20 @@ export class TranscriptionService {
       }
 
       await this.logWindowsResourceSnapshot('transcription-complete', meetingId)
+      // Notes and later reprocesses read the language from metadata, so it is
+      // saved now, before anyone learns the transcript is complete.
+      const previousLanguage = await this.saveReprocessLanguage(meetingId, meetingDir)
+      if (stagedTranscriptPath) {
+        try {
+          await rename(stagedTranscriptPath, transcriptPath)
+        } catch (error) {
+          // The old transcript is still in place, so the old language goes back with it.
+          if (previousLanguage) {
+            await this.writeMeetingLanguage(meetingDir, previousLanguage).catch(() => {})
+          }
+          throw error
+        }
+      }
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete', undefined, undefined, {
@@ -3392,6 +3451,45 @@ export class TranscriptionService {
       .replace(/[^\w\s.]/g, '')
       .replace(/\s+/g, ' ')
       .trim()
+  }
+
+  /**
+   * Stores the language a successful reprocess ran in on the recording.
+   * Returns the language it replaced, or null when nothing changed.
+   */
+  private async saveReprocessLanguage(
+    meetingId: string,
+    meetingDir: string
+  ): Promise<MeetingLanguageCode | null> {
+    const language = this.reprocessLanguages.get(meetingId)
+    if (!language) return null
+    this.reprocessLanguages.delete(meetingId)
+    const previous = await this.writeMeetingLanguage(meetingDir, language)
+    if (previous === null) return null
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'meeting language changed by reprocess',
+      meetingId,
+      context: { from: previous, to: language }
+    })
+    return previous
+  }
+
+  /** Writes the language into the recording's metadata; returns the one it replaced, or null. */
+  private async writeMeetingLanguage(
+    meetingDir: string,
+    language: MeetingLanguageCode
+  ): Promise<MeetingLanguageCode | null> {
+    // Other handlers (title, video status) may have written metadata during the
+    // job, so the language is merged into the latest copy.
+    const latest = await readMetadata(meetingDir)
+    if (!latest) {
+      throw new Error('The recording was removed before its language could be saved.')
+    }
+    const previous = normalizeMeetingLanguage(latest.meetingLanguage)
+    if (previous === language) return null
+    await encryptJSON({ ...latest, meetingLanguage: language }, join(meetingDir, 'metadata.json'))
+    return previous
   }
 
   private async markFailed(

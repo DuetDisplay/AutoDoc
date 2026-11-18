@@ -339,6 +339,10 @@ export const completeEn = {
   'ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel':
     'You’re offline. Connect to the internet to download the {language} speech model.',
   'ui.yourMeetingLanguageIsStillLanguage': 'Your meeting language is still {language}.',
+  'meeting.reprocessNotesLanguageHint':
+    'Reprocess the transcript first to switch this meeting to {language}.',
+  'meeting.reprocessLanguageFailed':
+    "Reprocessing in {language} failed. This meeting's language is still {current}.",
   'ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY':
     'We’ll install the new on-device notes engine the next time you’re online (about 2.5 GB, one time). You can keep recording. Existing notes stay as they are.',
   'ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa':

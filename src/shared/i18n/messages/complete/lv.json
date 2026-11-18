@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Nav savienojuma ar internetu. Izveidojiet savienojumu, lai lejupielādētu runas modeli (apmēram {size}). Valoda: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Nav savienojuma ar internetu. Izveidojiet savienojumu, lai lejupielādētu runas modeli. Valoda: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Sapulču valoda joprojām ir {language}.",
+  "meeting.reprocessNotesLanguageHint": "Lai pārslēgtu šo sanāksmi uz {language}, vispirms atkārtoti apstrādājiet transkriptu.",
+  "meeting.reprocessLanguageFailed": "Atkārtota apstrāde valodā {language} neizdevās. Šīs sanāksmes valoda joprojām ir {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Jauno lokālo piezīmju dzinēju instalēsim, kad nākamreiz būsiet tiešsaistē (vienreiz apmēram 2,5 GB). Varat turpināt ierakstīšanu. Esošās piezīmes nemainīsies.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Instalējam jaunu lokālo piezīmju dzinēju, lai nākamo sapulču piezīmes būtu skaidrākas un vieglāk pārskatāmas. Saglabājiet savienojumu līdz pabeigšanai (vienreiz apmēram 2,5 GB). Esošās piezīmes nemainīsies.",
   "ui.jumpToTime": "Pāriet uz {time}",

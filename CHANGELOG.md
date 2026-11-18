@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A meeting's language can be changed after recording. Pick a language in the
+  meeting's Reprocess section, then reprocess the transcript: the transcript
+  and notes are redone in that language. The speech model is checked and
+  downloaded when the language is picked, and the meeting keeps its previous
+  language if the new transcript fails.
+
 ## [1.3.4] — 2026-11-17
 
 ### Added

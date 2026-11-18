@@ -2,10 +2,15 @@ import { useT } from '../services/i18n'
 
 export function DiskFullCallout({
   stage,
-  onRetry
+  onRetry,
+  retryDisabled = false,
+  retryHint
 }: {
   stage: 'transcription' | 'notes'
   onRetry: () => void
+  retryDisabled?: boolean
+  /** Why retrying is held back right now; shown while `retryDisabled`. */
+  retryHint?: string
 }) {
   const t = useT()
 
@@ -29,10 +34,14 @@ export function DiskFullCallout({
           <p className="text-[12px] text-ink-muted leading-relaxed">
             {t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')}
           </p>
+          {retryDisabled && retryHint && (
+            <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">{retryHint}</p>
+          )}
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <button
               onClick={onRetry}
-              className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
+              disabled={retryDisabled}
+              className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {stage === 'transcription' ? t('ui.retryTranscription') : t('ui.retryNotes')}
             </button>

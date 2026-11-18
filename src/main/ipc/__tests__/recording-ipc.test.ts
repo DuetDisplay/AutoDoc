@@ -1899,6 +1899,32 @@ describe('recording IPC meeting language', () => {
 
     vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
   })
+
+  it('reports the recorded meeting language in the detail', async () => {
+    vi.mocked(readMetadata).mockResolvedValue({
+      sourceName: 'Zoom',
+      startedAt: 1,
+      stoppedAt: 2,
+      durationSeconds: 1,
+      meetingLanguage: 'de',
+      videoStatus: 'ready'
+    })
+    const { handler } = register({ recordingsDir: '/mock/recordings' })
+    expect(await handler('recording:get-detail')(null, 'meeting-1')).toEqual(
+      expect.objectContaining({ meetingLanguage: 'de' })
+    )
+    // Legacy recordings without a stored language are English.
+    vi.mocked(readMetadata).mockResolvedValue({
+      sourceName: 'Zoom',
+      startedAt: 1,
+      stoppedAt: 2,
+      durationSeconds: 1
+    })
+    expect(await handler('recording:get-detail')(null, 'meeting-2')).toEqual(
+      expect.objectContaining({ meetingLanguage: 'en' })
+    )
+    vi.mocked(readMetadata).mockResolvedValue(null)
+  })
 })
 
 describe('buildVideoConcatList', () => {

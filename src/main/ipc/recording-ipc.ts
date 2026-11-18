@@ -22,7 +22,11 @@ import { captureMessage } from '../services/sentry-reporter'
 import { isDiskFullError } from '../services/disk-full'
 import { isMeetingDirMissing } from '../services/meeting-dir'
 import { createFfmpegExitError, withSentryFingerprint } from '../services/sentry-fingerprint'
-import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
 import type {
   CalendarEvent,
   RecordingChunkResult,
@@ -1102,6 +1106,8 @@ export function registerRecordingIpc(
   hasPostProcessingWork: () => boolean
   /** Lets automatic recovery retry a meeting held back after a disk-full failure (manual retry). */
   clearDiskFullHold: (meetingId: string) => void
+  /** True while the recording is captured, saved, or post-processed; its files must not change. */
+  isRecordingBusy: (meetingId: string) => boolean
 } {
   let cachedRecentEvents: {
     fetchedAt: number
@@ -2372,6 +2378,7 @@ export function registerRecordingIpc(
       date: startedAt,
       durationSeconds,
       isFinalizing,
+      meetingLanguage: normalizeMeetingLanguage(metadata?.meetingLanguage),
       deleteBlocked: isRecordingBusy(meetingId),
       videoProcessingFailed: metadata?.videoProcessingFailed,
       videoStatus: metadata?.videoStatus,
@@ -2764,7 +2771,8 @@ export function registerRecordingIpc(
     recoverInterruptedRecordings,
     recoverWindowsFinalizingMeetings,
     hasPostProcessingWork,
-    clearDiskFullHold
+    clearDiskFullHold,
+    isRecordingBusy
   }
 }
 

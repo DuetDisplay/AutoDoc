@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Nincs hálózati kapcsolat. Csatlakozzon az internethez a beszédmodell letöltéséhez (körülbelül {size}). Nyelv: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Nincs hálózati kapcsolat. Csatlakozzon az internethez a beszédmodell letöltéséhez. Nyelv: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Az értekezletek nyelve továbbra is: {language}.",
+  "meeting.reprocessNotesLanguageHint": "Először dolgozza fel újra az átiratot, hogy ezt az értekezletet {language} nyelvre váltsa.",
+  "meeting.reprocessLanguageFailed": "Az újrafeldolgozás {language} nyelven nem sikerült. Ennek az értekezletnek a nyelve továbbra is: {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "A következő internetkapcsolatkor telepítjük az új helyi jegyzetkészítő motort (egyszeri, körülbelül 2,5 GB). Továbbra is rögzíthet. A meglévő jegyzetek változatlanok maradnak.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Új helyi jegyzetkészítő motort telepítünk, hogy a következő értekezletek jegyzetei világosabbak és áttekinthetőbbek legyenek. Maradjon kapcsolatban a befejezésig (egyszeri, körülbelül 2,5 GB). A meglévő jegyzetek változatlanok maradnak.",
   "ui.jumpToTime": "Ugrás ide: {time}",

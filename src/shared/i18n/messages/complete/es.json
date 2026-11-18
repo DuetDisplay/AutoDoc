@@ -208,6 +208,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "No tienes conexión. Conéctate a Internet para descargar el modelo de voz (aproximadamente {size}). Idioma: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "No tienes conexión. Conéctate a Internet para descargar el modelo de voz. Idioma: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "El idioma de tu reunión sigue siendo {language}.",
+  "meeting.reprocessNotesLanguageHint": "Reprocesa primero la transcripción para cambiar esta reunión a {language}.",
+  "meeting.reprocessLanguageFailed": "El reprocesamiento en {language} ha fallado. El idioma de esta reunión sigue siendo {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Instalaremos el nuevo motor de notas local cuando vuelvas a conectarte (aproximadamente 2,5 GB, una sola vez). Puedes seguir grabando. Las notas existentes no cambiarán.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Estamos instalando un nuevo motor de notas local para que las notas de tus próximas reuniones sean más claras y fáciles de consultar. Mantén la conexión hasta que termine (aproximadamente 2,5 GB, una sola vez). Las notas existentes no cambiarán.",
   "ui.jumpToTime": "Ir a {time}",

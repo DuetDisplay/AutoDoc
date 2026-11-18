@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Nimate povezave. Povežite se z internetom za prenos govornega modela (približno {size}). Jezik: {language}.",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Nimate povezave. Povežite se z internetom za prenos govornega modela. Jezik: {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Jezik vaših sestankov je še vedno {language}.",
+  "meeting.reprocessNotesLanguageHint": "Najprej znova obdelajte prepis, da ta sestanek preklopite na {language}.",
+  "meeting.reprocessLanguageFailed": "Ponovna obdelava v jeziku {language} ni uspela. Jezik tega sestanka je še vedno {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Novo lokalno orodje za zapiske bomo namestili, ko boste naslednjič povezani (približno 2,5 GB, enkrat). Lahko še naprej snemate. Obstoječi zapiski ostanejo nespremenjeni.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Nameščamo novo lokalno orodje za zapiske, da bodo prihodnji sestanki jasnejši in preglednejši. Ostanite povezani do konca (približno 2,5 GB, enkrat). Obstoječi zapiski ostanejo nespremenjeni.",
   "ui.jumpToTime": "Skoči na {time}",

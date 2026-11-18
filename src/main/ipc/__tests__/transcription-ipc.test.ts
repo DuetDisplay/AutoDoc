@@ -29,7 +29,7 @@ describe('registerTranscriptionIpc', () => {
     expect(onManualRetry.mock.invocationCallOrder[0]).toBeLessThan(
       retry.mock.invocationCallOrder[0]
     )
-    expect(retry).toHaveBeenCalledWith('meeting-123')
+    expect(retry).toHaveBeenCalledWith('meeting-123', 'direct', undefined)
   })
 
   it.each(['win32', 'darwin'])('preserves explicit Reprocess semantics on %s', async (platform) => {
@@ -40,10 +40,99 @@ describe('registerTranscriptionIpc', () => {
       registerTranscriptionIpc({ retry } as never)
       await handlers.get('transcription:retry')?.({}, 'meeting', { reprocess: true })
       expect(retry.mock.calls[0]).toEqual(
-        platform === 'win32' ? ['meeting', 'reprocess'] : ['meeting']
+        platform === 'win32'
+          ? ['meeting', 'reprocess', undefined]
+          : ['meeting', 'direct', undefined]
       )
     } finally {
       Object.defineProperty(process, 'platform', { configurable: true, value: original })
     }
+  })
+
+  describe('reprocessing in another language', () => {
+    function registerWithGuards(options?: {
+      busy?: boolean
+      activeJob?: boolean
+      blockReason?: string | null
+      queued?: boolean
+    }) {
+      const retry = vi.fn(() => options?.queued ?? true)
+      const isActiveJob = vi.fn(() => options?.activeJob ?? false)
+      const isRecordingBusy = vi.fn(() => options?.busy ?? false)
+      const getMeetingLanguageBlockReason = vi.fn(async () => options?.blockReason ?? null)
+      const onManualRetry = vi.fn()
+      registerTranscriptionIpc({ retry, isActiveJob } as never, onManualRetry, {
+        isRecordingBusy,
+        getMeetingLanguageBlockReason
+      })
+      const invoke = (options?: Record<string, unknown>) =>
+        handlers.get('transcription:retry')!({}, 'meeting', options)
+      return { retry, isRecordingBusy, getMeetingLanguageBlockReason, onManualRetry, invoke }
+    }
+
+    it('passes the requested language to the retry after checking availability', async () => {
+      const { retry, getMeetingLanguageBlockReason, onManualRetry, invoke } = registerWithGuards()
+      await invoke({ meetingLanguage: 'de' })
+      expect(getMeetingLanguageBlockReason).toHaveBeenCalledWith('de')
+      expect(onManualRetry).toHaveBeenCalledWith('meeting')
+      expect(retry).toHaveBeenCalledWith(
+        'meeting',
+        process.platform === 'win32' ? 'reprocess' : 'direct',
+        'de'
+      )
+    })
+
+    it('replaces a usable Windows transcript for a language change even without the reprocess flag', async () => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      try {
+        const { retry, invoke } = registerWithGuards()
+        await invoke({ meetingLanguage: 'de' })
+        expect(retry).toHaveBeenCalledWith('meeting', 'reprocess', 'de')
+      } finally {
+        Object.defineProperty(process, 'platform', { configurable: true, value: original })
+      }
+    })
+
+    it('retries without a language as before', async () => {
+      const { retry, getMeetingLanguageBlockReason, invoke } = registerWithGuards()
+      await invoke()
+      expect(getMeetingLanguageBlockReason).not.toHaveBeenCalled()
+      expect(retry).toHaveBeenCalledWith('meeting', 'direct', undefined)
+    })
+
+    it('rejects unsupported codes and languages this computer cannot process', async () => {
+      const blocked = registerWithGuards({ blockReason: 'Meeting language ja needs 16 GB' })
+      await expect(blocked.invoke({ meetingLanguage: 'xx' })).rejects.toThrow('not supported')
+      await expect(blocked.invoke({ meetingLanguage: 'ja' })).rejects.toThrow('needs 16 GB')
+      expect(blocked.retry).not.toHaveBeenCalled()
+      expect(blocked.onManualRetry).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['recording is saved or post-processed', { busy: true }],
+      ['transcription job is active', { activeJob: true }]
+    ])('refuses a language change while the %s', async (_label, options) => {
+      const { retry, invoke } = registerWithGuards(options)
+      await expect(invoke({ meetingLanguage: 'de' })).rejects.toThrow(
+        'cannot be changed while the recording is saved or processed'
+      )
+      expect(retry).not.toHaveBeenCalled()
+    })
+
+    it('reports a language request the service dropped instead of acknowledging it', async () => {
+      const dropped = registerWithGuards({ queued: false })
+      await expect(dropped.invoke({ meetingLanguage: 'de' })).rejects.toThrow('could not be queued')
+      // A plain retry inside the cooldown stays a silent no-op, as before.
+      await expect(dropped.invoke()).resolves.toBeUndefined()
+    })
+
+    it('checks again right before the retry, after the availability check awaited', async () => {
+      const { retry, isRecordingBusy, invoke } = registerWithGuards()
+      isRecordingBusy.mockReturnValueOnce(false).mockReturnValueOnce(true)
+      await expect(invoke({ meetingLanguage: 'de' })).rejects.toThrow('cannot be changed')
+      expect(isRecordingBusy).toHaveBeenCalledTimes(2)
+      expect(retry).not.toHaveBeenCalled()
+    })
   })
 })

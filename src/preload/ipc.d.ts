@@ -226,7 +226,10 @@ export interface IpcInvokeEvents {
   'transcription:get-error-code': [meetingId: string]
   'transcription:get-cpu-fallback': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
-  'transcription:retry': [meetingId: string, options?: { reprocess: boolean }]
+  'transcription:retry': [
+    meetingId: string,
+    options?: { reprocess?: boolean; meetingLanguage?: MeetingLanguageCode }
+  ]
   'transcription:get-reprocess-failure': [meetingId: string]
   'ollama:check-status': []
   'ollama:get-model': []
@@ -449,6 +452,7 @@ export interface IpcInvokeReturns {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    meetingLanguage?: MeetingLanguageCode
     deleteBlocked?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus

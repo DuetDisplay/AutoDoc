@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "Sunteți offline. Conectați-vă la internet pentru a descărca modelul vocal pentru {language} (aproximativ {size}).",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "Sunteți offline. Conectați-vă la internet pentru a descărca modelul vocal pentru {language}.",
   "ui.yourMeetingLanguageIsStillLanguage": "Limba întâlnirilor este în continuare {language}.",
+  "meeting.reprocessNotesLanguageHint": "Reprocesați mai întâi transcrierea pentru a trece această întâlnire la {language}.",
+  "meeting.reprocessLanguageFailed": "Reprocesarea în {language} a eșuat. Limba acestei întâlniri este în continuare {current}.",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "Vom instala noul motor local de notițe când veți reveni online (aproximativ 2,5 GB, o singură dată). Puteți continua să înregistrați. Notițele existente rămân neschimbate.",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "Instalăm un nou motor local de notițe pentru ca următoarele întâlniri să fie mai clare și mai ușor de parcurs. Rămâneți conectat până la finalizare (aproximativ 2,5 GB, o singură dată). Notițele existente rămân neschimbate.",
   "ui.jumpToTime": "Salt la {time}",

@@ -78,7 +78,7 @@ import {
 import { windowBackgroundForAppearance } from './services/appearance-runtime'
 import { tMain, setMainUiLanguage } from './services/ui-locale'
 import { refreshApplicationMenu } from './services/application-menu'
-import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { getMeetingLanguageBlockReason, registerPrefsIpc } from './ipc/prefs-ipc'
 import {
   bindMeetingLanguagePreferenceStore,
   bindWindowsNotesModelSource,
@@ -2031,7 +2031,8 @@ app.whenReady().then(async () => {
   const {
     recoverInterruptedRecordings: recoverInterruptedRecordingsImpl,
     hasPostProcessingWork,
-    clearDiskFullHold
+    clearDiskFullHold,
+    isRecordingBusy
   } = registerRecordingIpc(
     recordingService,
     transcriptionService,
@@ -2313,12 +2314,20 @@ app.whenReady().then(async () => {
     })
   }
 
-  registerTranscriptionIpc(transcriptionService, (meetingId) => {
-    // A manual retry means the user freed space (or wants another attempt), so lift the
-    // disk-full hold that stops automatic recovery from re-running this meeting's post-processing.
-    clearDiskFullHold(meetingId)
-    markReprocessNotificationPending(meetingId)
-  })
+  registerTranscriptionIpc(
+    transcriptionService,
+    (meetingId) => {
+      // A manual retry means the user freed space (or wants another attempt), so lift the
+      // disk-full hold that stops automatic recovery from re-running this meeting's post-processing.
+      clearDiskFullHold(meetingId)
+      markReprocessNotificationPending(meetingId)
+    },
+    {
+      isRecordingBusy,
+      // Same refusals as the global preference in Settings.
+      getMeetingLanguageBlockReason: (language) => getMeetingLanguageBlockReason(language)
+    }
+  )
   registerLlmIpc(
     segmentationService,
     managedOllamaManager,

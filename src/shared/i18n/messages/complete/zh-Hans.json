@@ -245,6 +245,8 @@
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize": "当前处于离线状态。请连接互联网以下载 {language} 语音模型（约 {size}）。",
   "ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel": "当前处于离线状态。请连接互联网以下载 {language} 语音模型。",
   "ui.yourMeetingLanguageIsStillLanguage": "会议语言仍为 {language}。",
+  "meeting.reprocessNotesLanguageHint": "请先重新处理转录稿，以将此会议切换为{language}。",
+  "meeting.reprocessLanguageFailed": "以{language}重新处理失败。此会议的语言仍为 {current}。",
   "ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY": "我们将在你下次联网时安装新的本地笔记引擎（约 2.5 GB，仅需一次）。你可以继续录制。现有笔记保持不变。",
   "ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa": "正在安装新的本地笔记引擎，让后续会议的笔记更清晰、更便于浏览。请保持联网直至完成（约 2.5 GB，仅需一次）。现有笔记保持不变。",
   "ui.jumpToTime": "跳转到 {time}",

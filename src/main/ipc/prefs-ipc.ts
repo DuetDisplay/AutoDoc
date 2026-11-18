@@ -33,6 +33,28 @@ export function meetingLanguageNeedsMemoryMessage(
   return `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this Mac`
 }
 
+/**
+ * Why this computer cannot process a meeting language, or null when it can.
+ * The global preference and a recording's own language share this check, so
+ * both refuse the same languages for the same reasons.
+ */
+export async function getMeetingLanguageBlockReason(
+  language: MeetingLanguageCode,
+  getMeetingLanguageAvailability: () => MeetingLanguageAvailability = currentMeetingLanguageAvailability
+): Promise<string | null> {
+  await waitForWindowsNotesModel()
+  if (!isMeetingLanguageAvailable(language, getMeetingLanguageAvailability())) {
+    return meetingLanguageNeedsMemoryMessage(language)
+  }
+  if (process.platform === 'win32') {
+    const engine = await getWindowsMeetingLanguageAvailability(language)
+    if (engine.availability === 'locked') {
+      return engine.reason ?? "This language isn't available on this PC."
+    }
+  }
+  return null
+}
+
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
@@ -227,16 +249,11 @@ export function registerPrefsIpc(
     if (!isMeetingLanguageCode(language)) {
       throw new Error('This meeting language is not supported.')
     }
-    await waitForWindowsNotesModel()
-    if (!isMeetingLanguageAvailable(language, getMeetingLanguageAvailability())) {
-      throw new Error(meetingLanguageNeedsMemoryMessage(language))
-    }
-    if (process.platform === 'win32') {
-      const engine = await getWindowsMeetingLanguageAvailability(language)
-      if (engine.availability === 'locked') {
-        throw new Error(engine.reason ?? "This language isn't available on this PC.")
-      }
-    }
+    const blockReason = await getMeetingLanguageBlockReason(
+      language,
+      getMeetingLanguageAvailability
+    )
+    if (blockReason) throw new Error(blockReason)
     if (request !== latestMeetingLanguageRequest) return
     prefsStore.setMeetingLanguage(language)
   })
